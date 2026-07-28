@@ -1,0 +1,231 @@
+.Card {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 813px;
+  height: 1185px;
+  z-index: 56;
+}
+.name {
+  font-size: 34.656px;
+  font-family: "MatrixRegularSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 0.723;
+  text-align: justify;
+  position: absolute;
+  left: 61.82px;
+  top: 46.06px;
+  z-index: 55;
+}
+.attribute {
+  position: absolute;
+  left: 680px;
+  top: 56px;
+  width: 74px;
+  height: 75px;
+  z-index: 53;
+}
+.spellTrapType {
+  font-size: 34px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  color: rgb(0, 0, 0);
+  font-weight: bold;
+  line-height: 1.2;
+  text-align: right;
+  position: absolute;
+  left: 49.87px;
+  top: 146.69px;
+  width: 681.07px;
+  height: 46.62px;
+  z-index: 44;
+}
+.spellTrapIcon {
+  position: absolute;
+  left: 669px;
+  top: 148px;
+  width: 44px;
+  height: 44px;
+  z-index: 40;
+}
+.spellTrapEffect {
+  font-size: 29.464px;
+  font-family: "MatrixBook";
+  color: rgba(0, 0, 0, 0.969);
+  line-height: 1;
+  text-align: justify;
+  position: absolute;
+  left: 65.79px;
+  top: 892.8px;
+  width: 685.72px;
+  height: 221.2px;
+  z-index: 34;
+}
+.level5 {
+  position: absolute;
+  left: 463px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 32;
+}
+.level4 {
+  position: absolute;
+  left: 517px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 31;
+}
+.level3 {
+  position: absolute;
+  left: 571px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 30;
+}
+.level2 {
+  position: absolute;
+  left: 625px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 29;
+}
+.level1 {
+  position: absolute;
+  left: 679px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 28;
+}
+.types {
+  font-size: 45.511px;
+  font-family: "ITC Stone Serif";
+  color: rgba(0, 0, 0, 0.949);
+  font-weight: bold;
+  line-height: 1.2;
+  text-align: left;
+  position: absolute;
+  left: 62.95px;
+  top: 889.1px;
+  z-index: 27;
+}
+.monsterEffect {
+  font-size: 29.464px;
+  font-family: "MatrixBook";
+  color: rgba(0, 0, 0, 0.969);
+  line-height: 1;
+  text-align: justify;
+  position: absolute;
+  left: 64.78px;
+  top: 922.72px;
+  width: 683.03px;
+  height: 151.01px;
+  z-index: 24;
+}
+.flavourText {
+  font-size: 28px;
+  font-family: "Stone Serif ITC Medium";
+  color: rgba(0, 0, 0, 0.969);
+  font-style: italic;
+  line-height: 1;
+  text-align: justify;
+  position: absolute;
+  left: 64.78px;
+  top: 922.72px;
+  width: 683.03px;
+  height: 151.01px;
+  z-index: 21;
+}
+.divLine {
+  position: absolute;
+  left: 65px;
+  top: 1076px;
+  width: 684px;
+  height: 2px;
+  z-index: 19;
+}
+.atkLabel {
+  font-size: 33.381px;
+  font-family: "MatrixBoldSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 1.2;
+  text-align: left;
+  position: absolute;
+  left: 431.05px;
+  top: 1077.16px;
+  width: 161.22px;
+  height: 59.95px;
+  z-index: 18;
+}
+.defLabel {
+  font-size: 33.381px;
+  font-family: "MatrixBoldSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 1.2;
+  text-align: left;
+  position: absolute;
+  left: 599.99px;
+  top: 1077.16px;
+  width: 161.22px;
+  height: 59.95px;
+  z-index: 17;
+}
+.atkValue {
+  font-size: 148px;
+  font-family: "MatrixBoldSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 1.2;
+  text-align: right;
+  position: absolute;
+  left: 507.98px;
+  top: 1077.52px;
+  z-index: 16;
+}
+.defValue {
+  font-size: 148px;
+  font-family: "MatrixBoldSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 1.2;
+  text-align: right;
+  position: absolute;
+  left: 674.02px;
+  top: 1077.52px;
+  z-index: 15;
+}
+.frame {
+  position: absolute;
+  left: 28px;
+  top: 28px;
+  width: 757px;
+  height: 1128px;
+  z-index: 14;
+}
+.artwork {
+  position: absolute;
+  left: 99px;
+  top: 218px;
+  width: 614px;
+  height: 615px;
+  z-index: 3;
+}
+.border {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 813px;
+  height: 1185px;
+  z-index: 2;
+}
+
+.limit {
+  position: absolute;
+  left: 14px;
+  top: 21px;
+  width: 171px;
+  height: 171px;
+  z-index: 56;
+}
+
