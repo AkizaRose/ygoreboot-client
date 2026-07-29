@@ -40,13 +40,16 @@ function Card({ card }: CardProps) {
       ? spellTrapIconImages[card.cardSubclass]
       : undefined;
 
-  // e.g. "[ Spellcaster / Fusion / Effect ]"
-  const typeLine = (() => {
-    if (!isMonster) return '';
+  // Rendered as separate spans (bracket / separator / text) rather than a
+  // single string, so the gaps around "[", "]", and "/" can be tuned
+  // precisely in CSS (see .types .bracket / .types .separator in Card.css)
+  // instead of relying on the font's regular space-glyph width.
+  const typeLineParts = (() => {
+    if (!isMonster) return [];
     const parts = [card.monsterType];
     if (card.cardSubclass && card.cardSubclass !== 'Normal') parts.push(card.cardSubclass);
     if (card.monsterSubclass) parts.push(card.monsterSubclass);
-    return `[ ${parts.filter(Boolean).join(' / ')} ]`;
+    return parts.filter(Boolean);
   })();
 
   // "[ SPELL CARD ]" / "[ TRAP CARD ]" for Normal Spells/Traps, or the same
@@ -54,7 +57,7 @@ function Card({ card }: CardProps) {
   // subclass icon (Continuous, Equip, etc.) rendered on top of it.
   const spellTrapTypeLine = isSpellOrTrap
     ? card.cardSubclass && card.cardSubclass !== 'Normal'
-      ? `[ ${card.cardClass} Card\u00A0\u00A0\u00A0\u00A0 ]`
+      ? `[ ${card.cardClass} Card\u00A0\u00A0\u00A0\u00A0\u00A0 ]`
       : `[ ${card.cardClass} Card ]`
     : '';
 
@@ -109,7 +112,18 @@ function Card({ card }: CardProps) {
         <img className="spellTrapIcon" src={spellTrapIconSrc} alt={card.cardSubclass} />
       )}
 
-      {isMonster && <div className="types">{typeLine}</div>}
+      {isMonster && (
+        <div className="types">
+          <span className="bracket">[</span>
+          {typeLineParts.map((part, i) => (
+            <span key={`${part}-${i}`}>
+              {i > 0 && <span className="separator">/</span>}
+              {part}
+            </span>
+          ))}
+          <span className="bracket">]</span>
+        </div>
+      )}
 
       {showMonsterEffect && (
         <div className="monsterEffect">{renderMultiline(card.effectText)}</div>
@@ -123,9 +137,15 @@ function Card({ card }: CardProps) {
 
       {isMonster && (
         <>
-          <div className="atkLabel">ATK/</div>
+          <div className="atkLabel">
+            <span className="statText">ATK</span>
+            <span className="statSlash">/</span>
+          </div>
           <div className="atkValue">{card.atk}</div>
-          <div className="defLabel">DEF/</div>
+          <div className="defLabel">
+            <span className="statText">DEF</span>
+            <span className="statSlash">/</span>
+          </div>
           <div className="defValue">{card.def}</div>
         </>
       )}

@@ -115,6 +115,12 @@
   top: 889.1px;
   z-index: 27;
 }
+.types .bracket {
+  margin: 0 0.1em;
+}
+.types .separator {
+  margin: 0 0.1em;
+}
 .monsterEffect {
   font-size: 28px;
   font-family: "MatrixBook";
@@ -177,6 +183,10 @@
   width: 161.22px;
   height: 59.95px;
   z-index: 17;
+}
+.atkLabel .statSlash,
+.defLabel .statSlash {
+  margin-left: 0.10em;
 }
 .atkValue {
   font-size: 33.381px;
