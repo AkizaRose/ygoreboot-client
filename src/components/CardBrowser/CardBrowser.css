@@ -1,0 +1,60 @@
+.CardBrowser {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 4px;
+  gap: 4px;
+}
+
+.CardBrowser-filters {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 8px;
+  max-width: 480px;
+}
+
+.CardBrowser-filterLabel {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.CardBrowser-filters input {
+  font-size: 14px;
+  padding: 6px 8px;
+}
+
+.CardBrowser-grid {
+  display: grid;
+  grid-template-columns: repeat(5, max-content);
+  gap: 4px;
+}
+
+.CardBrowser-cell {
+  overflow: hidden;
+  position: relative;
+}
+
+.CardBrowser-cell--placeholder {
+  visibility: hidden;
+}
+
+.CardBrowser-cardWrapper {
+  /* transform (even scale()) establishes a containing block for
+     absolutely-positioned descendants, which is what lets Card's internal
+     position: absolute layers line up correctly inside this wrapper. */
+  transform-origin: top left;
+}
+
+.CardBrowser-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.CardBrowser-pageDisplay {
+  font-variant-numeric: tabular-nums;
+  min-width: 4em;
+  text-align: center;
+}
