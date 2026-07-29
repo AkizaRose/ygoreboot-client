@@ -5,6 +5,8 @@
   width: 813px;
   height: 1185px;
   z-index: 56;
+  cursor: pointer;
+  user-select: none
 }
 .name {
   font-size: 92px;

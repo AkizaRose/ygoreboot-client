@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import Card from '../CardView/Card';
+import FilterMenu from './FilterMenu';
 import type { CardData } from '../../types/Card';
+import filterIcon from '../../assets/ui/cardbrowser/searchfilters/filter.png';
 import './CardBrowser.css';
+import previousIcon from '../../assets/ui/cardbrowser/searchfilters/previous.png';
+import nextIcon from '../../assets/ui/cardbrowser/searchfilters/next.png';
+
+
 
 // Card is rendered at its native 813x1185 size and then scaled down visually;
 // these stay in one place so the grid cell size and the transform always
@@ -22,6 +28,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
   const [nameQuery, setNameQuery] = useState('');
   const [textQuery, setTextQuery] = useState('');
   const [page, setPage] = useState(1);
+  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   const filteredCards = useMemo(() => {
     const name = nameQuery.trim().toLowerCase();
@@ -59,79 +66,104 @@ function CardBrowser({ cards }: CardBrowserProps) {
   const goToPreviousPage = () => setPage((p) => Math.max(1, p - 1));
   const goToNextPage = () => setPage((p) => Math.min(totalPages, p + 1));
 
+  // No actual filter selections are wired up yet (that comes next); for now
+  // Apply just closes the menu and returns to the browser.
+  const handleApplyFilters = () => setIsFilterMenuOpen(false);
+
+  // Placeholder until filter state exists — will clear all selected filter
+  // values without closing the menu, once there's something to clear.
+  const handleResetFilters = () => {};
+
   return (
     <div className="CardBrowser">
-      <div className="CardBrowser-filters">
-        <label className="CardBrowser-filterLabel" htmlFor="card-browser-name-search">
-          Name:
-        </label>
-        <input
-          id="card-browser-name-search"
-          type="text"
-          value={nameQuery}
-          onChange={(e) => setNameQuery(e.target.value)}
-          placeholder="Search by card name..."
-        />
+      {isFilterMenuOpen ? (
+        <FilterMenu onApply={handleApplyFilters} onReset={handleResetFilters} />
+      ) : (
+        <>
+          <div className="CardBrowser-filters">
+            <label className="CardBrowser-filterLabel" htmlFor="card-browser-name-search">
+              Name:
+            </label>
+            <input
+              id="card-browser-name-search"
+              type="text"
+              value={nameQuery}
+              onChange={(e) => setNameQuery(e.target.value)}
+              placeholder="Search by card name..."
+            />
 
-        <label className="CardBrowser-filterLabel" htmlFor="card-browser-text-search">
-          Text:
-        </label>
-        <input
-          id="card-browser-text-search"
-          type="text"
-          value={textQuery}
-          onChange={(e) => setTextQuery(e.target.value)}
-          placeholder="Search by effect / flavor text..."
-        />
-      </div>
+            <label className="CardBrowser-filterLabel" htmlFor="card-browser-text-search">
+              Text:
+            </label>
+            <input
+              id="card-browser-text-search"
+              type="text"
+              value={textQuery}
+              onChange={(e) => setTextQuery(e.target.value)}
+              placeholder="Search by effect / flavor text..."
+            />
 
-      <div className="CardBrowser-grid">
-        {pageCards.map((card) => (
-          <div
-            key={card.id}
-            className="CardBrowser-cell"
-            style={{ width: CARD_WIDTH * SCALE, height: CARD_HEIGHT * SCALE }}
-          >
-            <div
-              className="CardBrowser-cardWrapper"
-              style={{
-                width: CARD_WIDTH,
-                height: CARD_HEIGHT,
-                transform: `scale(${SCALE})`,
-              }}
+            <button
+              type="button"
+              className="CardBrowser-filtersButton"
+              onClick={() => setIsFilterMenuOpen(true)}
+              aria-label="Filters"
             >
-              <Card card={card} />
-            </div>
+              <img src={filterIcon} alt="Filters" />
+            </button>
           </div>
-        ))}
-        {Array.from({ length: placeholderCount }, (_, i) => (
-          <div
-            key={`placeholder-${i}`}
-            className="CardBrowser-cell CardBrowser-cell--placeholder"
-            style={{ width: CARD_WIDTH * SCALE, height: CARD_HEIGHT * SCALE }}
-          />
-        ))}
-      </div>
 
-      <div className="CardBrowser-pagination">
-        <button
-          type="button"
-          onClick={goToPreviousPage}
-          disabled={page <= 1}
-        >
-          Previous
-        </button>
-        <span className="CardBrowser-pageDisplay">
-          {page} / {totalPages}
-        </span>
-        <button
-          type="button"
-          onClick={goToNextPage}
-          disabled={page >= totalPages}
-        >
-          Next
-        </button>
-      </div>
+          <div className="CardBrowser-grid">
+            {pageCards.map((card) => (
+              <div
+                key={card.id}
+                className="CardBrowser-cell"
+                style={{ width: CARD_WIDTH * SCALE, height: CARD_HEIGHT * SCALE }}
+              >
+                <div
+                  className="CardBrowser-cardWrapper"
+                  style={{
+                    width: CARD_WIDTH,
+                    height: CARD_HEIGHT,
+                    transform: `scale(${SCALE})`,
+                  }}
+                >
+                  <Card card={card} />
+                </div>
+              </div>
+            ))}
+            {Array.from({ length: placeholderCount }, (_, i) => (
+              <div
+                key={`placeholder-${i}`}
+                className="CardBrowser-cell CardBrowser-cell--placeholder"
+                style={{ width: CARD_WIDTH * SCALE, height: CARD_HEIGHT * SCALE }}
+              />
+            ))}
+          </div>
+
+          <div className="CardBrowser-pagination">
+            <button 
+              type="button"
+              className="CardBrowser-pageButton"
+              onClick={goToPreviousPage} 
+              disabled={page <= 1}
+            >
+              <img src={previousIcon} alt="Apply" />
+            </button>
+            <span className="CardBrowser-pageDisplay">
+              {page} / {totalPages}
+            </span>
+            <button 
+              type="button"
+              className="CardBrowser-pageButton"
+              onClick={goToNextPage} 
+              disabled={page >= totalPages}
+            >
+              <img src={nextIcon} alt="Apply" />
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

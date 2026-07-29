@@ -4,15 +4,16 @@
   align-items: flex-start;
   padding: 4px;
   gap: 4px;
+  border: 2px solid #ffffff
 }
 
 .CardBrowser-filters {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   column-gap: 10px;
   row-gap: 8px;
-  max-width: 480px;
+  width: 342px;
 }
 
 .CardBrowser-filterLabel {
@@ -23,6 +24,26 @@
 .CardBrowser-filters input {
   font-size: 14px;
   padding: 6px 8px;
+}
+
+.CardBrowser-filtersButton {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  width: 48px;
+  height: 48px;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  justify-self: center;
+  align-self: center;
+}
+
+.CardBrowser-filtersButton img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .CardBrowser-grid {
@@ -51,6 +72,22 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  justify-self: center;
+  align-self: center;
+}
+
+.CardBrowser-pageButton {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.CardBrowser-pageButton img {
+  width: 60%;
+  height: 60%;
 }
 
 .CardBrowser-pageDisplay {
