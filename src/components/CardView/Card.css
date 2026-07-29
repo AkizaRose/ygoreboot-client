@@ -7,14 +7,14 @@
   z-index: 56;
 }
 .name {
-  font-size: 34.656px;
+  font-size: 92px;
   font-family: "MatrixRegularSmallCaps";
   color: rgb(0, 0, 0);
   line-height: 0.723;
   text-align: justify;
   position: absolute;
   left: 61.82px;
-  top: 46.06px;
+  top: 62px;
   z-index: 55;
 }
 .attribute {
@@ -26,7 +26,7 @@
   z-index: 53;
 }
 .spellTrapType {
-  font-size: 34px;
+  font-size: 38px;
   font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
   color: rgb(0, 0, 0);
   font-weight: bold;
@@ -34,7 +34,7 @@
   text-align: right;
   position: absolute;
   left: 49.87px;
-  top: 146.69px;
+  top: 142px;
   width: 681.07px;
   height: 46.62px;
   z-index: 44;
@@ -101,8 +101,11 @@
   z-index: 28;
 }
 .types {
-  font-size: 45.511px;
+  font-size: 30px;
   font-family: "ITC Stone Serif";
+  font-variant: small-caps;
+  font-synthesis: small-caps;
+  letter-spacing: 0.7px;
   color: rgba(0, 0, 0, 0.949);
   font-weight: bold;
   line-height: 1.2;
@@ -113,7 +116,7 @@
   z-index: 27;
 }
 .monsterEffect {
-  font-size: 29.464px;
+  font-size: 28px;
   font-family: "MatrixBook";
   color: rgba(0, 0, 0, 0.969);
   line-height: 1;
@@ -150,6 +153,7 @@
 .atkLabel {
   font-size: 33.381px;
   font-family: "MatrixBoldSmallCaps";
+  letter-spacing: 0.9px;
   color: rgb(0, 0, 0);
   line-height: 1.2;
   text-align: left;
@@ -163,6 +167,7 @@
 .defLabel {
   font-size: 33.381px;
   font-family: "MatrixBoldSmallCaps";
+  letter-spacing: 0.9px;
   color: rgb(0, 0, 0);
   line-height: 1.2;
   text-align: left;
@@ -174,7 +179,7 @@
   z-index: 17;
 }
 .atkValue {
-  font-size: 148px;
+  font-size: 33.381px;
   font-family: "MatrixBoldSmallCaps";
   color: rgb(0, 0, 0);
   line-height: 1.2;
@@ -182,17 +187,19 @@
   position: absolute;
   left: 507.98px;
   top: 1077.52px;
+  width: 84.29px;      /* added */
   z-index: 16;
 }
 .defValue {
-  font-size: 148px;
+  font-size: 33.381px;
   font-family: "MatrixBoldSmallCaps";
   color: rgb(0, 0, 0);
   line-height: 1.2;
   text-align: right;
   position: absolute;
-  left: 674.02px;
+  left: 662.02px;
   top: 1077.52px;
+  width: 84.29px;      /* added */
   z-index: 15;
 }
 .frame {
