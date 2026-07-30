@@ -16,16 +16,23 @@
   column-gap: 10px;
   row-gap: 8px;
   width: 342px;
+  margin-top: 4px
 }
 
 .CardBrowser-filterLabel {
   font-size: 14px;
   white-space: nowrap;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps"
 }
 
 .CardBrowser-filters input {
   font-size: 14px;
   padding: 6px 8px;
+  background-image: url('src/assets/ui/cardbrowser/searchfilters/search.png');
+  background-repeat: no-repeat;
+  background-position: 200px center;
+  background-size: 20px 20px;
+  padding-right: 35px;
 }
 
 .CardBrowser-filtersButton {
@@ -78,7 +85,8 @@
   justify-self: center;
   align-self: center;
   justify-content: center;
-  margin-top: 8px
+  margin-top: 16px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps"
 }
 
 .CardBrowser-pageButton {

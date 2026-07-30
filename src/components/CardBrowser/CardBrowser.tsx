@@ -290,7 +290,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
               type="text"
               value={nameQuery}
               onChange={(e) => setNameQuery(e.target.value)}
-              placeholder="Search by card name..."
+              placeholder="Search..."
             />
 
             <label className="CardBrowser-filterLabel" htmlFor="card-browser-text-search">
@@ -301,7 +301,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
               type="text"
               value={textQuery}
               onChange={(e) => setTextQuery(e.target.value)}
-              placeholder="Search by effect / flavor text..."
+              placeholder="Search..."
             />
 
             <IconButton
