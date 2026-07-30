@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import Card from '../CardView/Card';
 import FilterMenu from './FilterMenu';
+import IconButton from './IconButton';
 import type { CardData } from '../../types/Card';
 import filterIcon from '../../assets/ui/cardbrowser/searchfilters/filter.png';
+import filterHoverIcon from '../../assets/ui/cardbrowser/searchfilters/filter_hover.png';
+import filterClickIcon from '../../assets/ui/cardbrowser/searchfilters/filter_click.png';
 import previousIcon from '../../assets/ui/cardbrowser/searchfilters/previous.png';
+import previousHoverIcon from '../../assets/ui/cardbrowser/searchfilters/previous_hover.png';
+import previousClickIcon from '../../assets/ui/cardbrowser/searchfilters/previous_click.png';
+import previousUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/previous_unselectable.png';
 import nextIcon from '../../assets/ui/cardbrowser/searchfilters/next.png';
+import nextHoverIcon from '../../assets/ui/cardbrowser/searchfilters/next_hover.png';
+import nextClickIcon from '../../assets/ui/cardbrowser/searchfilters/next_click.png';
+import nextUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/next_unselectable.png';
 import './CardBrowser.css';
 
 // Card is rendered at its native 813x1185 size and then scaled down visually;
@@ -295,14 +304,14 @@ function CardBrowser({ cards }: CardBrowserProps) {
               placeholder="Search by effect / flavor text..."
             />
 
-            <button
-              type="button"
+            <IconButton
+              icon={filterIcon}
+              hoverIcon={filterHoverIcon}
+              clickIcon={filterClickIcon}
+              alt="Filters"
               className="CardBrowser-filtersButton"
               onClick={() => setIsFilterMenuOpen(true)}
-              aria-label="Filters"
-            >
-              <img src={filterIcon} alt="Filters" />
-            </button>
+            />
           </div>
 
           <div className="CardBrowser-grid">
@@ -334,25 +343,29 @@ function CardBrowser({ cards }: CardBrowserProps) {
           </div>
 
           <div className="CardBrowser-pagination">
-            <button
-              type="button"
+            <IconButton
+              icon={previousIcon}
+              hoverIcon={previousHoverIcon}
+              clickIcon={previousClickIcon}
+              disabledIcon={previousUnselectableIcon}
+              alt="Previous"
               className="CardBrowser-pageButton"
               onClick={goToPreviousPage}
               disabled={page <= 1}
-            >
-              <img src={previousIcon} alt="Previous" />
-            </button>
+            />
             <span className="CardBrowser-pageDisplay">
               {page} / {totalPages}
             </span>
-            <button
-              type="button"
+            <IconButton
+              icon={nextIcon}
+              hoverIcon={nextHoverIcon}
+              clickIcon={nextClickIcon}
+              disabledIcon={nextUnselectableIcon}
+              alt="Next"
               className="CardBrowser-pageButton"
               onClick={goToNextPage}
               disabled={page >= totalPages}
-            >
-              <img src={nextIcon} alt="Next" />
-            </button>
+            />
           </div>
         </>
       )}

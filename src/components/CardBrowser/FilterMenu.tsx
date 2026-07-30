@@ -1,20 +1,41 @@
 import { useEffect, useState } from 'react';
 import applyIcon from '../../assets/ui/cardbrowser/searchfilters/apply.png';
+import applyHoverIcon from '../../assets/ui/cardbrowser/searchfilters/apply_hover.png';
+import applyClickIcon from '../../assets/ui/cardbrowser/searchfilters/apply_click.png';
 import resetIcon from '../../assets/ui/cardbrowser/searchfilters/reset.png';
+import resetHoverIcon from '../../assets/ui/cardbrowser/searchfilters/reset_hover.png';
+import resetClickIcon from '../../assets/ui/cardbrowser/searchfilters/reset_click.png';
 import cardClassIcon from '../../assets/ui/cardbrowser/searchfilters/cardclass.png';
+import cardClassHoverIcon from '../../assets/ui/cardbrowser/searchfilters/cardclass_hover.png';
+import cardClassClickIcon from '../../assets/ui/cardbrowser/searchfilters/cardclass_click.png';
 import cardSubclassIcon from '../../assets/ui/cardbrowser/searchfilters/cardsubclass.png';
+import cardSubclassHoverIcon from '../../assets/ui/cardbrowser/searchfilters/cardsubclass_hover.png';
+import cardSubclassClickIcon from '../../assets/ui/cardbrowser/searchfilters/cardsubclass_click.png';
 import cardSubclassUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/cardsubclass_unselectable.png';
 import attributeIcon from '../../assets/ui/cardbrowser/searchfilters/attribute.png';
+import attributeHoverIcon from '../../assets/ui/cardbrowser/searchfilters/attribute_hover.png';
+import attributeClickIcon from '../../assets/ui/cardbrowser/searchfilters/attribute_click.png';
 import attributeUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/attribute_unselectable.png';
 import monsterTypeIcon from '../../assets/ui/cardbrowser/searchfilters/monstertype.png';
+import monsterTypeHoverIcon from '../../assets/ui/cardbrowser/searchfilters/monstertype_hover.png';
+import monsterTypeClickIcon from '../../assets/ui/cardbrowser/searchfilters/monstertype_click.png';
 import monsterTypeUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/monstertype_unselectable.png';
 import levelIcon from '../../assets/ui/cardbrowser/searchfilters/level.png';
+import levelHoverIcon from '../../assets/ui/cardbrowser/searchfilters/level_hover.png';
+import levelClickIcon from '../../assets/ui/cardbrowser/searchfilters/level_click.png';
 import levelUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/level_unselectable.png';
 import atkIcon from '../../assets/ui/cardbrowser/searchfilters/atk.png';
+import atkHoverIcon from '../../assets/ui/cardbrowser/searchfilters/atk_hover.png';
+import atkClickIcon from '../../assets/ui/cardbrowser/searchfilters/atk_click.png';
 import atkUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/atk_unselectable.png';
 import defIcon from '../../assets/ui/cardbrowser/searchfilters/def.png';
+import defHoverIcon from '../../assets/ui/cardbrowser/searchfilters/def_hover.png';
+import defClickIcon from '../../assets/ui/cardbrowser/searchfilters/def_click.png';
 import defUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/def_unselectable.png';
 import limitIcon from '../../assets/ui/cardbrowser/searchfilters/limit.png';
+import limitHoverIcon from '../../assets/ui/cardbrowser/searchfilters/limit_hover.png';
+import limitClickIcon from '../../assets/ui/cardbrowser/searchfilters/limit_click.png';
+import IconButton from './IconButton';
 import CardClassMenu from './CardClassMenu';
 import CardSubclassMenu from './CardSubclassMenu';
 import AttributeMenu from './AttributeMenu';
@@ -35,6 +56,8 @@ interface FilterButtonConfig {
   key: string;
   label: string;
   icon: string;
+  hoverIcon: string;
+  clickIcon: string;
   unselectableIcon?: string;
   requirement: FilterRequirement;
 }
@@ -44,11 +67,20 @@ interface FilterButtonConfig {
 //   Card Class, Card Subclass, Attribute, Monster Type
 //   Level, ATK, DEF, Limit
 const FILTER_GRID: FilterButtonConfig[] = [
-  { key: 'cardClass', label: 'Card Class', icon: cardClassIcon, requirement: 'none' },
+  {
+    key: 'cardClass',
+    label: 'Card Class',
+    icon: cardClassIcon,
+    hoverIcon: cardClassHoverIcon,
+    clickIcon: cardClassClickIcon,
+    requirement: 'none',
+  },
   {
     key: 'cardSubclass',
     label: 'Card Subclass',
     icon: cardSubclassIcon,
+    hoverIcon: cardSubclassHoverIcon,
+    clickIcon: cardSubclassClickIcon,
     unselectableIcon: cardSubclassUnselectableIcon,
     requirement: 'cardClass',
   },
@@ -56,6 +88,8 @@ const FILTER_GRID: FilterButtonConfig[] = [
     key: 'attribute',
     label: 'Attribute',
     icon: attributeIcon,
+    hoverIcon: attributeHoverIcon,
+    clickIcon: attributeClickIcon,
     unselectableIcon: attributeUnselectableIcon,
     requirement: 'monster',
   },
@@ -63,6 +97,8 @@ const FILTER_GRID: FilterButtonConfig[] = [
     key: 'monsterType',
     label: 'Monster Type',
     icon: monsterTypeIcon,
+    hoverIcon: monsterTypeHoverIcon,
+    clickIcon: monsterTypeClickIcon,
     unselectableIcon: monsterTypeUnselectableIcon,
     requirement: 'monster',
   },
@@ -70,6 +106,8 @@ const FILTER_GRID: FilterButtonConfig[] = [
     key: 'level',
     label: 'Level',
     icon: levelIcon,
+    hoverIcon: levelHoverIcon,
+    clickIcon: levelClickIcon,
     unselectableIcon: levelUnselectableIcon,
     requirement: 'monster',
   },
@@ -77,6 +115,8 @@ const FILTER_GRID: FilterButtonConfig[] = [
     key: 'atk',
     label: 'ATK',
     icon: atkIcon,
+    hoverIcon: atkHoverIcon,
+    clickIcon: atkClickIcon,
     unselectableIcon: atkUnselectableIcon,
     requirement: 'monster',
   },
@@ -84,10 +124,19 @@ const FILTER_GRID: FilterButtonConfig[] = [
     key: 'def',
     label: 'DEF',
     icon: defIcon,
+    hoverIcon: defHoverIcon,
+    clickIcon: defClickIcon,
     unselectableIcon: defUnselectableIcon,
     requirement: 'monster',
   },
-  { key: 'limit', label: 'Limit', icon: limitIcon, requirement: 'none' },
+  {
+    key: 'limit',
+    label: 'Limit',
+    icon: limitIcon,
+    hoverIcon: limitHoverIcon,
+    clickIcon: limitClickIcon,
+    requirement: 'none',
+  },
 ];
 
 function isRequirementMet(requirement: FilterRequirement, selectedCardClass: string | null) {
@@ -185,22 +234,22 @@ function FilterMenu({
   return (
     <div className="FilterMenu">
       <div className="FilterMenu-grid">
-        <button
-          type="button"
+        <IconButton
+          icon={applyIcon}
+          hoverIcon={applyHoverIcon}
+          clickIcon={applyClickIcon}
+          alt="Apply"
           className="FilterMenu-actionButton"
           onClick={onApply}
-          aria-label="Apply"
-        >
-          <img src={applyIcon} alt="Apply" />
-        </button>
-        <button
-          type="button"
+        />
+        <IconButton
+          icon={resetIcon}
+          hoverIcon={resetHoverIcon}
+          clickIcon={resetClickIcon}
+          alt="Reset"
           className="FilterMenu-actionButton"
           onClick={onReset}
-          aria-label="Reset"
-        >
-          <img src={resetIcon} alt="Reset" />
-        </button>
+        />
 
         <div className="FilterMenu-separator" />
 
@@ -211,12 +260,14 @@ function FilterMenu({
 
           return (
             <div key={button.key} className="FilterMenu-buttonSlot">
-              <button
-                type="button"
+              <IconButton
+                icon={icon}
+                hoverIcon={button.hoverIcon}
+                clickIcon={button.clickIcon}
+                alt={button.label}
                 className="FilterMenu-button"
-                aria-label={button.label}
-                aria-pressed={activeSubmenu === button.key}
                 disabled={!enabled}
+                ariaPressed={activeSubmenu === button.key}
                 onClick={
                   isClickable
                     ? () =>
@@ -225,9 +276,7 @@ function FilterMenu({
                         )
                     : undefined
                 }
-              >
-                <img src={icon} alt={button.label} />
-              </button>
+              />
             </div>
           );
         })}
