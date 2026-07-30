@@ -1,19 +1,42 @@
+import { useEffect, useState } from 'react';
 import applyIcon from '../../assets/ui/cardbrowser/searchfilters/apply.png';
 import resetIcon from '../../assets/ui/cardbrowser/searchfilters/reset.png';
 import cardClassIcon from '../../assets/ui/cardbrowser/searchfilters/cardclass.png';
 import cardSubclassIcon from '../../assets/ui/cardbrowser/searchfilters/cardsubclass.png';
+import cardSubclassUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/cardsubclass_unselectable.png';
 import attributeIcon from '../../assets/ui/cardbrowser/searchfilters/attribute.png';
+import attributeUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/attribute_unselectable.png';
 import monsterTypeIcon from '../../assets/ui/cardbrowser/searchfilters/monstertype.png';
+import monsterTypeUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/monstertype_unselectable.png';
 import levelIcon from '../../assets/ui/cardbrowser/searchfilters/level.png';
+import levelUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/level_unselectable.png';
 import atkIcon from '../../assets/ui/cardbrowser/searchfilters/atk.png';
+import atkUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/atk_unselectable.png';
 import defIcon from '../../assets/ui/cardbrowser/searchfilters/def.png';
+import defUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/def_unselectable.png';
 import limitIcon from '../../assets/ui/cardbrowser/searchfilters/limit.png';
+import CardClassMenu from './CardClassMenu';
+import CardSubclassMenu from './CardSubclassMenu';
+import AttributeMenu from './AttributeMenu';
+import MonsterTypeMenu from './MonsterTypeMenu';
+import LevelMenu from './LevelMenu';
+import StatRangeMenu from './StatRangeMenu';
+import LimitMenu from './LimitMenu';
 import './FilterMenu.css';
+
+// What has to be true in Card Class for a given filter button to be usable:
+//   'none'      - always enabled (Card Class itself, Limit)
+//   'cardClass' - enabled once any Card Class is selected (Card Subclass)
+//   'monster'   - enabled only when Card Class is specifically Monster
+//                 (Attribute, Monster Type, Level, ATK, DEF)
+type FilterRequirement = 'none' | 'cardClass' | 'monster';
 
 interface FilterButtonConfig {
   key: string;
   label: string;
   icon: string;
+  unselectableIcon?: string;
+  requirement: FilterRequirement;
 }
 
 // 4x2 grid, in source order (grid auto-placement fills left-to-right,
@@ -21,22 +44,144 @@ interface FilterButtonConfig {
 //   Card Class, Card Subclass, Attribute, Monster Type
 //   Level, ATK, DEF, Limit
 const FILTER_GRID: FilterButtonConfig[] = [
-  { key: 'cardClass', label: 'Card Class', icon: cardClassIcon },
-  { key: 'cardSubclass', label: 'Card Subclass', icon: cardSubclassIcon },
-  { key: 'attribute', label: 'Attribute', icon: attributeIcon },
-  { key: 'monsterType', label: 'Monster Type', icon: monsterTypeIcon },
-  { key: 'level', label: 'Level', icon: levelIcon },
-  { key: 'atk', label: 'ATK', icon: atkIcon },
-  { key: 'def', label: 'DEF', icon: defIcon },
-  { key: 'limit', label: 'Limit', icon: limitIcon },
+  { key: 'cardClass', label: 'Card Class', icon: cardClassIcon, requirement: 'none' },
+  {
+    key: 'cardSubclass',
+    label: 'Card Subclass',
+    icon: cardSubclassIcon,
+    unselectableIcon: cardSubclassUnselectableIcon,
+    requirement: 'cardClass',
+  },
+  {
+    key: 'attribute',
+    label: 'Attribute',
+    icon: attributeIcon,
+    unselectableIcon: attributeUnselectableIcon,
+    requirement: 'monster',
+  },
+  {
+    key: 'monsterType',
+    label: 'Monster Type',
+    icon: monsterTypeIcon,
+    unselectableIcon: monsterTypeUnselectableIcon,
+    requirement: 'monster',
+  },
+  {
+    key: 'level',
+    label: 'Level',
+    icon: levelIcon,
+    unselectableIcon: levelUnselectableIcon,
+    requirement: 'monster',
+  },
+  {
+    key: 'atk',
+    label: 'ATK',
+    icon: atkIcon,
+    unselectableIcon: atkUnselectableIcon,
+    requirement: 'monster',
+  },
+  {
+    key: 'def',
+    label: 'DEF',
+    icon: defIcon,
+    unselectableIcon: defUnselectableIcon,
+    requirement: 'monster',
+  },
+  { key: 'limit', label: 'Limit', icon: limitIcon, requirement: 'none' },
 ];
+
+function isRequirementMet(requirement: FilterRequirement, selectedCardClass: string | null) {
+  switch (requirement) {
+    case 'cardClass':
+      return !!selectedCardClass;
+    case 'monster':
+      return selectedCardClass === 'Monster';
+    case 'none':
+    default:
+      return true;
+  }
+}
+
+// Only these have a submenu built so far; the rest are wired up one at a
+// time. Buttons without an entry here just don't open anything yet.
+const SUBMENU_KEYS = new Set([
+  'cardClass',
+  'cardSubclass',
+  'attribute',
+  'monsterType',
+  'level',
+  'atk',
+  'def',
+  'limit',
+]);
 
 interface FilterMenuProps {
   onApply: () => void;
   onReset: () => void;
+  selectedCardClass: string | null;
+  onSelectCardClass: (value: string) => void;
+  selectedCardSubclass: string | null;
+  onSelectCardSubclass: (value: string) => void;
+  selectedAttribute: string | null;
+  onSelectAttribute: (value: string) => void;
+  selectedMonsterType: string | null;
+  onSelectMonsterType: (value: string) => void;
+  levelMin: number;
+  levelMax: number;
+  onChangeLevelMin: (value: number) => void;
+  onChangeLevelMax: (value: number) => void;
+  atkMin: string;
+  atkMax: string;
+  onChangeAtkMin: (value: string) => void;
+  onChangeAtkMax: (value: string) => void;
+  defMin: string;
+  defMax: string;
+  onChangeDefMin: (value: string) => void;
+  onChangeDefMax: (value: string) => void;
+  selectedLimit: string | null;
+  onSelectLimit: (value: string) => void;
 }
 
-function FilterMenu({ onApply, onReset }: FilterMenuProps) {
+function FilterMenu({
+  onApply,
+  onReset,
+  selectedCardClass,
+  onSelectCardClass,
+  selectedCardSubclass,
+  onSelectCardSubclass,
+  selectedAttribute,
+  onSelectAttribute,
+  selectedMonsterType,
+  onSelectMonsterType,
+  levelMin,
+  levelMax,
+  onChangeLevelMin,
+  onChangeLevelMax,
+  atkMin,
+  atkMax,
+  onChangeAtkMin,
+  onChangeAtkMax,
+  defMin,
+  defMax,
+  onChangeDefMin,
+  onChangeDefMax,
+  selectedLimit,
+  onSelectLimit,
+}: FilterMenuProps) {
+  const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
+
+  // If Card Class changes in a way that makes the currently-open submenu's
+  // requirement no longer met (e.g. switching away from Monster while
+  // Attribute is open, or clearing Card Class while Card Subclass is open),
+  // back out of it automatically.
+  useEffect(() => {
+    if (!activeSubmenu) return;
+    const activeButton = FILTER_GRID.find((button) => button.key === activeSubmenu);
+    if (activeButton && !isRequirementMet(activeButton.requirement, selectedCardClass)) {
+      setActiveSubmenu(null);
+    }
+  }, [selectedCardClass, activeSubmenu]);
+
   return (
     <div className="FilterMenu">
       <div className="FilterMenu-grid">
@@ -59,16 +204,83 @@ function FilterMenu({ onApply, onReset }: FilterMenuProps) {
 
         <div className="FilterMenu-separator" />
 
-        {FILTER_GRID.map((button) => (
-          <div key={button.key} className="FilterMenu-buttonSlot">
-            <button type="button" className="FilterMenu-button" aria-label={button.label}>
-              <img src={button.icon} alt={button.label} />
-            </button>
-          </div>
-        ))}
+        {FILTER_GRID.map((button) => {
+          const enabled = isRequirementMet(button.requirement, selectedCardClass);
+          const icon = !enabled && button.unselectableIcon ? button.unselectableIcon : button.icon;
+          const isClickable = SUBMENU_KEYS.has(button.key) && enabled;
+
+          return (
+            <div key={button.key} className="FilterMenu-buttonSlot">
+              <button
+                type="button"
+                className="FilterMenu-button"
+                aria-label={button.label}
+                aria-pressed={activeSubmenu === button.key}
+                disabled={!enabled}
+                onClick={
+                  isClickable
+                    ? () =>
+                        setActiveSubmenu((current) =>
+                          current === button.key ? null : button.key,
+                        )
+                    : undefined
+                }
+              >
+                <img src={icon} alt={button.label} />
+              </button>
+            </div>
+          );
+        })}
 
         <div className="FilterMenu-separator" />
+      </div>
 
+      <div className="FilterMenu-submenu">
+        {activeSubmenu === 'cardClass' && (
+          <CardClassMenu selected={selectedCardClass} onSelect={onSelectCardClass} />
+        )}
+        {activeSubmenu === 'cardSubclass' && (
+          <CardSubclassMenu
+            cardClass={selectedCardClass}
+            selected={selectedCardSubclass}
+            onSelect={onSelectCardSubclass}
+          />
+        )}
+        {activeSubmenu === 'attribute' && (
+          <AttributeMenu selected={selectedAttribute} onSelect={onSelectAttribute} />
+        )}
+        {activeSubmenu === 'monsterType' && (
+          <MonsterTypeMenu selected={selectedMonsterType} onSelect={onSelectMonsterType} />
+        )}
+        {activeSubmenu === 'level' && (
+          <LevelMenu
+            min={levelMin}
+            max={levelMax}
+            onChangeMin={onChangeLevelMin}
+            onChangeMax={onChangeLevelMax}
+          />
+        )}
+        {activeSubmenu === 'atk' && (
+          <StatRangeMenu
+            label="ATK"
+            min={atkMin}
+            max={atkMax}
+            onChangeMin={onChangeAtkMin}
+            onChangeMax={onChangeAtkMax}
+          />
+        )}
+        {activeSubmenu === 'def' && (
+          <StatRangeMenu
+            label="DEF"
+            min={defMin}
+            max={defMax}
+            onChangeMin={onChangeDefMin}
+            onChangeMax={onChangeDefMax}
+          />
+        )}
+        {activeSubmenu === 'limit' && (
+          <LimitMenu selected={selectedLimit} onSelect={onSelectLimit} />
+        )}
       </div>
     </div>
   );

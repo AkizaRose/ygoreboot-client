@@ -1,10 +1,11 @@
 .CardBrowser {
-  display: flex;
+  width: 342px;
   flex-direction: column;
   align-items: flex-start;
-  padding: 4px;
-  gap: 4px;
-  border: 2px solid #ffffff
+  padding: 8px;
+  border: 2px solid #00fefe;
+  background: #333333;
+  border-radius: 8px;
 }
 
 .CardBrowser-filters {
@@ -50,6 +51,7 @@
   display: grid;
   grid-template-columns: repeat(5, max-content);
   gap: 4px;
+  margin-top: 8px
 }
 
 .CardBrowser-cell {
@@ -71,23 +73,25 @@
 .CardBrowser-pagination {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 4px;
   justify-self: center;
   align-self: center;
+  justify-content: center;
+  margin-top: 8px
 }
 
 .CardBrowser-pageButton {
-  width: 100%;
-  height: 100%;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: none;
   background: none;
-  padding: 0;
   cursor: pointer;
 }
 
 .CardBrowser-pageButton img {
-  width: 60%;
-  height: 60%;
+  width: 32px;
+  height: 32px;
 }
 
 .CardBrowser-pageDisplay {

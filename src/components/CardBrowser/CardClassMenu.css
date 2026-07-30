@@ -1,0 +1,29 @@
+.CardClassMenu {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  row-gap: 8px;
+  column-gap: 12px;
+  margin-top: 12px;
+}
+
+.CardClassMenu-row {
+  display: contents;
+  cursor: pointer;
+}
+
+.CardClassMenu-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.CardClassMenu-label {
+  font-size: 14px;
+}
+
+.CardClassMenu-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}

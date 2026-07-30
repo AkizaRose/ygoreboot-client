@@ -1,0 +1,29 @@
+.SingleSelectMenu {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  row-gap: 8px;
+  padding: 24px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps"
+}
+
+.SingleSelectMenu-row {
+  display: contents;
+  cursor: pointer;
+}
+
+.SingleSelectMenu-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.SingleSelectMenu-label {
+  font-size: 14px;
+}
+
+.SingleSelectMenu-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}

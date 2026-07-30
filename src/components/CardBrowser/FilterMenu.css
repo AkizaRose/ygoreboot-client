@@ -53,6 +53,10 @@
     cursor: pointer;
   }
   
+  .FilterMenu-button:disabled {
+    cursor: not-allowed;
+  }
+  
   .FilterMenu-button img {
     width: 100%;
     height: 100%;
@@ -60,3 +64,7 @@
     display: block;
   }
   
+  .FilterMenu-submenu {
+    max-height: 480px;
+    overflow-y: auto;
+  }
