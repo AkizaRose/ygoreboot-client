@@ -9,7 +9,7 @@
   --accent-border: rgba(170, 59, 255, 0.5);
   --social-bg: rgba(244, 243, 236, 0.5);
   --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+    #00fefe60 0 10px 10px 10px, #00fefe39 0 5px 5px 5px;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
@@ -33,7 +33,7 @@
   :root {
     --text: #bcbcbc;
     --text-h: #f3f4f6;
-    --bg: #16171d;
+    --bg: #16171d00;
     --border: #ffffff;
     --code-bg: #1f2028;
     --accent: #c084fc;
@@ -41,7 +41,7 @@
     --accent-border: rgba(192, 132, 252, 0.5);
     --social-bg: rgba(47, 48, 58, 0.5);
     --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+      #00fefe1a 0 0px 0px 5px, #00fefe2c 0 0px 0px 7px;
   }
 
   #social .button-icon {
@@ -50,16 +50,45 @@
 }
 
 #root {
-  min-width: 200svh;
-  max-width: 200svh;
+  max-width: 100%;
+  min-height: 100svh;
   margin: 0 auto;
   text-align: center;
-  border: 1px solid var(--border);
-  min-height: 100svh;
-  max-height: 100svh;
   display: flex;
-  flex-direction: row;
+  align-items: center;
+  justify-content: center;
   box-sizing: border-box;
+  --bg-tile-size: 1760px;
+  background-image: url('./assets/ui/bgImage.png');
+  background-repeat: repeat;
+  background-size: var(--bg-tile-size) var(--bg-tile-size);
+  animation: bg-scroll-diagonal 180s linear infinite;
+}
+
+/* background-position percentages are NOT "shift by one tile" -- per spec
+   they're (container size - image size) * percentage, which only equals a
+   clean one-tile shift when the container happens to be exactly 2x the
+   tile's size. That mismatch is what caused the visible seam.
+   The reliable fix: force the tile to render at a size we control
+   explicitly (--bg-tile-size, via background-size above) and animate by
+   exactly that many pixels. Since the animated distance and the rendered
+   tile size are now driven by the same variable, the loop point is
+   guaranteed to line up exactly, regardless of bgImage.png's actual
+   resolution. Negative on both axes moves the pattern up and to the left
+   (toward the top left). */
+@keyframes bg-scroll-diagonal {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: calc(var(--bg-tile-size) * -1) calc(var(--bg-tile-size) * -1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root {
+    animation: none;
+  }
 }
 
 body {

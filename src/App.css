@@ -1,0 +1,10 @@
+.PageContent {
+    /* Adjust these to whatever size you actually want the page's content
+       area to be — completely independent of #root, which just centers this
+       box within the full-page animated background. */
+    width: 1400px;
+    height: 650px;
+    box-sizing: border-box;
+    overflow: auto;
+    background: var(--bg);
+  }
