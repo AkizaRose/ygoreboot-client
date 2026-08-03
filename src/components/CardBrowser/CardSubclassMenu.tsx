@@ -8,7 +8,6 @@ import counterIcon from '../../assets/ui/cardbrowser/searchmenu/cardsubtype/spel
 import equipIcon from '../../assets/ui/cardbrowser/searchmenu/cardsubtype/spelltrap/Equip.png';
 import normalIcon from '../../assets/ui/cardbrowser/searchmenu/cardsubtype/spelltrap/Normal.png';
 import fieldIcon from '../../assets/ui/cardbrowser/searchmenu/cardsubtype/spelltrap/Field.png';
-import quickPlayIcon from '../../assets/ui/cardbrowser/searchmenu/cardsubtype/spelltrap/Quick-Play.png';
 import spellTrapRitualIcon from '../../assets/ui/cardbrowser/searchmenu/cardsubtype/spelltrap/Ritual.png';
 import SingleSelectMenu, { type SingleSelectOption } from './SingleSelectMenu';
 
@@ -25,7 +24,6 @@ const SPELL_SUBCLASS_OPTIONS: SingleSelectOption[] = [
   { value: 'Continuous', label: 'Continuous', icon: continuousIcon },
   { value: 'Equip', label: 'Equip', icon: equipIcon },
   { value: 'Field', label: 'Field', icon: fieldIcon },
-  { value: 'Quick-Play', label: 'Quick-Play', icon: quickPlayIcon },
   { value: 'Ritual', label: 'Ritual', icon: spellTrapRitualIcon },
 ];
 

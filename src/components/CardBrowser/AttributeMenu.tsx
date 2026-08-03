@@ -1,10 +1,10 @@
-import darkIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Dark.png';
-import divineIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Divine.png';
-import earthIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Earth.png';
-import fireIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Fire.png';
-import lightIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Light.png';
-import waterIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Water.png';
-import windIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Wind.png';
+import darkIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Dark.svg';
+import divineIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Divine.svg';
+import earthIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Earth.svg';
+import fireIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Fire.svg';
+import lightIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Light.svg';
+import waterIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Water.svg';
+import windIcon from '../../assets/ui/cardbrowser/searchmenu/attribute/Wind.svg';
 import SingleSelectMenu, { type SingleSelectOption } from './SingleSelectMenu';
 
 // Monster attributes only — Spell/Trap technically share the same

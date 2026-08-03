@@ -55,6 +55,7 @@ type FilterRequirement = 'none' | 'cardClass' | 'monster';
 interface FilterButtonConfig {
   key: string;
   label: string;
+  tooltip: string;
   icon: string;
   hoverIcon: string;
   clickIcon: string;
@@ -70,6 +71,7 @@ const FILTER_GRID: FilterButtonConfig[] = [
   {
     key: 'cardClass',
     label: 'Card Class',
+    tooltip: 'Card Type',
     icon: cardClassIcon,
     hoverIcon: cardClassHoverIcon,
     clickIcon: cardClassClickIcon,
@@ -78,6 +80,7 @@ const FILTER_GRID: FilterButtonConfig[] = [
   {
     key: 'cardSubclass',
     label: 'Card Subclass',
+    tooltip: 'Card Subtype',
     icon: cardSubclassIcon,
     hoverIcon: cardSubclassHoverIcon,
     clickIcon: cardSubclassClickIcon,
@@ -87,6 +90,7 @@ const FILTER_GRID: FilterButtonConfig[] = [
   {
     key: 'attribute',
     label: 'Attribute',
+    tooltip: 'Attribute',
     icon: attributeIcon,
     hoverIcon: attributeHoverIcon,
     clickIcon: attributeClickIcon,
@@ -96,6 +100,7 @@ const FILTER_GRID: FilterButtonConfig[] = [
   {
     key: 'monsterType',
     label: 'Monster Type',
+    tooltip: 'Type',
     icon: monsterTypeIcon,
     hoverIcon: monsterTypeHoverIcon,
     clickIcon: monsterTypeClickIcon,
@@ -105,6 +110,7 @@ const FILTER_GRID: FilterButtonConfig[] = [
   {
     key: 'level',
     label: 'Level',
+    tooltip: 'Level',
     icon: levelIcon,
     hoverIcon: levelHoverIcon,
     clickIcon: levelClickIcon,
@@ -114,6 +120,7 @@ const FILTER_GRID: FilterButtonConfig[] = [
   {
     key: 'atk',
     label: 'ATK',
+    tooltip: 'ATK',
     icon: atkIcon,
     hoverIcon: atkHoverIcon,
     clickIcon: atkClickIcon,
@@ -123,6 +130,7 @@ const FILTER_GRID: FilterButtonConfig[] = [
   {
     key: 'def',
     label: 'DEF',
+    tooltip: 'DEF',
     icon: defIcon,
     hoverIcon: defHoverIcon,
     clickIcon: defClickIcon,
@@ -132,6 +140,7 @@ const FILTER_GRID: FilterButtonConfig[] = [
   {
     key: 'limit',
     label: 'Limit',
+    tooltip: 'Limit',
     icon: limitIcon,
     hoverIcon: limitHoverIcon,
     clickIcon: limitClickIcon,
@@ -239,6 +248,7 @@ function FilterMenu({
           hoverIcon={applyHoverIcon}
           clickIcon={applyClickIcon}
           alt="Apply"
+          title="Apply"
           className="FilterMenu-actionButton"
           onClick={onApply}
         />
@@ -247,6 +257,7 @@ function FilterMenu({
           hoverIcon={resetHoverIcon}
           clickIcon={resetClickIcon}
           alt="Reset"
+          title="Reset"
           className="FilterMenu-actionButton"
           onClick={onReset}
         />
@@ -265,6 +276,7 @@ function FilterMenu({
                 hoverIcon={button.hoverIcon}
                 clickIcon={button.clickIcon}
                 alt={button.label}
+                title={button.tooltip}
                 className="FilterMenu-button"
                 disabled={!enabled}
                 ariaPressed={activeSubmenu === button.key}

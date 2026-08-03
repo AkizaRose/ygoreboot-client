@@ -21,7 +21,7 @@ import './CardBrowser.css';
 // agree with each other.
 const CARD_WIDTH = 813;
 const CARD_HEIGHT = 1185;
-const SCALE = 0.08;
+const SCALE = 0.3;
 
 const COLUMNS = 5;
 const ROWS_PER_PAGE = 5;
@@ -309,6 +309,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
               hoverIcon={filterHoverIcon}
               clickIcon={filterClickIcon}
               alt="Filters"
+              title="Search Filters"
               className="CardBrowser-filtersButton"
               onClick={() => setIsFilterMenuOpen(true)}
             />

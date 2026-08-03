@@ -4,7 +4,7 @@
   top: 0px;
   width: 813px;
   height: 1185px;
-  z-index: 56;
+  z-index: 1;
   cursor: pointer;
   user-select: none;
 }
@@ -12,117 +12,112 @@
   font-size: 92px;
   font-family: "MatrixRegularSmallCaps";
   color: rgb(0, 0, 0);
-  line-height: 0.723;
   text-align: justify;
   position: absolute;
-  left: 61.82px;
-  top: 62px;
+  left: 44px;
+  top: 60px;
   z-index: 55;
 }
 .attribute {
   position: absolute;
-  left: 680px;
-  top: 56px;
-  width: 74px;
-  height: 75px;
+  left: 665px;
+  top: 41px;
+  width: 106px;
+  height: 106px;
   z-index: 53;
 }
 .spellTrapType {
-  font-size: 38px;
+  font-size: 32px;
   font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
   color: rgb(0, 0, 0);
-  font-weight: bold;
-  line-height: 1.2;
-  text-align: right;
+  text-align: left;
   position: absolute;
-  left: 49.87px;
-  top: 142px;
-  width: 681.07px;
-  height: 46.62px;
+  left: 172.57px;
+  top: 853.73px;
+  width: 536.27px;
+  height: 27.38px;
   z-index: 44;
-}
-.spellTrapType .bracket {
-  margin: 0 0.05em;
-}
-.spellTrapType .iconGap {
-  display: inline-block;
-  width: 48px; /* match .spellTrapIcon's width */
 }
 .spellTrapIcon {
   position: absolute;
-  left: 669px;
-  top: 148px;
-  width: 44px;
-  height: 44px;
+  left: 55px;
+  top: 785px;
+  width: 103px;
+  height: 103px;
   z-index: 40;
 }
+.spellTrapIconBG {
+  position: absolute;
+  left: 52px;
+  top: 782px;
+  width: 109px;
+  height: 109px;
+  z-index: 39;
+}
 .spellTrapEffect {
-  font-size: 29.464px;
-  font-family: "MatrixBook";
+  font-size: 28px;
+  font-family: "Yu-Gi-Oh! Matrix Book";
   color: rgba(0, 0, 0, 0.969);
   line-height: 1;
   text-align: justify;
   position: absolute;
-  left: 65.79px;
-  top: 892.8px;
-  width: 685.72px;
-  height: 221.2px;
-  z-index: 34;
+  left: 55.52px;
+  top: 901.38px;
+  width: 701.23px;
+  height: 181.64px;
+  z-index: 24;
 }
 .level5 {
   position: absolute;
-  left: 463px;
-  top: 145px;
-  width: 49px;
-  height: 49px;
-  z-index: 32;
+  left: 48px;
+  top: 760px;
+  width: 117px;
+  height: 131px;
+  z-index: 28;
 }
 .level4 {
   position: absolute;
-  left: 517px;
-  top: 145px;
-  width: 49px;
-  height: 49px;
-  z-index: 31;
+  left: 48px;
+  top: 760px;
+  width: 117px;
+  height: 131px;
+  z-index: 28;
 }
 .level3 {
   position: absolute;
-  left: 571px;
-  top: 145px;
-  width: 49px;
-  height: 49px;
-  z-index: 30;
+  left: 48px;
+  top: 760px;
+  width: 117px;
+  height: 131px;
+  z-index: 28;
 }
 .level2 {
   position: absolute;
-  left: 625px;
-  top: 145px;
-  width: 49px;
-  height: 49px;
-  z-index: 29;
+  left: 48px;
+  top: 760px;
+  width: 117px;
+  height: 131px;
+  z-index: 28;
 }
 .level1 {
   position: absolute;
-  left: 679px;
-  top: 145px;
-  width: 49px;
-  height: 49px;
+  left: 48px;
+  top: 760px;
+  width: 117px;
+  height: 131px;
   z-index: 28;
 }
 .types {
-  font-size: 30px;
-  font-family: "ITC Stone Serif";
-  font-variant: small-caps;
-  font-synthesis: small-caps;
-  letter-spacing: 0.7px;
-  color: rgba(0, 0, 0, 0.949);
-  font-weight: bold;
-  line-height: 1.2;
+  font-size: 32px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  color: rgb(0, 0, 0);
   text-align: left;
   position: absolute;
-  left: 62.95px;
-  top: 889.1px;
-  z-index: 27;
+  left: 172.57px;
+  top: 853.73px;
+  width: 536.27px;
+  height: 27.38px;
+  z-index: 44;
 }
 .types .bracket {
   margin: 0 0.1em;
@@ -132,112 +127,110 @@
 }
 .monsterEffect {
   font-size: 28px;
-  font-family: "MatrixBook";
+  font-family: "Yu-Gi-Oh! Matrix Book";
   color: rgba(0, 0, 0, 0.969);
   line-height: 1;
   text-align: justify;
   position: absolute;
-  left: 64.78px;
-  top: 922.72px;
-  width: 683.03px;
-  height: 151.01px;
+  left: 55.52px;
+  top: 901.38px;
+  width: 701.23px;
+  height: 181.64px;
   z-index: 24;
 }
 .flavourText {
   font-size: 28px;
-  font-family: "Stone Serif ITC Medium";
+  font-family: "Yu-Gi-Oh! StoneSerif LT";
   color: rgba(0, 0, 0, 0.969);
   font-style: italic;
   line-height: 1;
   text-align: justify;
   position: absolute;
-  left: 64.78px;
-  top: 922.72px;
-  width: 683.03px;
-  height: 151.01px;
-  z-index: 21;
+  left: 55.52px;
+  top: 901.38px;
+  width: 701.23px;
+  height: 181.64px;
+  z-index: 24;
 }
 .divLine {
   position: absolute;
-  left: 65px;
-  top: 1076px;
-  width: 684px;
-  height: 2px;
+  left: 69.42px;
+  top: 1093.55px;
+  width: 676.58px;
+  height: 1.25px;
   z-index: 19;
 }
+.atkDefDivLine {
+  position: absolute;
+  left: 405.1px;
+  top: 1102.92px;
+  width: 2.8px;
+  height: 25px;
+  z-index: 20;
+}
 .atkLabel {
-  font-size: 33.381px;
-  font-family: "MatrixBoldSmallCaps";
-  letter-spacing: 0.9px;
+  font-size: 24px;
+  font-family: "Ro GSan Serif Std";
   color: rgb(0, 0, 0);
-  line-height: 1.2;
+  line-height: 1;
   text-align: left;
   position: absolute;
-  left: 431.05px;
-  top: 1077.16px;
-  width: 161.22px;
-  height: 59.95px;
+  left: 208px;
+  top: 1106px;
+  width: 44.48px;
+  height: 23.9px;
   z-index: 18;
 }
 .defLabel {
-  font-size: 33.381px;
-  font-family: "MatrixBoldSmallCaps";
-  letter-spacing: 0.9px;
+  font-size: 24px;
+  font-family: "Ro GSan Serif Std";
   color: rgb(0, 0, 0);
-  line-height: 1.2;
-  text-align: left;
+  line-height: 1;
+  text-align: right;
   position: absolute;
-  left: 599.99px;
-  top: 1077.16px;
-  width: 161.22px;
-  height: 59.95px;
+  left: 552px;
+  top: 1106px;
+  width: 44.48px;
+  height: 23.9px;
   z-index: 17;
-}
-.atkLabel .statSlash,
-.defLabel .statSlash {
-  margin-left: 0.10em;
 }
 .atkValue {
   font-size: 33.381px;
-  font-family: "MatrixBoldSmallCaps";
+  font-family: "Ro GSan Serif Std";
+  font-style: bold;
   color: rgb(0, 0, 0);
   line-height: 1.2;
   text-align: right;
   position: absolute;
-  left: 507.98px;
-  top: 1077.52px;
-  width: 84.29px;      /* added */
+  left: 268px;
+  top: 1096px;
+  width: 125.34px;
+  height: 40.5px;
   z-index: 16;
 }
 .defValue {
   font-size: 33.381px;
-  font-family: "MatrixBoldSmallCaps";
+  font-family: "Ro GSan Serif Std";
+  font-style: bold;
   color: rgb(0, 0, 0);
   line-height: 1.2;
-  text-align: right;
+  text-align: left;
   position: absolute;
-  left: 662.02px;
-  top: 1077.52px;
-  width: 84.29px;      /* added */
+  left: 420.24px;
+  top: 1096px;
+  width: 125.34px;
+  height: 40.5px;
   z-index: 15;
-}
-.frame {
-  position: absolute;
-  left: 28px;
-  top: 28px;
-  width: 757px;
-  height: 1128px;
-  z-index: 14;
 }
 .artwork {
   position: absolute;
-  left: 99px;
-  top: 218px;
-  width: 614px;
-  height: 615px;
+  left: 42px;
+  top: 116px;
+  width: 728px;
+  height: 733px;
   z-index: 3;
 }
-.border {
+.frame {
   position: absolute;
   left: 0px;
   top: 0px;
@@ -245,7 +238,6 @@
   height: 1185px;
   z-index: 2;
 }
-
 .limit {
   position: absolute;
   left: 14px;
@@ -253,6 +245,14 @@
   width: 171px;
   height: 171px;
   z-index: 56;
+}
+.legend {
+  position: absolute;
+  left: 47px;
+  top: 123px;
+  width: 214px;
+  height: 51px;
+  z-index: 214;
 }
 .name--light {
   color: rgb(255, 255, 255);

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { playClickSound } from '../../utils/clickSound';
 
 // How long the "clicked" image stays visible after a click, in ms. A real
 // click (mousedown immediately followed by mouseup) is often too fast to
@@ -12,6 +13,7 @@ interface IconButtonProps {
   clickIcon?: string;
   disabledIcon?: string;
   alt: string;
+  title?: string;
   disabled?: boolean;
   onClick?: () => void;
   className?: string;
@@ -24,6 +26,7 @@ function IconButton({
   clickIcon,
   disabledIcon,
   alt,
+  title,
   disabled = false,
   onClick,
   className,
@@ -61,6 +64,7 @@ function IconButton({
 
   const handleClick = () => {
     if (disabled) return;
+    playClickSound();
     onClick?.();
 
     if (clickIcon) {
@@ -94,6 +98,7 @@ function IconButton({
       onMouseLeave={disabled ? undefined : () => setIsHovering(false)}
       aria-label={alt}
       aria-pressed={ariaPressed}
+      title={title}
     >
       <img src={src} alt={alt} />
     </button>

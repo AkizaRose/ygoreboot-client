@@ -1,4 +1,5 @@
 import './SingleSelectMenu.css';
+import { playClickSound } from '../../utils/clickSound';
 
 export interface SingleSelectOption {
   value: string;
@@ -34,7 +35,10 @@ function SingleSelectMenu({ options, selected, onSelect }: SingleSelectMenuProps
             type="checkbox"
             className="SingleSelectMenu-checkbox"
             checked={selected === option.value}
-            onChange={() => onSelect(option.value)}
+            onChange={() => {
+              playClickSound();
+              onSelect(option.value);
+            }}
           />
         </label>
       ))}

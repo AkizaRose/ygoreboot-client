@@ -8,7 +8,6 @@ import {
   borderImg,
   levelImg,
   divLineImg,
-  capitalize,
 } from './cardAssets';
 import './Card.css';
 
@@ -37,7 +36,7 @@ function Card({ card }: CardProps) {
   const isMonster = card.cardClass === 'Monster';
   const isSpellOrTrap = card.cardClass === 'Spell' || card.cardClass === 'Trap';
 
-  const frameSrc = frameImages[capitalize(card.frame)];
+  const frameSrc = frameImages[(card.frame)];
   const attributeSrc = attributeImages[card.attribute];
   const artworkSrc = `/artwork/${card.artwork}`;
   const limitSrc =
@@ -170,12 +169,10 @@ function Card({ card }: CardProps) {
         <>
           <div className="atkLabel">
             <span className="statText">ATK</span>
-            <span className="statSlash">/</span>
           </div>
           <div className="atkValue">{card.atk}</div>
           <div className="defLabel">
             <span className="statText">DEF</span>
-            <span className="statSlash">/</span>
           </div>
           <div className="defValue">{card.def}</div>
         </>
