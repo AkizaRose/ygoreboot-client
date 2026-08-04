@@ -1,3 +1,24 @@
+/* "UB" = Ultra Bold. This is the only weight/style file available for this
+   typeface, so font-weight: 800 here is what makes the browser actually
+   pick this real face when your CSS asks for a bold/heavy weight — rather
+   than either rendering it at the wrong (unbolded) weight, or silently
+   thickening it further via synthesis on top of an already-bold face. */
+@font-face {
+  font-family: 'RoGSanSrfStd-UB';
+  src: url('./assets/fonts/RoGSanSrfStd-UB.otf') format('opentype');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+  }
+
+@font-face {
+  font-family: 'ROGSanSerifStdB';
+  src: url('./assets/fonts/b176947785aaf7452749f550b10890d6.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  }
+
 :root {
   --text: #bcbcbc;
   --text-h: #08060d;
@@ -20,7 +41,7 @@
   color-scheme: light dark;
   color: var(--text);
   background: var(--bg);
-  font-synthesis: none;
+  font-synthesis: style;
   text-rendering: optimizeLegibility;
   -moz-osx-font-smoothing: grayscale;
 

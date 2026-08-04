@@ -32,7 +32,7 @@
   color: rgb(0, 0, 0);
   text-align: left;
   position: absolute;
-  left: 172.57px;
+  left: 95px;
   top: 853.73px;
   width: 536.27px;
   height: 27.38px;
@@ -40,18 +40,18 @@
 }
 .spellTrapIcon {
   position: absolute;
-  left: 55px;
-  top: 785px;
-  width: 103px;
-  height: 103px;
+  left: 54px;
+  top: 852px;
+  width: 38px;
+  height: 38px;
   z-index: 40;
 }
 .spellTrapIconBG {
   position: absolute;
   left: 52px;
-  top: 782px;
-  width: 109px;
-  height: 109px;
+  top: 850px;
+  width: 40px;
+  height: 40px;
   z-index: 39;
 }
 .spellTrapEffect {
@@ -64,7 +64,7 @@
   left: 55.52px;
   top: 901.38px;
   width: 701.23px;
-  height: 181.64px;
+  height: 240px;
   z-index: 24;
 }
 .level5 {
@@ -135,7 +135,7 @@
   left: 55.52px;
   top: 901.38px;
   width: 701.23px;
-  height: 181.64px;
+  height: 240px;
   z-index: 24;
 }
 .flavourText {
@@ -149,77 +149,59 @@
   left: 55.52px;
   top: 901.38px;
   width: 701.23px;
-  height: 181.64px;
+  height: 240px;
   z-index: 24;
 }
-.divLine {
-  position: absolute;
-  left: 69.42px;
-  top: 1093.55px;
-  width: 676.58px;
-  height: 1.25px;
-  z-index: 19;
-}
-.atkDefDivLine {
-  position: absolute;
-  left: 405.1px;
-  top: 1102.92px;
-  width: 2.8px;
-  height: 25px;
-  z-index: 20;
-}
 .atkLabel {
-  font-size: 24px;
-  font-family: "Ro GSan Serif Std";
-  color: rgb(0, 0, 0);
-  line-height: 1;
-  text-align: left;
   position: absolute;
-  left: 208px;
-  top: 1106px;
-  width: 44.48px;
-  height: 23.9px;
+  left: 170px;
+  top: 1097px;
+  width: 110px;
+  height: 32px;
   z-index: 18;
 }
 .defLabel {
-  font-size: 24px;
-  font-family: "Ro GSan Serif Std";
-  color: rgb(0, 0, 0);
+  position: absolute;
+  left: 425px;
+  top: 1097px;
+  width: 110px;
+  height: 32px;
+  z-index: 17;
+}
+.atkDefLabels {
+  position: absolute;
+  left: 104px;
+  top: 696px;
+  width: 664px;
+  height: 152px;
+  z-index: 14;
+}
+.atkValue {
+  font-size: 36px;
+  font-family: "RoGSanSrfStd-UB";
+  color: rgb(255, 255, 255);
+  -webkit-text-stroke: 3px black;
   line-height: 1;
   text-align: right;
   position: absolute;
-  left: 552px;
-  top: 1106px;
-  width: 44.48px;
-  height: 23.9px;
-  z-index: 17;
-}
-.atkValue {
-  font-size: 33.381px;
-  font-family: "Ro GSan Serif Std";
-  font-style: bold;
-  color: rgb(0, 0, 0);
-  line-height: 1.2;
-  text-align: right;
-  position: absolute;
-  left: 268px;
-  top: 1096px;
-  width: 125.34px;
-  height: 40.5px;
+  left: 287px;
+  top: 800px;
+  width: 139.5px;
+  height: 45px;
   z-index: 16;
 }
 .defValue {
-  font-size: 33.381px;
-  font-family: "Ro GSan Serif Std";
-  font-style: bold;
-  color: rgb(0, 0, 0);
-  line-height: 1.2;
-  text-align: left;
+  font-size: 36px;
+  font-family: "RoGSanSrfStd-UB";
+  color: rgb(255, 255, 255);
+  -webkit-text-stroke: 3px black;
+  line-height: 1;
+  text-align: right;
   position: absolute;
-  left: 420.24px;
-  top: 1096px;
-  width: 125.34px;
-  height: 40.5px;
+  left: 544px;
+  top: 800px;
+  width: 139.5px;
+  height: 45px;
   z-index: 15;
 }
 .artwork {
