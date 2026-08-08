@@ -10,7 +10,7 @@ import {
   spellTrapIconBgImg,
 } from './cardAssets';
 import './Card.css';
-import { useAutoFitFontSize } from './useAutoFitFontSize';
+import { useAutoFitText } from './useAutoFitText';
 
 interface CardProps {
   card: CardData;
@@ -27,7 +27,9 @@ const NAME_MAX_WIDTH = 680 - NAME_LEFT - 8;
 // base font-size and box height — the same shrink range works for both,
 // since a card is only ever one or the other.
 const EFFECT_MAX_FONT_SIZE = 28;
-const EFFECT_MIN_FONT_SIZE = 18;
+const EFFECT_MIN_FONT_SIZE = 16;
+const EFFECT_MAX_LINE_HEIGHT = 1.15;
+const EFFECT_MIN_LINE_HEIGHT = 0.85;
 
 function Card({ card }: CardProps) {
   const isMonster = card.cardClass === 'Monster';
@@ -83,11 +85,17 @@ function Card({ card }: CardProps) {
   const showFlavourText = isMonster && !card.effectText && !!card.flavourText;
 
   // Only one of monsterEffect/spellTrapEffect ever renders for a given
-  // card, so a single ref/font-size pair covers both.
-  const { ref: effectTextRef, fontSize: effectFontSize } = useAutoFitFontSize<HTMLDivElement>(
-    [card.effectText],
-    { maxFontSize: EFFECT_MAX_FONT_SIZE, minFontSize: EFFECT_MIN_FONT_SIZE },
-  );
+  // card, so a single ref/fontSize/lineHeight triple covers both.
+  const {
+    ref: effectTextRef,
+    fontSize: effectFontSize,
+    lineHeight: effectLineHeight,
+  } = useAutoFitText<HTMLDivElement>([card.effectText], {
+    maxFontSize: EFFECT_MAX_FONT_SIZE,
+    minFontSize: EFFECT_MIN_FONT_SIZE,
+    maxLineHeight: EFFECT_MAX_LINE_HEIGHT,
+    minLineHeight: EFFECT_MIN_LINE_HEIGHT,
+  });
 
   const renderMultiline = (text: string) =>
     text.split('\n').map((line, i, arr) => (
@@ -102,6 +110,7 @@ function Card({ card }: CardProps) {
       <img className="border" src={borderImg} alt="" />
       <img className="artwork" src={artworkSrc} alt={card.name} />
       {frameSrc && <img className="frame" src={frameSrc} alt="" />}
+      <div className="artworkBorder" />
 
       <div
         ref={nameRef}
@@ -151,7 +160,7 @@ function Card({ card }: CardProps) {
         <div
           ref={effectTextRef}
           className="monsterEffect"
-          style={{ fontSize: effectFontSize }}
+          style={{ fontSize: effectFontSize, lineHeight: effectLineHeight }}
         >
           {renderMultiline(card.effectText)}
         </div>
@@ -161,7 +170,7 @@ function Card({ card }: CardProps) {
         <div
           ref={effectTextRef}
           className="spellTrapEffect"
-          style={{ fontSize: effectFontSize }}
+          style={{ fontSize: effectFontSize, lineHeight: effectLineHeight }}
         >
           {renderMultiline(card.effectText)}
         </div>
