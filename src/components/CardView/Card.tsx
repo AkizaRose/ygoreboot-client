@@ -27,7 +27,7 @@ const NAME_MAX_WIDTH = 680 - NAME_LEFT - 8;
 // base font-size and box height — the same shrink range works for both,
 // since a card is only ever one or the other.
 const EFFECT_MAX_FONT_SIZE = 28;
-const EFFECT_MIN_FONT_SIZE = 16;
+const EFFECT_MIN_FONT_SIZE = 18;
 
 function Card({ card }: CardProps) {
   const isMonster = card.cardClass === 'Monster';

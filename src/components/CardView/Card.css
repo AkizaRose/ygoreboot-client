@@ -58,13 +58,12 @@
   font-size: 28px;
   font-family: "Yu-Gi-Oh! Matrix Book";
   color: rgba(0, 0, 0, 0.969);
-  line-height: 1;
   text-align: justify;
   position: absolute;
-  left: 55.52px;
-  top: 901.38px;
-  width: 701.23px;
-  height: 240px;
+  left: 54px;
+  top: 898px;
+  width: 703px;
+  height: 200px;
   z-index: 24;
 }
 .level5 {
@@ -129,13 +128,12 @@
   font-size: 28px;
   font-family: "Yu-Gi-Oh! Matrix Book";
   color: rgba(0, 0, 0, 0.969);
-  line-height: 1;
   text-align: justify;
   position: absolute;
-  left: 55.52px;
-  top: 901.38px;
-  width: 701.23px;
-  height: 240px;
+  left: 54px;
+  top: 898px;
+  width: 703px;
+  height: 200px;
   z-index: 24;
 }
 .flavourText {
@@ -143,38 +141,13 @@
   font-family: "Yu-Gi-Oh! StoneSerif LT";
   color: rgba(0, 0, 0, 0.969);
   font-style: italic;
-  line-height: 1;
   text-align: justify;
   position: absolute;
-  left: 55.52px;
-  top: 901.38px;
-  width: 701.23px;
-  height: 240px;
+  left: 54px;
+  top: 898px;
+  width: 703px;
+  height: 200px;
   z-index: 24;
-}
-.atkLabel {
-  position: absolute;
-  left: 170px;
-  top: 1097px;
-  width: 110px;
-  height: 32px;
-  z-index: 18;
-}
-.defLabel {
-  position: absolute;
-  left: 425px;
-  top: 1097px;
-  width: 110px;
-  height: 32px;
-  z-index: 17;
-}
-.atkDefLabels {
-  position: absolute;
-  left: 104px;
-  top: 696px;
-  width: 664px;
-  height: 152px;
-  z-index: 14;
 }
 .atkValue {
   font-size: 36px;
@@ -184,9 +157,9 @@
   line-height: 1;
   text-align: right;
   position: absolute;
-  left: 287px;
-  top: 800px;
-  width: 139.5px;
+  left: 252.47px;
+  top: 1115px;
+  width: 138.19px;
   height: 45px;
   z-index: 16;
 }
@@ -198,19 +171,19 @@
   line-height: 1;
   text-align: right;
   position: absolute;
-  left: 544px;
-  top: 800px;
-  width: 139.5px;
+  left: 417.8px;
+  top: 1115px;
+  width: 138.19px;
   height: 45px;
   z-index: 15;
 }
 .artwork {
   position: absolute;
-  left: 42px;
-  top: 116px;
-  width: 728px;
-  height: 733px;
-  z-index: 3;
+  left: 0px;
+  top: 80px;
+  width: 813px;
+  height: 813px;
+  z-index: 1
 }
 .frame {
   position: absolute;

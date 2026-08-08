@@ -21,7 +21,7 @@ import './CardBrowser.css';
 // agree with each other.
 const CARD_WIDTH = 813;
 const CARD_HEIGHT = 1185;
-const SCALE = 0.5;
+const SCALE = 0.3;
 
 const COLUMNS = 5;
 const ROWS_PER_PAGE = 5;
