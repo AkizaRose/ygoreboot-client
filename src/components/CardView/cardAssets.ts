@@ -27,11 +27,6 @@ const spellTrapIconModules = import.meta.glob('../../assets/card/spelltrapicon/*
   import: 'default',
 }) as Record<string, string>;
 
-const limitModules = import.meta.glob('../../assets/card/limit/*.png', {
-  eager: true,
-  import: 'default',
-}) as Record<string, string>;
-
 const levelModules = import.meta.glob('../../assets/card/level/*.png', {
   eager: true,
   import: 'default',
@@ -40,12 +35,13 @@ const levelModules = import.meta.glob('../../assets/card/level/*.png', {
 export const attributeImages = toNameMap(attributeModules);
 export const frameImages = toNameMap(frameModules);
 export const spellTrapIconImages = toNameMap(spellTrapIconModules);
-export const limitImages = toNameMap(limitModules);
 export const levelImages = toNameMap(levelModules);
 
 export { default as borderImg } from '../../assets/card/Border.png';
 export { default as divLineImg } from '../../assets/card/DivLine.png';
 export { default as spellTrapIconBgImg } from '../../assets/card/spelltrapicon/sticonbg.png';
+export { default as atkDefLabelsImg } from '../../assets/card/AtkDefLabels.png';
+export { default as legendImg } from '../../assets/card/Legend.png';
 
 export function capitalize(value: string): string {
   if (!value) return value;

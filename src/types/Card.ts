@@ -11,7 +11,7 @@ export interface CardData {
     def?: string;
     artwork: string;
     frame: string;
-    limit: number;
+    legend: string;
     effectText: string;
     flavourText?: string;
   }

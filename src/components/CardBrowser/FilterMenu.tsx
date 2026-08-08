@@ -32,9 +32,9 @@ import defIcon from '../../assets/ui/cardbrowser/searchfilters/def.png';
 import defHoverIcon from '../../assets/ui/cardbrowser/searchfilters/def_hover.png';
 import defClickIcon from '../../assets/ui/cardbrowser/searchfilters/def_click.png';
 import defUnselectableIcon from '../../assets/ui/cardbrowser/searchfilters/def_unselectable.png';
-import limitIcon from '../../assets/ui/cardbrowser/searchfilters/limit.png';
-import limitHoverIcon from '../../assets/ui/cardbrowser/searchfilters/limit_hover.png';
-import limitClickIcon from '../../assets/ui/cardbrowser/searchfilters/limit_click.png';
+import legendIcon from '../../assets/ui/cardbrowser/searchfilters/legend.png';
+import legendHoverIcon from '../../assets/ui/cardbrowser/searchfilters/legend_hover.png';
+import legendClickIcon from '../../assets/ui/cardbrowser/searchfilters/legend_click.png';
 import IconButton from './IconButton';
 import CardClassMenu from './CardClassMenu';
 import CardSubclassMenu from './CardSubclassMenu';
@@ -42,7 +42,7 @@ import AttributeMenu from './AttributeMenu';
 import MonsterTypeMenu from './MonsterTypeMenu';
 import LevelMenu from './LevelMenu';
 import StatRangeMenu from './StatRangeMenu';
-import LimitMenu from './LimitMenu';
+import LegendMenu from './LegendMenu';
 import './FilterMenu.css';
 
 // What has to be true in Card Class for a given filter button to be usable:
@@ -138,12 +138,12 @@ const FILTER_GRID: FilterButtonConfig[] = [
     requirement: 'monster',
   },
   {
-    key: 'limit',
-    label: 'Limit',
-    tooltip: 'Limit',
-    icon: limitIcon,
-    hoverIcon: limitHoverIcon,
-    clickIcon: limitClickIcon,
+    key: 'legend',
+    label: 'Legend',
+    tooltip: 'Legend',
+    icon: legendIcon,
+    hoverIcon: legendHoverIcon,
+    clickIcon: legendClickIcon,
     requirement: 'none',
   },
 ];
@@ -170,7 +170,7 @@ const SUBMENU_KEYS = new Set([
   'level',
   'atk',
   'def',
-  'limit',
+  'legend',
 ]);
 
 interface FilterMenuProps {
@@ -196,8 +196,8 @@ interface FilterMenuProps {
   defMax: string;
   onChangeDefMin: (value: string) => void;
   onChangeDefMax: (value: string) => void;
-  selectedLimit: string | null;
-  onSelectLimit: (value: string) => void;
+  selectedLegend: string | null;
+  onSelectLegend: (value: string) => void;
 }
 
 function FilterMenu({
@@ -223,8 +223,8 @@ function FilterMenu({
   defMax,
   onChangeDefMin,
   onChangeDefMax,
-  selectedLimit,
-  onSelectLimit,
+  selectedLegend,
+  onSelectLegend,
 }: FilterMenuProps) {
   const [activeSubmenu, setActiveSubmenu] = useState<string | null>(null);
 
@@ -339,8 +339,8 @@ function FilterMenu({
             onChangeMax={onChangeDefMax}
           />
         )}
-        {activeSubmenu === 'limit' && (
-          <LimitMenu selected={selectedLimit} onSelect={onSelectLimit} />
+        {activeSubmenu === 'legend' && (
+          <LegendMenu selected={selectedLegend} onSelect={onSelectLegend} />
         )}
       </div>
     </div>

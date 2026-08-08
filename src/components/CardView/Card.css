@@ -193,14 +193,6 @@
   height: 1185px;
   z-index: 2;
 }
-.limit {
-  position: absolute;
-  left: 14px;
-  top: 21px;
-  width: 171px;
-  height: 171px;
-  z-index: 56;
-}
 .legend {
   position: absolute;
   left: 47px;

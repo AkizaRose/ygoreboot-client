@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import Card from '../CardView/Card';
+import CardImage from '../CardView/CardImage';
 import FilterMenu from './FilterMenu';
 import IconButton from './IconButton';
 import type { CardData } from '../../types/Card';
@@ -142,13 +142,16 @@ function CardBrowser({ cards }: CardBrowserProps) {
     return true;
   };
 
-  // Limit filter selection. Unlike every other filter added so far, this
-  // one isn't Monster-only — it applies to any card class — so there's no
-  // corresponding "reset when Card Class isn't Monster" effect here.
-  const [selectedLimit, setSelectedLimit] = useState<string | null>(null);
+  // Legend filter selection. Like Limit before it, this isn't Monster-only
+  // — it applies to any card class — so there's no corresponding "reset
+  // when Card Class isn't Monster" effect here. Since there's only one
+  // meaningful option ("Legend"), this behaves like a single toggle:
+  // selecting it filters to Legend cards only, selecting it again clears
+  // the filter.
+  const [selectedLegend, setSelectedLegend] = useState<string | null>(null);
 
-  const selectLimit = (value: string) => {
-    setSelectedLimit((prev) => (prev === value ? null : value));
+  const selectLegend = (value: string) => {
+    setSelectedLegend((prev) => (prev === value ? null : value));
   };
 
   const filteredCards = useMemo(() => {
@@ -180,7 +183,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
       }
       if (!isWithinStatRange(card.atk, atkMin, atkMax)) return false;
       if (!isWithinStatRange(card.def, defMin, defMax)) return false;
-      if (selectedLimit && card.limit !== Number(selectedLimit)) return false;
+      if (selectedLegend && card.legend !== selectedLegend) return false;
       return true;
     });
   }, [
@@ -197,7 +200,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
     atkMax,
     defMin,
     defMax,
-    selectedLimit,
+    selectedLegend,
   ]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCards.length / CARDS_PER_PAGE));
@@ -220,7 +223,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
     atkMax,
     defMin,
     defMax,
-    selectedLimit,
+    selectedLegend,
   ]);
 
   // Safety net for any other future changes to the card list that might
@@ -245,9 +248,9 @@ function CardBrowser({ cards }: CardBrowserProps) {
     setSelectedCardClass(null);
     // selectedCardSubclass, selectedAttribute, selectedMonsterType, and the
     // Level/ATK/DEF ranges are all cleared automatically by their own
-    // "reset when Card Class isn't Monster" effects above. Limit isn't
+    // "reset when Card Class isn't Monster" effects above. Legend isn't
     // Monster-only, so it needs clearing explicitly here.
-    setSelectedLimit(null);
+    setSelectedLegend(null);
   };
 
   return (
@@ -276,8 +279,8 @@ function CardBrowser({ cards }: CardBrowserProps) {
           defMax={defMax}
           onChangeDefMin={setDefMin}
           onChangeDefMax={setDefMax}
-          selectedLimit={selectedLimit}
-          onSelectLimit={selectLimit}
+          selectedLegend={selectedLegend}
+          onSelectLegend={selectLegend}
         />
       ) : (
         <>
@@ -290,7 +293,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
               type="text"
               value={nameQuery}
               onChange={(e) => setNameQuery(e.target.value)}
-              placeholder="Search..."
+              placeholder="Search by card name..."
             />
 
             <label className="CardBrowser-filterLabel" htmlFor="card-browser-text-search">
@@ -301,7 +304,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
               type="text"
               value={textQuery}
               onChange={(e) => setTextQuery(e.target.value)}
-              placeholder="Search..."
+              placeholder="Search by effect / flavor text..."
             />
 
             <IconButton
@@ -330,7 +333,7 @@ function CardBrowser({ cards }: CardBrowserProps) {
                     transform: `scale(${SCALE})`,
                   }}
                 >
-                  <Card card={card} />
+                  <CardImage card={card} />
                 </div>
               </div>
             ))}

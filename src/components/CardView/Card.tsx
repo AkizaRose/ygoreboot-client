@@ -4,10 +4,11 @@ import {
   attributeImages,
   frameImages,
   spellTrapIconImages,
-  limitImages,
   levelImages,
   borderImg,
   spellTrapIconBgImg,
+  atkDefLabelsImg,
+  legendImg,
 } from './cardAssets';
 import './Card.css';
 import { useAutoFitText } from './useAutoFitText';
@@ -38,8 +39,7 @@ function Card({ card }: CardProps) {
   const frameSrc = frameImages[(card.frame)];
   const attributeSrc = attributeImages[card.attribute];
   const artworkSrc = `/artwork/${card.artwork}`;
-  const limitSrc =
-    card.limit === 1 || card.limit === 2 ? limitImages[String(card.limit)] : undefined;
+  const isLegend = !!card.legend;
 
   // One pre-composited image per Level value (level1.png..level5.png),
   // rather than stacking individual star images — Card.css already gives
@@ -178,12 +178,13 @@ function Card({ card }: CardProps) {
 
       {isMonster && (
         <>
+          <img className="atkDefLabels" src={atkDefLabelsImg} alt="ATK / DEF" />
           <div className="atkValue">{card.atk}</div>
           <div className="defValue">{card.def}</div>
         </>
       )}
 
-      {limitSrc && <img className="limit" src={limitSrc} alt={`Limit ${card.limit}`} />}
+      {isLegend && <img className="legend" src={legendImg} alt="Legend" />}
     </div>
   );
 }

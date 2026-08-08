@@ -1,0 +1,18 @@
+.CardImage-raster {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Positioned far off-screen rather than display:none/visibility:hidden —
+   it still needs to be genuinely laid out and painted for html-to-image
+   to capture it, just not visible to the user. pointer-events: none keeps
+   it out of the way even at that position. */
+.CardImage-captureStage {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  pointer-events: none;
+}
