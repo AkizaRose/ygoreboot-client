@@ -7,4 +7,9 @@
     box-sizing: border-box;
     overflow: auto;
     background: var(--bg);
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 24px;
+    padding: 16px;
   }

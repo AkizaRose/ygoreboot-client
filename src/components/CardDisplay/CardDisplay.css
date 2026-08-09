@@ -1,0 +1,35 @@
+.CardDisplay {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.CardDisplay-imageWrapper {
+  overflow: hidden;
+  position: relative;
+  /* Non-interactable per spec: no clicking, dragging, or selecting the
+     enlarged preview image itself. The text box below is deliberately
+     NOT covered by this — no reason to block selecting/copying the
+     effect text, and pointer-events: none would also break its own
+     scrollbar if it ever needs one. */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.CardDisplay-cardWrapper {
+  transform-origin: top left;
+}
+
+.CardDisplay-text {
+  font-size: 13px;
+  font-family: "Yu-Gi-Oh! Matrix Book";
+  white-space: pre-line;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #33333340;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  padding: 6px;
+  box-sizing: border-box;
+}

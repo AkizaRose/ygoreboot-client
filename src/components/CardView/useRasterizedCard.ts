@@ -23,7 +23,23 @@ export function useRasterizedCard(card: CardData) {
   const captureRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (imageUrl) return; // already cached from a previous mount
+    // Always re-check the cache when `id` changes, rather than only on
+    // first mount. Component instances can be reused for a *different*
+    // card at the same tree position — e.g. a deck slot keyed by index,
+    // where removing a card shifts everything after it down by one — and
+    // relying solely on the initial useState lazy initializer above would
+    // leave this showing the previous card's (now stale) image forever,
+    // since that initializer only ever runs once per component instance.
+    const cached = getCachedCardImage(id);
+    if (cached) {
+      setImageUrl(cached);
+      return;
+    }
+
+    // Not cached for this id: clear out whatever image (possibly a
+    // different card's, if this instance is being reused) was showing
+    // before, so the live fallback renders while a fresh capture runs.
+    setImageUrl(undefined);
 
     let cancelled = false;
 
@@ -91,7 +107,7 @@ export function useRasterizedCard(card: CardData) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, imageUrl]);
+  }, [id]);
 
   return { imageUrl, captureRef, needsCapture: !imageUrl };
 }

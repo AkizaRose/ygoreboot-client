@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import CardImage from '../CardView/CardImage';
+import { setDragPayload } from '../../dragState';
 import FilterMenu from './FilterMenu';
 import IconButton from './IconButton';
 import type { CardData } from '../../types/Card';
@@ -29,9 +30,19 @@ const CARDS_PER_PAGE = COLUMNS * ROWS_PER_PAGE;
 
 interface CardBrowserProps {
   cards: CardData[];
+  onCardClick?: (card: CardData) => void;
+  onCardShiftClick?: (card: CardData) => void;
+  onCardHover?: (card: CardData) => void;
+  onCardHoverEnd?: () => void;
 }
 
-function CardBrowser({ cards }: CardBrowserProps) {
+function CardBrowser({
+  cards,
+  onCardClick,
+  onCardShiftClick,
+  onCardHover,
+  onCardHoverEnd,
+}: CardBrowserProps) {
   const [nameQuery, setNameQuery] = useState('');
   const [textQuery, setTextQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -332,6 +343,21 @@ function CardBrowser({ cards }: CardBrowserProps) {
                     height: CARD_HEIGHT,
                     transform: `scale(${SCALE})`,
                   }}
+                  draggable
+                  onDragStart={(e) => {
+                    setDragPayload({ card, source: 'browser' });
+                    e.dataTransfer.setData('text/plain', String(card.id));
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onClick={(e) => {
+                    if (e.shiftKey) {
+                      onCardShiftClick?.(card);
+                    } else {
+                      onCardClick?.(card);
+                    }
+                  }}
+                  onMouseEnter={() => onCardHover?.(card)}
+                  onMouseLeave={() => onCardHoverEnd?.()}
                 >
                   <CardImage card={card} />
                 </div>
