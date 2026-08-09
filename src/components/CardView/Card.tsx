@@ -74,7 +74,7 @@ function Card({ card }: CardProps) {
   const typeLineParts = (() => {
     if (!isMonster) return [];
     const parts = [card.monsterType];
-    if (card.cardSubclass && card.cardSubclass !== 'Normal') parts.push(card.cardSubclass);
+    if (card.cardSubclass) parts.push(card.cardSubclass);
     if (card.monsterSubclass) parts.push(card.monsterSubclass);
     return parts.filter(Boolean);
   })();
@@ -131,7 +131,13 @@ function Card({ card }: CardProps) {
       {isSpellOrTrap && (
         <div className="spellTrapType">
           <span className="bracket">[</span>
-          <span className="statText">{card.cardClass} Card</span>
+          <span className="statText">{card.cardClass}</span>
+          {card.cardSubclass && (
+            <>
+              <span className="separator">/</span>
+              <span className="statText">{card.cardSubclass}</span>
+            </>
+          )}
           {hasSpellTrapIcon && <span className="iconGap" />}
           <span className="bracket">]</span>
         </div>

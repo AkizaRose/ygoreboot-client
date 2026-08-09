@@ -14,3 +14,8 @@
     gap: 12px;
     padding: 6px;
   }
+
+.SidePanel {
+  display: grid;
+  flex-direction: column;
+}

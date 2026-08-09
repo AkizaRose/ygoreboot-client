@@ -98,10 +98,6 @@ function DeckSlots({
               // dropEffect must match whatever effectAllowed was set to at
               // dragstart (see CardBrowser: 'copy'; DeckSlots itself:
               // 'move') — NOT whether this particular slot is occupied.
-              // Setting it based on slot occupancy instead caused a
-              // mismatch (e.g. 'move' here vs 'copy' allowed) whenever a
-              // Card Browser drag hovered an occupied slot, which the
-              // browser treats as a disallowed drop and silently ignores.
               const payload = getDragPayload();
               e.dataTransfer.dropEffect = payload?.source === 'browser' ? 'copy' : 'move';
             }}
@@ -115,10 +111,6 @@ function DeckSlots({
               const payload = getDragPayload();
               clearDragPayload();
               if (!payload) return;
-              // Dropped on a card: insert before it (shifts it, and
-              // everything after, right by one). Dropped on empty space:
-              // null means "snap to the first available slot" — handled
-              // by dropCardOnDeck appending to the (always-compact) array.
               onDropCard(payload, card ? i : null);
             }}
             onClick={
@@ -170,12 +162,8 @@ interface DeckBuilderProps {
   onDuplicateExtraCard: (index: number) => void;
   onDuplicateSideCard: (index: number) => void;
   onDropCard: (payload: DragPayload, deckName: DeckName, targetIndex: number | null) => void;
-  onSortMainDeck: () => void;
-  onSortExtraDeck: () => void;
-  onSortSideDeck: () => void;
-  onClearMainDeck: () => void;
-  onClearExtraDeck: () => void;
-  onClearSideDeck: () => void;
+  onSortAll: () => void;
+  onClearAll: () => void;
   onCardHover: (card: CardData) => void;
   onCardHoverEnd: () => void;
 }
@@ -194,12 +182,8 @@ function DeckBuilder({
   onDuplicateExtraCard,
   onDuplicateSideCard,
   onDropCard,
-  onSortMainDeck,
-  onSortExtraDeck,
-  onSortSideDeck,
-  onClearMainDeck,
-  onClearExtraDeck,
-  onClearSideDeck,
+  onSortAll,
+  onClearAll,
   onCardHover,
   onCardHoverEnd,
 }: DeckBuilderProps) {
@@ -208,24 +192,25 @@ function DeckBuilder({
 
   return (
     <div className="DeckBuilder">
+      <div className="DeckBuilder-topActions">
+        <button type="button" className="DeckBuilder-sortButton" onClick={onSortAll}>
+          Sort
+        </button>
+        <button type="button" className="DeckBuilder-clearButton" onClick={onClearAll}>
+          Clear
+        </button>
+      </div>
+
       <div className="DeckBuilder-section">
         <div className="DeckBuilder-sectionHeader">
           <h2 className="DeckBuilder-heading">
-            Main Deck ({mainDeck.length}/{MAIN_DECK_SIZE})
+            Main ({mainDeck.length}/{MAIN_DECK_SIZE})
           </h2>
           <div className="DeckBuilder-categoryCounters">
             <CategoryCounter icon={normalCountIcon} count={mainCounts.NormalMonster} label="Normal Monsters" />
             <CategoryCounter icon={effectCountIcon} count={mainCounts.EffectMonster} label="Effect Monsters" />
             <CategoryCounter icon={spellCountIcon} count={mainCounts.Spell} label="Spells" />
             <CategoryCounter icon={trapCountIcon} count={mainCounts.Trap} label="Traps" />
-          </div>
-          <div className="DeckBuilder-sectionActions">
-            <button type="button" className="DeckBuilder-sortButton" onClick={onSortMainDeck}>
-              Sort
-            </button>
-            <button type="button" className="DeckBuilder-clearButton" onClick={onClearMainDeck}>
-              Clear
-            </button>
           </div>
         </div>
         <DeckSlots
@@ -245,20 +230,12 @@ function DeckBuilder({
       <div className="DeckBuilder-section">
         <div className="DeckBuilder-sectionHeader">
           <h2 className="DeckBuilder-heading">
-            Extra Deck ({extraDeck.length}/{EXTRA_DECK_SIZE})
+            Extra ({extraDeck.length}/{EXTRA_DECK_SIZE})
           </h2>
           <div className="DeckBuilder-categoryCounters">
             <CategoryCounter icon={fusionCountIcon} count={extraCounts.Fusion} label="Fusion Monsters" />
             <CategoryCounter icon={ritualCountIcon} count={extraCounts.Ritual} label="Ritual Monsters" />
             <CategoryCounter icon={evolutionCountIcon} count={extraCounts.Evolution} label="Evolution Monsters" />
-          </div>
-          <div className="DeckBuilder-sectionActions">
-            <button type="button" className="DeckBuilder-sortButton" onClick={onSortExtraDeck}>
-              Sort
-            </button>
-            <button type="button" className="DeckBuilder-clearButton" onClick={onClearExtraDeck}>
-              Clear
-            </button>
           </div>
         </div>
         <DeckSlots
@@ -278,16 +255,8 @@ function DeckBuilder({
       <div className="DeckBuilder-section">
         <div className="DeckBuilder-sectionHeader">
           <h2 className="DeckBuilder-heading">
-            Side Deck ({sideDeck.length}/{SIDE_DECK_SIZE})
+            Side ({sideDeck.length}/{SIDE_DECK_SIZE})
           </h2>
-          <div className="DeckBuilder-sectionActions">
-            <button type="button" className="DeckBuilder-sortButton" onClick={onSortSideDeck}>
-              Sort
-            </button>
-            <button type="button" className="DeckBuilder-clearButton" onClick={onClearSideDeck}>
-              Clear
-            </button>
-          </div>
         </div>
         <DeckSlots
           cards={sideDeck}

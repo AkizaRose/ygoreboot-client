@@ -38,6 +38,12 @@
   height: 27.38px;
   z-index: 44;
 }
+.spellTrapType .bracket {
+  margin: 0 0.1em;
+}
+.spellTrapType .separator {
+  margin: 0 0.1em;
+}
 .spellTrapIcon {
   position: absolute;
   left: 54px;

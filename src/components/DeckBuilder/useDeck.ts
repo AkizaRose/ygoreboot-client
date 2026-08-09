@@ -368,31 +368,26 @@ export function useDeck() {
     [],
   );
 
-  const sortMainDeck = useCallback(() => {
-    setDeck((prev) => ({ ...prev, main: sortByCategoryThenName(prev.main, MAIN_DECK_CATEGORY_ORDER) }));
-  }, []);
-
-  const sortExtraDeck = useCallback(() => {
+  const sortAllDecks = useCallback(() => {
     setDeck((prev) => ({
-      ...prev,
+      main: sortByCategoryThenName(prev.main, MAIN_DECK_CATEGORY_ORDER),
       extra: sortByCategoryThenName(prev.extra, EXTRA_DECK_CATEGORY_ORDER),
+      side: sortByCategoryThenName(prev.side, SIDE_DECK_CATEGORY_ORDER),
     }));
   }, []);
 
-  const sortSideDeck = useCallback(() => {
-    setDeck((prev) => ({ ...prev, side: sortByCategoryThenName(prev.side, SIDE_DECK_CATEGORY_ORDER) }));
+  const clearAllDecks = useCallback(() => {
+    setDeck({ main: [], extra: [], side: [] });
   }, []);
 
-  const clearMainDeck = useCallback(() => {
-    setDeck((prev) => ({ ...prev, main: [] }));
-  }, []);
-
-  const clearExtraDeck = useCallback(() => {
-    setDeck((prev) => ({ ...prev, extra: [] }));
-  }, []);
-
-  const clearSideDeck = useCallback(() => {
-    setDeck((prev) => ({ ...prev, side: [] }));
+  // Wholesale replacement of the live deck — used by the Deck Manager's
+  // Load action. Deliberately does NOT re-run canAddCard/copy-limit
+  // validation: a deck that was valid when saved is trusted to still be
+  // valid on load (the only thing that could invalidate it is the card
+  // database itself changing between save and load, which is an edge case
+  // this keeps simple rather than handling).
+  const loadDeckState = useCallback((main: CardData[], extra: CardData[], side: CardData[]) => {
+    setDeck({ main, extra, side });
   }, []);
 
   return {
@@ -411,11 +406,8 @@ export function useDeck() {
     duplicateExtraCardAt,
     duplicateSideCardAt,
     dropCardOnDeck,
-    sortMainDeck,
-    sortExtraDeck,
-    sortSideDeck,
-    clearMainDeck,
-    clearExtraDeck,
-    clearSideDeck,
+    loadDeckState,
+    sortAllDecks,
+    clearAllDecks,
   };
 }

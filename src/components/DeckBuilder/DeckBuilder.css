@@ -1,7 +1,7 @@
 .DeckBuilder {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding: 4px;
 }
 
@@ -15,7 +15,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
 }
 
 .DeckBuilder-heading {
@@ -33,8 +33,8 @@
 
 .CategoryCounter {
   position: relative;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 22px;
 }
 
 .CategoryCounter-icon {
@@ -55,8 +55,9 @@
   pointer-events: none;
 }
 
-.DeckBuilder-sectionActions {
+.DeckBuilder-topActions {
   display: flex;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -82,8 +83,6 @@
 .DeckBuilder-cell--empty {
   cursor: default;
   background: #33333340;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 2px;
 }
 
 .DeckBuilder-cell--dragOver {

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import CardBrowser from './components/CardBrowser/CardBrowser';
 import DeckBuilder from './components/DeckBuilder/DeckBuilder';
 import CardDisplay from './components/CardDisplay/CardDisplay';
+import DeckManager from './components/DeckManager/DeckManager';
 import { useDeck } from './components/DeckBuilder/useDeck';
 import cardData from './data/carddata.json';
 import type { CardData } from './types/Card';
@@ -54,17 +55,23 @@ function App() {
     duplicateExtraCardAt,
     duplicateSideCardAt,
     dropCardOnDeck,
-    sortMainDeck,
-    sortExtraDeck,
-    sortSideDeck,
-    clearMainDeck,
-    clearExtraDeck,
-    clearSideDeck,
+    loadDeckState,
+    sortAllDecks,
+    clearAllDecks,
   } = useDeck();
 
   return (
     <div className="PageContent">
-      <CardDisplay card={hoveredCard} />
+      <div className="SidePanel">
+        <CardDisplay card={hoveredCard} />
+        <DeckManager
+          cards={cards}
+          mainDeck={mainDeck}
+          extraDeck={extraDeck}
+          sideDeck={sideDeck}
+          onLoadDeck={loadDeckState}
+        />
+      </div>
       <DeckBuilder
         mainDeck={mainDeck}
         extraDeck={extraDeck}
@@ -79,12 +86,8 @@ function App() {
         onDuplicateExtraCard={duplicateExtraCardAt}
         onDuplicateSideCard={duplicateSideCardAt}
         onDropCard={dropCardOnDeck}
-        onSortMainDeck={sortMainDeck}
-        onSortExtraDeck={sortExtraDeck}
-        onSortSideDeck={sortSideDeck}
-        onClearMainDeck={clearMainDeck}
-        onClearExtraDeck={clearExtraDeck}
-        onClearSideDeck={clearSideDeck}
+        onSortAll={sortAllDecks}
+        onClearAll={clearAllDecks}
         onCardHover={handleCardHover}
         onCardHoverEnd={handleCardHoverEnd}
       />

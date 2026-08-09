@@ -1,0 +1,30 @@
+.DeckManager {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.DeckManager-select,
+.DeckManager-nameInput {
+  font-size: 14px;
+  padding: 6px 8px;
+}
+
+.DeckManager-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.DeckManager-button {
+  font-size: 12px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.DeckManager-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

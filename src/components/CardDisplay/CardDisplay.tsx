@@ -6,7 +6,7 @@ import './CardDisplay.css';
 // CardBrowser/DeckBuilder, just at a larger SCALE for a proper preview.
 const CARD_WIDTH = 813;
 const CARD_HEIGHT = 1185;
-const SCALE = 0.3;
+const SCALE = 0.32;
 
 interface CardDisplayProps {
   card: CardData | null;
