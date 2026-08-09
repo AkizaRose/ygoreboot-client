@@ -11,7 +11,7 @@ import './App.css';
 // updates to show it — long enough that briefly passing over other cards
 // (moving toward a button, dragging, etc.) doesn't change what's shown,
 // short enough that intentionally checking a card still feels responsive.
-const HOVER_DELAY_MS = 400;
+const HOVER_DELAY_MS = 100;
 
 function App() {
   const cards = cardData as CardData[];

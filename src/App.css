@@ -3,13 +3,14 @@
        area to be — completely independent of #root, which just centers this
        box within the full-page animated background. */
     width: 1400px;
-    height: 650px;
+    height: 660px;
     box-sizing: border-box;
     overflow: auto;
     background: var(--bg);
     display: flex;
     flex-direction: row;
     align-items: flex-start;
-    gap: 24px;
-    padding: 16px;
+    justify-content: center;
+    gap: 12px;
+    padding: 6px;
   }

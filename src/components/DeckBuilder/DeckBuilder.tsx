@@ -25,7 +25,7 @@ import './DeckBuilder.css';
 // separate (and inconsistent-looking) Deck Builder-specific scale.
 const CARD_WIDTH = 813;
 const CARD_HEIGHT = 1185;
-const SCALE = 0.08;
+const SCALE = 0.07;
 
 const MAIN_DECK_COLUMNS = 10;
 const EXTRA_DECK_COLUMNS = 10;

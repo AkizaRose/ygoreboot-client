@@ -25,11 +25,12 @@
   font-size: 13px;
   font-family: "Yu-Gi-Oh! Matrix Book";
   white-space: pre-line;
-  max-height: 200px;
+  text-align: left;
+  line-height: 1.2;
+  height: 150px;
   overflow-y: auto;
   background: #33333340;
   border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 2px;
-  padding: 6px;
+  padding: 4px;
   box-sizing: border-box;
 }
