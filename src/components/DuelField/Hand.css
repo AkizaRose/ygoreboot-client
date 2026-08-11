@@ -1,0 +1,49 @@
+.Hand {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  /* Reserves space even with an empty hand, so the field above doesn't
+     jump position the moment the first card is drawn. */
+  min-height: 90px;
+}
+
+.Hand-cell {
+  position: relative;
+}
+
+.Hand-cardWrapper {
+  transform-origin: top left;
+}
+
+.Hand-contextMenu {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  padding: 4px;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.Hand-contextMenuButton {
+  font-size: 12px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  padding: 4px 10px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  color: inherit;
+}
+
+.Hand-contextMenuButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+}

@@ -1,104 +1,19 @@
-import { useCallback, useRef, useState } from 'react';
-import CardBrowser from './components/CardBrowser/CardBrowser';
-import DeckBuilder from './components/DeckBuilder/DeckBuilder';
-import CardDisplay from './components/CardDisplay/CardDisplay';
-import DeckManager from './components/DeckManager/DeckManager';
-import { useDeck } from './components/DeckBuilder/useDeck';
-import cardData from './data/carddata.json';
-import type { CardData } from './types/Card';
-import './App.css';
-
-// How long the cursor has to stay on a card before the Card Display
-// updates to show it — long enough that briefly passing over other cards
-// (moving toward a button, dragging, etc.) doesn't change what's shown,
-// short enough that intentionally checking a card still feels responsive.
-const HOVER_DELAY_MS = 100;
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import LandingPage from './pages/LandingPage';
+import DuelMenuPage from './pages/DuelMenuPage';
+import DuelFieldPage from './pages/DuelFieldPage';
+import DeckBuilderPage from './pages/DeckBuilderPage';
 
 function App() {
-  const cards = cardData as CardData[];
-  const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
-  const hoverTimeoutRef = useRef<number | undefined>(undefined);
-
-  const handleCardHover = useCallback((card: CardData) => {
-    if (hoverTimeoutRef.current !== undefined) {
-      window.clearTimeout(hoverTimeoutRef.current);
-    }
-    hoverTimeoutRef.current = window.setTimeout(() => {
-      setHoveredCard(card);
-    }, HOVER_DELAY_MS);
-  }, []);
-
-  // Mouse left a card before the delay finished — cancel the pending
-  // timer so it never fires. Deliberately does NOT touch hoveredCard
-  // itself, since the currently-displayed card should stay put until a
-  // different card is hovered for the full delay, not clear the moment
-  // the cursor leaves.
-  const handleCardHoverEnd = useCallback(() => {
-    if (hoverTimeoutRef.current !== undefined) {
-      window.clearTimeout(hoverTimeoutRef.current);
-      hoverTimeoutRef.current = undefined;
-    }
-  }, []);
-  const {
-    mainDeck,
-    extraDeck,
-    sideDeck,
-    addCard,
-    addCardToSide,
-    removeMainCardAt,
-    removeExtraCardAt,
-    removeSideCardAt,
-    moveMainCardToSide,
-    moveExtraCardToSide,
-    moveSideCardToMainOrExtra,
-    duplicateMainCardAt,
-    duplicateExtraCardAt,
-    duplicateSideCardAt,
-    dropCardOnDeck,
-    loadDeckState,
-    sortAllDecks,
-    clearAllDecks,
-  } = useDeck();
-
   return (
-    <div className="PageContent">
-      <div className="SidePanel">
-        <CardDisplay card={hoveredCard} />
-        <DeckManager
-          cards={cards}
-          mainDeck={mainDeck}
-          extraDeck={extraDeck}
-          sideDeck={sideDeck}
-          onLoadDeck={loadDeckState}
-        />
-      </div>
-      <DeckBuilder
-        mainDeck={mainDeck}
-        extraDeck={extraDeck}
-        sideDeck={sideDeck}
-        onRemoveMainCard={removeMainCardAt}
-        onRemoveExtraCard={removeExtraCardAt}
-        onRemoveSideCard={removeSideCardAt}
-        onMoveMainCard={moveMainCardToSide}
-        onMoveExtraCard={moveExtraCardToSide}
-        onMoveSideCard={moveSideCardToMainOrExtra}
-        onDuplicateMainCard={duplicateMainCardAt}
-        onDuplicateExtraCard={duplicateExtraCardAt}
-        onDuplicateSideCard={duplicateSideCardAt}
-        onDropCard={dropCardOnDeck}
-        onSortAll={sortAllDecks}
-        onClearAll={clearAllDecks}
-        onCardHover={handleCardHover}
-        onCardHoverEnd={handleCardHoverEnd}
-      />
-      <CardBrowser
-        cards={cards}
-        onCardClick={addCard}
-        onCardShiftClick={addCardToSide}
-        onCardHover={handleCardHover}
-        onCardHoverEnd={handleCardHoverEnd}
-      />
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/duel" element={<DuelMenuPage />} />
+        <Route path="/duel/solo/:deckId" element={<DuelFieldPage />} />
+        <Route path="/deck-builder" element={<DeckBuilderPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

@@ -1,0 +1,123 @@
+.FieldZone {
+  width: 72px;
+  height: 105px;
+  box-sizing: border-box;
+  background: #33333340;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 4px;
+  position: relative;
+}
+
+.FieldZone--clickable {
+  cursor: pointer;
+}
+
+.FieldZone-cardOuter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  /* Default transform-origin (center) now correctly pivots around the
+     zone's own center for the Defense Position rotation, since this
+     wrapper's own size is already the zone's exact footprint (set via
+     inline style) — unlike the inner .FieldZone-cardWrapper below, whose
+     much larger native size would make a center-pivot land in the wrong
+     place entirely. */
+}
+
+.FieldZone-cardWrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+
+.FieldZone-rotatedOverlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Rotating around the element's own center (the default transform-origin,
+     so no extra positioning math needed) turns this exact copy of the
+     zone's own box into a landscape shape overlapping it — visually
+     showing how much extra width a rotated (Defense Position) card
+     would occupy. */
+  transform: rotate(-90deg);
+  border: 2px solid var(--border);
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.FieldZone-contextMenu {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  padding: 4px;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.FieldZone-contextMenuButton {
+  font-size: 12px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  padding: 4px 10px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  color: inherit;
+}
+
+.FieldZone-contextMenuButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.FieldZone-label {
+  font-size: 11px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  color: var(--text);
+  line-height: 1.2;
+  user-select: none;
+}
+
+.FieldZone-pile {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+
+.FieldZone-pileImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 1px;
+  display: block;
+}
+
+.FieldZone-pileCount {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 10px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  padding: 1px 4px;
+  border-radius: 2px;
+  line-height: 1.2;
+  user-select: none;
+}

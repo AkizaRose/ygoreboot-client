@@ -1,0 +1,32 @@
+.LandingPage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 40px;
+}
+
+.LandingPage-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.LandingPage-navButton {
+  font-size: 20px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  padding: 12px 48px;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.LandingPage-navButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}

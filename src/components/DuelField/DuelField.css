@@ -1,0 +1,45 @@
+.DuelField {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 0px;
+}
+
+.DuelField-playerField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 7 columns rather than 6: the extra column is what lets each side's
+   Banished Zone sit isolated at its own outer edge (opponent's on the
+   far left, player's on the far right) once both rows are shifted — see
+   DuelField.tsx for how each row's leading empty cell(s) work.
+
+   Gap widened from 4px to 40px to make room for the Defense Position
+   rotated overlay on Monster Zones — that overlay overhangs each zone's
+   normal 80px width by ~18.5px on either side (a 117x80 rotated box vs
+   the zone's own 80x117), so a gap smaller than ~37px would let two
+   neighboring zones' overlays visually touch or overlap. Applied to
+   every row (not just the Monster Zone row) so all zones stay aligned
+   in the same columns as each other. */
+.DuelField-row {
+  display: grid;
+  grid-template-columns: repeat(7, 72px);
+  gap: 40px;
+}
+
+.DuelField-centerLine {
+  width: 100%;
+  max-width: 800px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Reserves grid space without rendering anything visible — see the
+   opponent deck row's leading placeholder in DuelField.tsx. */
+.DuelField-emptyZone {
+  width: 72px;
+  height: 105px;
+}

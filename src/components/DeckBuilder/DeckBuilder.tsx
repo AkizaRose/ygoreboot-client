@@ -164,6 +164,7 @@ interface DeckBuilderProps {
   onDropCard: (payload: DragPayload, deckName: DeckName, targetIndex: number | null) => void;
   onSortAll: () => void;
   onClearAll: () => void;
+  onExit: () => void;
   onCardHover: (card: CardData) => void;
   onCardHoverEnd: () => void;
 }
@@ -184,6 +185,7 @@ function DeckBuilder({
   onDropCard,
   onSortAll,
   onClearAll,
+  onExit,
   onCardHover,
   onCardHoverEnd,
 }: DeckBuilderProps) {
@@ -193,18 +195,23 @@ function DeckBuilder({
   return (
     <div className="DeckBuilder">
       <div className="DeckBuilder-topActions">
-        <button type="button" className="DeckBuilder-sortButton" onClick={onSortAll}>
-          Sort
+        <button type="button" className="DeckBuilder-exitButton" onClick={onExit}>
+          Exit
         </button>
-        <button type="button" className="DeckBuilder-clearButton" onClick={onClearAll}>
-          Clear
-        </button>
+        <div className="DeckBuilder-topActionsRight">
+          <button type="button" className="DeckBuilder-sortButton" onClick={onSortAll}>
+            Sort
+          </button>
+          <button type="button" className="DeckBuilder-clearButton" onClick={onClearAll}>
+            Clear
+          </button>
+        </div>
       </div>
 
       <div className="DeckBuilder-section">
         <div className="DeckBuilder-sectionHeader">
           <h2 className="DeckBuilder-heading">
-            Main ({mainDeck.length}/{MAIN_DECK_SIZE})
+            Main Deck ({mainDeck.length}/{MAIN_DECK_SIZE})
           </h2>
           <div className="DeckBuilder-categoryCounters">
             <CategoryCounter icon={normalCountIcon} count={mainCounts.NormalMonster} label="Normal Monsters" />
@@ -230,7 +237,7 @@ function DeckBuilder({
       <div className="DeckBuilder-section">
         <div className="DeckBuilder-sectionHeader">
           <h2 className="DeckBuilder-heading">
-            Extra ({extraDeck.length}/{EXTRA_DECK_SIZE})
+            Extra Deck ({extraDeck.length}/{EXTRA_DECK_SIZE})
           </h2>
           <div className="DeckBuilder-categoryCounters">
             <CategoryCounter icon={fusionCountIcon} count={extraCounts.Fusion} label="Fusion Monsters" />
@@ -255,7 +262,7 @@ function DeckBuilder({
       <div className="DeckBuilder-section">
         <div className="DeckBuilder-sectionHeader">
           <h2 className="DeckBuilder-heading">
-            Side ({sideDeck.length}/{SIDE_DECK_SIZE})
+            Side Deck ({sideDeck.length}/{SIDE_DECK_SIZE})
           </h2>
         </div>
         <DeckSlots

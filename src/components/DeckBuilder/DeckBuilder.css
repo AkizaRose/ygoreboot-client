@@ -57,10 +57,16 @@
 
 .DeckBuilder-topActions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 6px;
 }
 
+.DeckBuilder-topActionsRight {
+  display: flex;
+  gap: 6px;
+}
+
+.DeckBuilder-exitButton,
 .DeckBuilder-sortButton,
 .DeckBuilder-clearButton {
   font-size: 12px;
