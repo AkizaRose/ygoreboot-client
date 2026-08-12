@@ -1,6 +1,6 @@
 .DuelFieldPage {
   width: 1400px;
-  min-height: 660px;
+  height: 660px;
   box-sizing: border-box;
   background: var(--bg);
   display: flex;
@@ -9,6 +9,15 @@
   padding: 6px;
   justify-content: center;
   align-items: flex-start;
+  /* Clips anything extending past this box's own fixed 660px height —
+     specifically the Hand, which is deliberately positioned to run off
+     the bottom edge (so it reads as "cards partially off-screen," like
+     DuelingBook/Master Duel). Without this, that overflow wasn't being
+     clipped anywhere, so it just kept growing the page's real layout
+     size, which #root's min-height then happily expanded to
+     accommodate — and that expansion is what the browser was letting
+     you scroll to reveal. */
+  overflow: hidden;
 }
 
 .DuelFieldPage-sidePanel {

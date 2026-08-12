@@ -1,19 +1,12 @@
 import FieldZone, { type FieldZoneAction } from './FieldZone';
 import type { CardData } from '../../types/Card';
+import type { PlacedCard } from '../../types/CardInstance';
 import cardBackImg from '../../assets/card/CardBack.png';
 import './DuelField.css';
 
-// A card placed on the field, plus whether it's showing face-down. Used
-// for both Monster Zones and Spell/Trap Zones — Monster Zones only ever
-// use faceDown: false for now (no Set Monster yet), but sharing one
-// shape avoids a separate type just for that difference.
-export interface PlacedCard {
-  card: CardData;
-  faceDown: boolean;
-  // Only meaningful for Monster Zone cards — defaults to 'attack' when
-  // omitted. Spell/Trap/Field Zone cards never set this.
-  position?: 'attack' | 'defense';
-}
+// Re-exported so existing `import { type PlacedCard } from
+// './DuelField'` call sites keep working without changing their import.
+export type { PlacedCard };
 
 // Same five actions for most placed cards on the field, regardless of
 // card class or which zone it's in.
@@ -64,6 +57,27 @@ const MAIN_DECK_ACTIONS: FieldZoneAction[] = [
   { key: 'reset', label: 'Reset' },
 ];
 
+// Main Deck and Extra Deck sit at different distances from a centered
+// player viewpoint (Main Deck to the right, Extra Deck to the left of
+// the field's own center), so their stacks may need to look different
+// to simulate that — kept as separate, independently-tunable values
+// rather than one shared constant. X/Y are independent too, so a stack
+// can lean more steeply in one direction than the other. Starting
+// values are identical; adjust any of them once you see how the stacks
+// actually render.
+const MAIN_DECK_STACK_OFFSET_STEP_X = 0.25;
+const MAIN_DECK_STACK_OFFSET_STEP_Y = 0.25;
+const MAIN_DECK_STACK_MAX_LAYERS = 40;
+const EXTRA_DECK_STACK_OFFSET_STEP_X = -0.25;
+const EXTRA_DECK_STACK_OFFSET_STEP_Y = 0.25;
+const EXTRA_DECK_STACK_MAX_LAYERS = 10;
+const GRAVE_STACK_OFFSET_STEP_X = 0.25;
+const GRAVE_STACK_OFFSET_STEP_Y = 0.25;
+const GRAVE_STACK_MAX_LAYERS = 50;
+const BANISHED_STACK_OFFSET_STEP_X = 0.25;
+const BANISHED_STACK_OFFSET_STEP_Y = 0.25;
+const BANISHED_STACK_MAX_LAYERS = 50;
+
 // 'kind' identifies which entries should render real data (a placed
 // monster, a deck pile) once it's available, rather than a plain text
 // label. Order/labels unchanged from before.
@@ -111,6 +125,11 @@ interface PlayerFieldProps {
   // of plain labels.
   mainDeck?: CardData[];
   extraDeck?: CardData[];
+  // The specific card currently on top of the Main Deck — used only to
+  // give the draw animation something to track (see FieldZone's
+  // topCardInstanceId). Not needed for Extra Deck, which isn't drawn
+  // from.
+  mainDeckTopCardId?: string;
   // The 3 Monster Zone / Spell-Trap Zone slots, left-to-right in the
   // player's own (unreversed) view — index 0 is the leftmost. Only ever
   // passed for the player's side for now.
@@ -142,6 +161,7 @@ function PlayerField({
   flipped = false,
   mainDeck = [],
   extraDeck = [],
+  mainDeckTopCardId,
   monsterZones = [],
   spellTrapZones = [],
   grave = [],
@@ -183,6 +203,7 @@ function PlayerField({
               key={i}
               label={zone.label}
               card={fieldZone?.card}
+              instanceId={fieldZone?.instanceId}
               faceDown={fieldZone?.faceDown}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
@@ -220,6 +241,7 @@ function PlayerField({
               key={i}
               label={zone.label}
               card={placed?.card}
+              instanceId={placed?.instanceId}
               faceDown={placed?.faceDown}
               battlePosition={placed?.position}
               onCardHover={onCardHover}
@@ -245,6 +267,9 @@ function PlayerField({
               label={zone.label}
               card={topCard}
               count={grave.length > 0 ? grave.length : undefined}
+              stackOffsetStepX={GRAVE_STACK_OFFSET_STEP_X}
+              stackOffsetStepY={GRAVE_STACK_OFFSET_STEP_Y}
+              stackMaxLayers={GRAVE_STACK_MAX_LAYERS}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               menuActions={VIEW_ONLY_ACTIONS}
@@ -260,6 +285,9 @@ function PlayerField({
               label={zone.label}
               card={topCard}
               count={banished.length > 0 ? banished.length : undefined}
+              stackOffsetStepX={BANISHED_STACK_OFFSET_STEP_X}
+              stackOffsetStepY={BANISHED_STACK_OFFSET_STEP_Y}
+              stackMaxLayers={BANISHED_STACK_MAX_LAYERS}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               menuActions={VIEW_ONLY_ACTIONS}
@@ -288,6 +316,10 @@ function PlayerField({
               label={zone.label}
               image={cardBackImg}
               count={mainDeck.length}
+              topCardInstanceId={mainDeckTopCardId}
+              stackOffsetStepX={MAIN_DECK_STACK_OFFSET_STEP_X}
+              stackOffsetStepY={MAIN_DECK_STACK_OFFSET_STEP_Y}
+              stackMaxLayers={MAIN_DECK_STACK_MAX_LAYERS}
               onClick={onDrawCard}
               menuActions={MAIN_DECK_ACTIONS}
               onMenuAction={onMainDeckAction}
@@ -301,6 +333,9 @@ function PlayerField({
               label={zone.label}
               image={cardBackImg}
               count={extraDeck.length}
+              stackOffsetStepX={EXTRA_DECK_STACK_OFFSET_STEP_X}
+              stackOffsetStepY={EXTRA_DECK_STACK_OFFSET_STEP_Y}
+              stackMaxLayers={EXTRA_DECK_STACK_MAX_LAYERS}
               menuActions={VIEW_ONLY_ACTIONS}
               onMenuAction={onViewExtraDeck ? () => onViewExtraDeck() : undefined}
             />
@@ -315,6 +350,7 @@ function PlayerField({
               key={i}
               label={zone.label}
               card={placed?.card}
+              instanceId={placed?.instanceId}
               faceDown={placed?.faceDown}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
@@ -352,6 +388,7 @@ function PlayerField({
 interface DuelFieldProps {
   playerMainDeck?: CardData[];
   playerExtraDeck?: CardData[];
+  playerMainDeckTopCardId?: string;
   playerMonsterZones?: (PlacedCard | null)[];
   playerSpellTrapZones?: (PlacedCard | null)[];
   playerGrave?: CardData[];
@@ -370,6 +407,7 @@ interface DuelFieldProps {
 function DuelField({
   playerMainDeck = [],
   playerExtraDeck = [],
+  playerMainDeckTopCardId,
   playerMonsterZones = [],
   playerSpellTrapZones = [],
   playerGrave = [],
@@ -391,6 +429,7 @@ function DuelField({
       <PlayerField
         mainDeck={playerMainDeck}
         extraDeck={playerExtraDeck}
+        mainDeckTopCardId={playerMainDeckTopCardId}
         monsterZones={playerMonsterZones}
         spellTrapZones={playerSpellTrapZones}
         grave={playerGrave}

@@ -1,15 +1,34 @@
 .Hand {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 4px;
-  /* Reserves space even with an empty hand, so the field above doesn't
-     jump position the moment the first card is drawn. */
-  min-height: 90px;
+  position: relative;
+  margin: 0 auto;
+  /* Width/height are set inline (computed from the current card count),
+     since they now depend on the overlap math rather than being
+     flex-content-driven. */
 }
 
 .Hand-cell {
+  position: absolute;
+  bottom: 0;
+}
+
+.Hand-cardRotation {
   position: relative;
+  /* Clips .Hand-cardWrapper's native (pre-scale) 813x1185 footprint,
+     which was inflating the whole page's layout even though it renders
+     visually correctly at its small scaled-down size — CSS transform
+     shrinks how content *paints*, but apparently isn't reliably excluded
+     from how ancestors compute their own overflow/scrollable area here.
+     Safe to clip at this level specifically because .Hand-contextMenu is
+     a sibling of this element (both direct children of .Hand-cell), not
+     a descendant — so it's unaffected and can still escape .Hand-cell's
+     own bounds as before. */
+  overflow: hidden;
+}
+
+.Hand-flipReveal {
+  position: relative;
+  width: 100%;
+  height: 100%;
 }
 
 .Hand-cardWrapper {

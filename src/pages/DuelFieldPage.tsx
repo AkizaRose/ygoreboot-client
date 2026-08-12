@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import DuelField, { type PlacedCard } from '../components/DuelField/DuelField';
+import DuelField from '../components/DuelField/DuelField';
 import Hand from '../components/DuelField/Hand';
 import DeckViewer from '../components/DuelField/DeckViewer';
 import ConfirmDialog from '../components/ConfirmDialog/ConfirmDialog';
@@ -10,6 +10,7 @@ import { useSavedDecks } from '../components/DeckManager/useSavedDecks';
 import { shuffle } from '../utils/shuffle';
 import cardData from '../data/carddata.json';
 import type { CardData } from '../types/Card';
+import { type CardInstance, type PlacedCard, createCardInstance } from '../types/CardInstance';
 import './DuelFieldPage.css';
 
 // Same debounce behavior as the Deck Builder page's Card Display: the
@@ -45,17 +46,18 @@ function DuelFieldPage() {
     }
   }, []);
 
-  // Real mutable state now, not a derived useMemo — drawing needs to
-  // actually move a card from mainDeck into hand over the course of the
-  // duel, not just compute a fixed snapshot once.
-  const [mainDeck, setMainDeck] = useState<CardData[]>([]);
-  const [extraDeck, setExtraDeck] = useState<CardData[]>([]);
-  const [hand, setHand] = useState<CardData[]>([]);
+  // Every card that has ever entered play carries a stable instanceId
+  // (see src/types/CardInstance.ts) that persists across every move for
+  // the rest of the duel — that's what all the arrays below now hold,
+  // rather than plain CardData.
+  const [mainDeck, setMainDeck] = useState<CardInstance[]>([]);
+  const [extraDeck, setExtraDeck] = useState<CardInstance[]>([]);
+  const [hand, setHand] = useState<CardInstance[]>([]);
   const [playerMonsterZones, setPlayerMonsterZones] = useState<(PlacedCard | null)[]>(EMPTY_ZONES);
   const [playerSpellTrapZones, setPlayerSpellTrapZones] =
     useState<(PlacedCard | null)[]>(EMPTY_ZONES);
-  const [playerGrave, setPlayerGrave] = useState<CardData[]>([]);
-  const [playerBanished, setPlayerBanished] = useState<CardData[]>([]);
+  const [playerGrave, setPlayerGrave] = useState<CardInstance[]>([]);
+  const [playerBanished, setPlayerBanished] = useState<CardInstance[]>([]);
   const [playerFieldZone, setPlayerFieldZone] = useState<PlacedCard | null>(null);
   const [viewingDeck, setViewingDeck] = useState<'main' | 'extra' | 'grave' | 'banished' | null>(
     null,
@@ -79,11 +81,35 @@ function DuelFieldPage() {
     setPendingSummon({ card, onSelectPosition });
   };
 
-  // Resolves the currently-selected saved deck into real card data,
-  // shuffles the Main Deck, and clears every other piece of game state
-  // back to a fresh starting point. Extracted as its own function (rather
-  // than being inline in the effect below) so the Reset action can call
-  // it directly on demand, not just on initial load/deckId change.
+  // Per-instanceId starting rotation for a card's very first frame after
+  // arriving in Hand — populated only when a card leaves a Monster Zone,
+  // so Hand knows whether to visually start it at -90° (if it was in
+  // Defense Position) or upright (if not) and animate from there, rather
+  // than the rotation just snapping the instant it appears (mirrors the
+  // same "no previous frame to animate from" issue the Defense Position
+  // summon animation had). Every write is explicit about both cases
+  // (-90 or 0) rather than only writing the Defense case and relying on
+  // a default for Attack — a card that was once in Defense Position,
+  // then switched back to Attack, then later sent to hand, would
+  // otherwise still read its old (now-incorrect) -90 entry.
+  const [handEntryRotations, setHandEntryRotations] = useState<Record<string, number>>({});
+  // Same idea as handEntryRotations, for the flip-reveal effect instead
+  // — true means a card leaving a field zone was showing face-down, so
+  // Hand should start it "edge-on" and unfurl into its face rather than
+  // popping straight in. Always written explicitly (never only for the
+  // true case) for the same reason as handEntryRotations: a card that
+  // was once face-down, then flipped face-up via Activate, then later
+  // sent to hand, must not read a stale "true" from its earlier stint
+  // face-down.
+  const [handEntryFlips, setHandEntryFlips] = useState<Record<string, boolean>>({});
+
+  // Resolves the currently-selected saved deck into real card instances
+  // (each getting a brand-new instanceId here — this is the ONLY place
+  // new ones are ever created), shuffles the Main Deck, deals the
+  // opening hand, and clears every other piece of game state back to a
+  // fresh starting point. Extracted as its own function (rather than
+  // being inline in the effect below) so the Reset action can call it
+  // directly on demand, not just on initial load/deckId change.
   const loadDeck = () => {
     if (!deckId) {
       setMainDeck([]);
@@ -94,6 +120,8 @@ function DuelFieldPage() {
       setPlayerGrave([]);
       setPlayerBanished([]);
       setPlayerFieldZone(null);
+      setHandEntryRotations({});
+      setHandEntryFlips({});
       return;
     }
 
@@ -107,18 +135,21 @@ function DuelFieldPage() {
       setPlayerGrave([]);
       setPlayerBanished([]);
       setPlayerFieldZone(null);
+      setHandEntryRotations({});
+      setHandEntryFlips({});
       return;
     }
 
     const cardsById = new Map(cards.map((c) => [c.id, c]));
-    const resolve = (ids: number[]): CardData[] =>
+    const resolve = (ids: number[]): CardInstance[] =>
       ids
         .map((id) => {
           const found = cardsById.get(id);
           if (!found) console.warn(`[DuelFieldPage] Saved card id ${id} not found — skipped.`);
           return found;
         })
-        .filter((c): c is CardData => !!c);
+        .filter((c): c is CardData => !!c)
+        .map((c) => createCardInstance(c));
 
     // Main Deck: randomized order, per real deck-building rules — then
     // the top 5 are dealt straight into the opening hand. slice() handles
@@ -139,6 +170,8 @@ function DuelFieldPage() {
     setPlayerGrave([]);
     setPlayerBanished([]);
     setPlayerFieldZone(null);
+    setHandEntryRotations({});
+    setHandEntryFlips({});
   };
 
   // (Re)loads whenever deckId changes — e.g. navigating here for a
@@ -156,21 +189,22 @@ function DuelFieldPage() {
     if (mainDeck.length === 0) return;
     const [top, ...rest] = mainDeck;
     setMainDeck(rest);
+    setHandEntryFlips((prev) => ({ ...prev, [top.instanceId]: true }));
     setHand((prev) => [...prev, top]);
   };
 
-  const handleNormalSummon = (handIndex: number) => {
-    const card = hand[handIndex];
-    if (!card) return;
+  const handleNormalSummon = (instanceId: string) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
 
     const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
     if (emptySlot === -1) return; // no available Monster Zone
 
-    requestSummonPosition(card, (position) => {
-      setHand((prev) => prev.filter((_, i) => i !== handIndex));
+    requestSummonPosition(instance.card, (position) => {
+      setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
       setPlayerMonsterZones((prev) => {
         const next = [...prev];
-        next[emptySlot] = { card, faceDown: false, position };
+        next[emptySlot] = { ...instance, faceDown: false, position };
         return next;
       });
     });
@@ -178,17 +212,17 @@ function DuelFieldPage() {
 
   // Shared by Activate and Set — both place a card into the first
   // available Spell/Trap Zone, differing only in faceDown.
-  const placeInSpellTrapZone = (handIndex: number, faceDown: boolean) => {
-    const card = hand[handIndex];
-    if (!card) return;
+  const placeInSpellTrapZone = (instanceId: string, faceDown: boolean) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
 
     const emptySlot = playerSpellTrapZones.findIndex((slot) => slot === null);
     if (emptySlot === -1) return; // no available Spell/Trap Zone
 
-    setHand((prev) => prev.filter((_, i) => i !== handIndex));
+    setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
     setPlayerSpellTrapZones((prev) => {
       const next = [...prev];
-      next[emptySlot] = { card, faceDown };
+      next[emptySlot] = { ...instance, faceDown };
       return next;
     });
   };
@@ -197,68 +231,70 @@ function DuelFieldPage() {
   // Zone. Unlike those, there's only one slot — activating a new Field
   // Spell while one's already there sends the old one to the Grave first
   // (matching real Yu-Gi-Oh rules), rather than being blocked.
-  const placeInFieldZone = (handIndex: number, faceDown: boolean) => {
-    const card = hand[handIndex];
-    if (!card) return;
+  const placeInFieldZone = (instanceId: string, faceDown: boolean) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
 
-    setHand((prev) => prev.filter((_, i) => i !== handIndex));
+    setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
     if (playerFieldZone) {
-      setPlayerGrave((prev) => [...prev, playerFieldZone.card]);
+      setPlayerGrave((prev) => [...prev, playerFieldZone]);
     }
-    setPlayerFieldZone({ card, faceDown });
+    setPlayerFieldZone({ ...instance, faceDown });
   };
 
-  const handleActivateSpell = (handIndex: number) => {
-    const card = hand[handIndex];
-    if (!card) return;
-    if (card.cardSubclass === 'Field') {
-      placeInFieldZone(handIndex, false);
+  const handleActivateSpell = (instanceId: string) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
+    if (instance.card.cardSubclass === 'Field') {
+      placeInFieldZone(instanceId, false);
     } else {
-      placeInSpellTrapZone(handIndex, false);
+      placeInSpellTrapZone(instanceId, false);
     }
   };
 
-  const handleSetSpellOrTrap = (handIndex: number) => {
-    const card = hand[handIndex];
-    if (!card) return;
-    if (card.cardSubclass === 'Field') {
-      placeInFieldZone(handIndex, true);
+  const handleSetSpellOrTrap = (instanceId: string) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
+    if (instance.card.cardSubclass === 'Field') {
+      placeInFieldZone(instanceId, true);
     } else {
-      placeInSpellTrapZone(handIndex, true);
+      placeInSpellTrapZone(instanceId, true);
     }
   };
 
-  const handleToGrave = (handIndex: number) => {
-    const card = hand[handIndex];
-    if (!card) return;
-    setHand((prev) => prev.filter((_, i) => i !== handIndex));
-    setPlayerGrave((prev) => [...prev, card]);
+  const handleToGrave = (instanceId: string) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
+    setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
+    setPlayerGrave((prev) => [...prev, instance]);
   };
 
-  const handleBanish = (handIndex: number) => {
-    const card = hand[handIndex];
-    if (!card) return;
-    setHand((prev) => prev.filter((_, i) => i !== handIndex));
-    setPlayerBanished((prev) => [...prev, card]);
+  const handleBanish = (instanceId: string) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
+    setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
+    setPlayerBanished((prev) => [...prev, instance]);
   };
 
-  const handleStackTop = (handIndex: number) => {
-    const card = hand[handIndex];
-    if (!card) return;
-    setHand((prev) => prev.filter((_, i) => i !== handIndex));
-    setMainDeck((prev) => [card, ...prev]);
+  const handleStackTop = (instanceId: string) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
+    setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
+    setMainDeck((prev) => [instance, ...prev]);
   };
 
-  const handleStackBottom = (handIndex: number) => {
-    const card = hand[handIndex];
-    if (!card) return;
-    setHand((prev) => prev.filter((_, i) => i !== handIndex));
-    setMainDeck((prev) => [...prev, card]);
+  const handleStackBottom = (instanceId: string) => {
+    const instance = hand.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
+    setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
+    setMainDeck((prev) => [...prev, instance]);
   };
 
   // Same 5 actions apply to a card in any of the three field zones —
-  // reads whichever zone/slot the click came from, clears it, then
-  // routes the card the same way the equivalent hand actions already do.
+  // reads whichever zone/slot the click came from (slot index — zones
+  // are a fixed-size array, not a dynamic list, so this is stable and
+  // doesn't need instanceId), clears it, then routes the card the same
+  // way the equivalent hand actions already do.
   const handleFieldAction = (
     zoneType: 'monster' | 'spellTrap' | 'field',
     index: number,
@@ -308,13 +344,13 @@ function DuelFieldPage() {
       return;
     }
 
-    const card =
+    const placed =
       zoneType === 'monster'
-        ? playerMonsterZones[index]?.card
+        ? playerMonsterZones[index]
         : zoneType === 'spellTrap'
-          ? playerSpellTrapZones[index]?.card
-          : playerFieldZone?.card;
-    if (!card) return;
+          ? playerSpellTrapZones[index]
+          : playerFieldZone;
+    if (!placed) return;
 
     if (zoneType === 'monster') {
       setPlayerMonsterZones((prev) => {
@@ -334,22 +370,29 @@ function DuelFieldPage() {
 
     switch (actionKey) {
       case 'toHand':
-        setHand((prev) => [...prev, card]);
+        setHandEntryFlips((prev) => ({ ...prev, [placed.instanceId]: placed.faceDown }));
+        if (zoneType === 'monster') {
+          setHandEntryRotations((prev) => ({
+            ...prev,
+            [placed.instanceId]: placed.position === 'defense' ? -90 : 0,
+          }));
+        }
+        setHand((prev) => [...prev, placed]);
         break;
       case 'toExtra':
-        setExtraDeck((prev) => [...prev, card]);
+        setExtraDeck((prev) => [...prev, placed]);
         break;
       case 'toGrave':
-        setPlayerGrave((prev) => [...prev, card]);
+        setPlayerGrave((prev) => [...prev, placed]);
         break;
       case 'banish':
-        setPlayerBanished((prev) => [...prev, card]);
+        setPlayerBanished((prev) => [...prev, placed]);
         break;
       case 'stackTop':
-        setMainDeck((prev) => [card, ...prev]);
+        setMainDeck((prev) => [placed, ...prev]);
         break;
       case 'stackBottom':
-        setMainDeck((prev) => [...prev, card]);
+        setMainDeck((prev) => [...prev, placed]);
         break;
     }
   };
@@ -369,35 +412,35 @@ function DuelFieldPage() {
     return actions;
   };
 
-  const handleMainDeckCardAction = (index: number, actionKey: string) => {
-    const card = mainDeck[index];
-    if (!card) return;
+  const handleMainDeckCardAction = (instanceId: string, actionKey: string) => {
+    const instance = mainDeck.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
 
     if (actionKey === 'specialSummon') {
       const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
       if (emptySlot === -1) return; // no available Monster Zone
 
-      requestSummonPosition(card, (position) => {
-        setMainDeck((prev) => prev.filter((_, i) => i !== index));
+      requestSummonPosition(instance.card, (position) => {
+        setMainDeck((prev) => prev.filter((i) => i.instanceId !== instanceId));
         setPlayerMonsterZones((prev) => {
           const next = [...prev];
-          next[emptySlot] = { card, faceDown: false, position };
+          next[emptySlot] = { ...instance, faceDown: false, position };
           return next;
         });
       });
       return;
     }
 
-    setMainDeck((prev) => prev.filter((_, i) => i !== index));
+    setMainDeck((prev) => prev.filter((i) => i.instanceId !== instanceId));
     switch (actionKey) {
       case 'toHand':
-        setHand((prev) => [...prev, card]);
+        setHand((prev) => [...prev, instance]);
         break;
       case 'toGrave':
-        setPlayerGrave((prev) => [...prev, card]);
+        setPlayerGrave((prev) => [...prev, instance]);
         break;
       case 'banish':
-        setPlayerBanished((prev) => [...prev, card]);
+        setPlayerBanished((prev) => [...prev, instance]);
         break;
     }
   };
@@ -413,32 +456,32 @@ function DuelFieldPage() {
     { key: 'specialSummon', label: 'Special Summon' },
   ];
 
-  const handleExtraDeckCardAction = (index: number, actionKey: string) => {
-    const card = extraDeck[index];
-    if (!card) return;
+  const handleExtraDeckCardAction = (instanceId: string, actionKey: string) => {
+    const instance = extraDeck.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
 
     if (actionKey === 'specialSummon') {
       const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
       if (emptySlot === -1) return; // no available Monster Zone
 
-      requestSummonPosition(card, (position) => {
-        setExtraDeck((prev) => prev.filter((_, i) => i !== index));
+      requestSummonPosition(instance.card, (position) => {
+        setExtraDeck((prev) => prev.filter((i) => i.instanceId !== instanceId));
         setPlayerMonsterZones((prev) => {
           const next = [...prev];
-          next[emptySlot] = { card, faceDown: false, position };
+          next[emptySlot] = { ...instance, faceDown: false, position };
           return next;
         });
       });
       return;
     }
 
-    setExtraDeck((prev) => prev.filter((_, i) => i !== index));
+    setExtraDeck((prev) => prev.filter((i) => i.instanceId !== instanceId));
     switch (actionKey) {
       case 'toGrave':
-        setPlayerGrave((prev) => [...prev, card]);
+        setPlayerGrave((prev) => [...prev, instance]);
         break;
       case 'banish':
-        setPlayerBanished((prev) => [...prev, card]);
+        setPlayerBanished((prev) => [...prev, instance]);
         break;
     }
   };
@@ -483,19 +526,19 @@ function DuelFieldPage() {
     return [];
   };
 
-  const handleGraveCardAction = (index: number, actionKey: string) => {
-    const card = playerGrave[index];
-    if (!card) return;
+  const handleGraveCardAction = (instanceId: string, actionKey: string) => {
+    const instance = playerGrave.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
 
     if (actionKey === 'specialSummon') {
       const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
       if (emptySlot === -1) return; // no available Monster Zone
 
-      requestSummonPosition(card, (position) => {
-        setPlayerGrave((prev) => prev.filter((_, i) => i !== index));
+      requestSummonPosition(instance.card, (position) => {
+        setPlayerGrave((prev) => prev.filter((i) => i.instanceId !== instanceId));
         setPlayerMonsterZones((prev) => {
           const next = [...prev];
-          next[emptySlot] = { card, faceDown: false, position };
+          next[emptySlot] = { ...instance, faceDown: false, position };
           return next;
         });
       });
@@ -505,43 +548,43 @@ function DuelFieldPage() {
     if (actionKey === 'toSpellTrapZone') {
       // Field Spells go to the Field Zone instead — same "replace and
       // send the old one to Grave" behavior as Activating one from hand.
-      if (card.cardSubclass === 'Field') {
+      if (instance.card.cardSubclass === 'Field') {
         setPlayerGrave((prev) => {
-          const withoutThisCard = prev.filter((_, i) => i !== index);
-          return playerFieldZone ? [...withoutThisCard, playerFieldZone.card] : withoutThisCard;
+          const withoutThisCard = prev.filter((i) => i.instanceId !== instanceId);
+          return playerFieldZone ? [...withoutThisCard, playerFieldZone] : withoutThisCard;
         });
-        setPlayerFieldZone({ card, faceDown: false });
+        setPlayerFieldZone({ ...instance, faceDown: false });
         return;
       }
 
       const emptySlot = playerSpellTrapZones.findIndex((slot) => slot === null);
       if (emptySlot === -1) return; // no available Spell/Trap Zone
 
-      setPlayerGrave((prev) => prev.filter((_, i) => i !== index));
+      setPlayerGrave((prev) => prev.filter((i) => i.instanceId !== instanceId));
       setPlayerSpellTrapZones((prev) => {
         const next = [...prev];
-        next[emptySlot] = { card, faceDown: false };
+        next[emptySlot] = { ...instance, faceDown: false };
         return next;
       });
       return;
     }
 
-    setPlayerGrave((prev) => prev.filter((_, i) => i !== index));
+    setPlayerGrave((prev) => prev.filter((i) => i.instanceId !== instanceId));
     switch (actionKey) {
       case 'toHand':
-        setHand((prev) => [...prev, card]);
+        setHand((prev) => [...prev, instance]);
         break;
       case 'toExtra':
-        setExtraDeck((prev) => [...prev, card]);
+        setExtraDeck((prev) => [...prev, instance]);
         break;
       case 'banish':
-        setPlayerBanished((prev) => [...prev, card]);
+        setPlayerBanished((prev) => [...prev, instance]);
         break;
       case 'stackTop':
-        setMainDeck((prev) => [card, ...prev]);
+        setMainDeck((prev) => [instance, ...prev]);
         break;
       case 'stackBottom':
-        setMainDeck((prev) => [...prev, card]);
+        setMainDeck((prev) => [...prev, instance]);
         break;
     }
   };
@@ -588,19 +631,19 @@ function DuelFieldPage() {
     return [];
   };
 
-  const handleBanishedCardAction = (index: number, actionKey: string) => {
-    const card = playerBanished[index];
-    if (!card) return;
+  const handleBanishedCardAction = (instanceId: string, actionKey: string) => {
+    const instance = playerBanished.find((i) => i.instanceId === instanceId);
+    if (!instance) return;
 
     if (actionKey === 'specialSummon') {
       const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
       if (emptySlot === -1) return; // no available Monster Zone
 
-      requestSummonPosition(card, (position) => {
-        setPlayerBanished((prev) => prev.filter((_, i) => i !== index));
+      requestSummonPosition(instance.card, (position) => {
+        setPlayerBanished((prev) => prev.filter((i) => i.instanceId !== instanceId));
         setPlayerMonsterZones((prev) => {
           const next = [...prev];
-          next[emptySlot] = { card, faceDown: false, position };
+          next[emptySlot] = { ...instance, faceDown: false, position };
           return next;
         });
       });
@@ -610,43 +653,43 @@ function DuelFieldPage() {
     if (actionKey === 'toSpellTrapZone') {
       // Field Spells go to the Field Zone instead — same "replace and
       // send the old one to Grave" behavior as Activating one from hand.
-      if (card.cardSubclass === 'Field') {
-        setPlayerBanished((prev) => prev.filter((_, i) => i !== index));
+      if (instance.card.cardSubclass === 'Field') {
+        setPlayerBanished((prev) => prev.filter((i) => i.instanceId !== instanceId));
         if (playerFieldZone) {
-          setPlayerGrave((prev) => [...prev, playerFieldZone.card]);
+          setPlayerGrave((prev) => [...prev, playerFieldZone]);
         }
-        setPlayerFieldZone({ card, faceDown: false });
+        setPlayerFieldZone({ ...instance, faceDown: false });
         return;
       }
 
       const emptySlot = playerSpellTrapZones.findIndex((slot) => slot === null);
       if (emptySlot === -1) return; // no available Spell/Trap Zone
 
-      setPlayerBanished((prev) => prev.filter((_, i) => i !== index));
+      setPlayerBanished((prev) => prev.filter((i) => i.instanceId !== instanceId));
       setPlayerSpellTrapZones((prev) => {
         const next = [...prev];
-        next[emptySlot] = { card, faceDown: false };
+        next[emptySlot] = { ...instance, faceDown: false };
         return next;
       });
       return;
     }
 
-    setPlayerBanished((prev) => prev.filter((_, i) => i !== index));
+    setPlayerBanished((prev) => prev.filter((i) => i.instanceId !== instanceId));
     switch (actionKey) {
       case 'toHand':
-        setHand((prev) => [...prev, card]);
+        setHand((prev) => [...prev, instance]);
         break;
       case 'toExtra':
-        setExtraDeck((prev) => [...prev, card]);
+        setExtraDeck((prev) => [...prev, instance]);
         break;
       case 'toGrave':
-        setPlayerGrave((prev) => [...prev, card]);
+        setPlayerGrave((prev) => [...prev, instance]);
         break;
       case 'stackTop':
-        setMainDeck((prev) => [card, ...prev]);
+        setMainDeck((prev) => [instance, ...prev]);
         break;
       case 'stackBottom':
-        setMainDeck((prev) => [...prev, card]);
+        setMainDeck((prev) => [...prev, instance]);
         break;
     }
   };
@@ -669,12 +712,13 @@ function DuelFieldPage() {
         </div>
         <div className="DuelFieldPage-fieldArea">
           <DuelField
-            playerMainDeck={mainDeck}
-            playerExtraDeck={extraDeck}
+            playerMainDeck={mainDeck.map((i) => i.card)}
+            playerExtraDeck={extraDeck.map((i) => i.card)}
+            playerMainDeckTopCardId={mainDeck[0]?.instanceId}
             playerMonsterZones={playerMonsterZones}
             playerSpellTrapZones={playerSpellTrapZones}
-            playerGrave={playerGrave}
-            playerBanished={playerBanished}
+            playerGrave={playerGrave.map((i) => i.card)}
+            playerBanished={playerBanished.map((i) => i.card)}
             playerFieldZone={playerFieldZone}
             onDrawCard={handleDrawCard}
             onCardHover={handleCardHover}
@@ -696,6 +740,8 @@ function DuelFieldPage() {
         </div>
         <Hand
           cards={hand}
+          entryRotations={handEntryRotations}
+          entryFlips={handEntryFlips}
           onCardHover={handleCardHover}
           onCardHoverEnd={handleCardHoverEnd}
           onNormalSummon={handleNormalSummon}

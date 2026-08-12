@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import CardImage from '../CardView/CardImage';
 import type { CardData } from '../../types/Card';
+import type { CardInstance } from '../../types/CardInstance';
 import './DeckViewer.css';
 
 // Same technique used everywhere else — render each card at native size,
@@ -23,7 +24,7 @@ export interface DeckViewerAction {
 }
 
 interface DeckViewerProps {
-  cards: CardData[];
+  cards: CardInstance[];
   onClose: () => void;
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
@@ -32,7 +33,7 @@ interface DeckViewerProps {
   // with no action menu (e.g. Extra Deck / Grave / Banished viewers,
   // which don't have per-card actions yet).
   getCardActions?: (card: CardData) => DeckViewerAction[];
-  onCardAction?: (index: number, actionKey: string) => void;
+  onCardAction?: (instanceId: string, actionKey: string) => void;
 }
 
 function DeckViewer({
@@ -43,8 +44,8 @@ function DeckViewer({
   getCardActions,
   onCardAction,
 }: DeckViewerProps) {
-  // Which card (by index) currently shows its context menu.
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  // Which card (by instanceId) currently shows its context menu.
+  const [hoveredInstanceId, setHoveredInstanceId] = useState<string | null>(null);
   const hideTimeoutRef = useRef<number | undefined>(undefined);
 
   const cancelHide = () => {
@@ -54,19 +55,19 @@ function DeckViewer({
     }
   };
 
-  const scheduleHide = (index: number) => {
+  const scheduleHide = (instanceId: string) => {
     cancelHide();
     hideTimeoutRef.current = window.setTimeout(() => {
-      setHoveredIndex((current) => (current === index ? null : current));
+      setHoveredInstanceId((current) => (current === instanceId ? null : current));
     }, MENU_HIDE_DELAY_MS);
   };
 
   useEffect(() => () => cancelHide(), []);
 
-  const handleAction = (index: number, actionKey: string) => {
+  const handleAction = (instanceId: string, actionKey: string) => {
     cancelHide();
-    setHoveredIndex(null);
-    onCardAction?.(index, actionKey);
+    setHoveredInstanceId(null);
+    onCardAction?.(instanceId, actionKey);
   };
 
   return (
@@ -81,22 +82,22 @@ function DeckViewer({
         className="DeckViewer-grid"
         style={{ gridTemplateColumns: `repeat(${COLUMNS}, max-content)` }}
       >
-        {cards.map((card, i) => {
+        {cards.map(({ instanceId, card }) => {
           const actions = getCardActions ? getCardActions(card) : [];
-          const showMenu = hoveredIndex === i && actions.length > 0;
+          const showMenu = hoveredInstanceId === instanceId && actions.length > 0;
 
           return (
             <div
-              key={i}
+              key={instanceId}
               className="DeckViewer-cell"
               style={{ width: CARD_WIDTH * SCALE, height: CARD_HEIGHT * SCALE }}
               onMouseEnter={() => {
                 cancelHide();
-                setHoveredIndex(i);
+                setHoveredInstanceId(instanceId);
                 onCardHover?.(card);
               }}
               onMouseLeave={() => {
-                scheduleHide(i);
+                scheduleHide(instanceId);
                 onCardHoverEnd?.();
               }}
             >
@@ -107,7 +108,7 @@ function DeckViewer({
                       key={action.key}
                       type="button"
                       className="DeckViewer-contextMenuButton"
-                      onClick={() => handleAction(i, action.key)}
+                      onClick={() => handleAction(instanceId, action.key)}
                     >
                       {action.label}
                     </button>

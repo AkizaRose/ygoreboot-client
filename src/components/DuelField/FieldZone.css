@@ -1,6 +1,6 @@
 .FieldZone {
-  width: 72px;
-  height: 105px;
+  width: 80px;
+  height: 117px;
   box-sizing: border-box;
   background: #33333340;
   border: 1px solid rgba(255, 255, 255, 0.25);
@@ -22,12 +22,32 @@
   top: 0;
   left: 0;
   z-index: 2;
-  /* Default transform-origin (center) now correctly pivots around the
-     zone's own center for the Defense Position rotation, since this
-     wrapper's own size is already the zone's exact footprint (set via
-     inline style) — unlike the inner .FieldZone-cardWrapper below, whose
-     much larger native size would make a center-pivot land in the wrong
-     place entirely. */
+  /* No manual transform here anymore — framer-motion's layoutId
+     animation manages this element's transform for the move animation,
+     and doesn't compose with an additional manual transform on the same
+     element. The Defense Position rotation now lives one level down, on
+     .FieldZone-cardRotation, so the two don't fight each other. */
+}
+
+.FieldZone-cardRotation {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  /* Default transform-origin (center) correctly pivots around the
+     zone's own center, since this wrapper's own size is already the
+     zone's exact footprint (100% of .FieldZone-cardOuter, which is set
+     to the zone's exact dimensions via inline style) — unlike the inner
+     .FieldZone-cardWrapper below, whose much larger native size would
+     make a center-pivot land in the wrong place entirely.
+
+     Rotation itself is driven by framer-motion's animate prop (see
+     FieldZone.tsx), not a CSS transition — a CSS transition can't
+     animate an element's very first paint (there's no "previous frame"
+     to transition from), which is exactly the case when a card is
+     freshly summoned straight into Defense Position: the rotation would
+     just appear instantly instead of turning smoothly alongside the
+     move. framer-motion's initial/animate system doesn't have that
+     limitation. */
 }
 
 .FieldZone-cardWrapper {
@@ -93,10 +113,46 @@
   user-select: none;
 }
 
-.FieldZone-pile {
-  position: relative;
+.FieldZone-flipReveal {
   width: 100%;
   height: 100%;
+  position: relative;
+}
+
+.FieldZone-pile {
+  /* absolute (not relative) so this fills the zone's full 80x117 box
+     edge-to-edge, ignoring .FieldZone's own padding — matching how
+     .FieldZone-cardOuter is positioned for face-up cards. Left as
+     `relative` here previously, this stayed in normal flow and got
+     constrained to the smaller padded content area instead, which is
+     why deck piles were rendering visibly smaller than every other card
+     on the field. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+
+.FieldZone-pileImageWrapper {
+  width: 100%;
+  height: 100%;
+}
+
+.FieldZone-topCardOffset {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  /* This wrapper's own transform (even a no-op translate(0,0) when
+     there's no stack offset) creates a new CSS stacking context, which
+     would otherwise make its z-index:auto lose to
+     .FieldZone-rotatedOverlay's explicit z-index:1 regardless of DOM
+     order — breaking the earlier fix that keeps Monster Zone cards
+     rendering above that overlay. Matches the z-index .FieldZone-cardOuter
+     used to have directly, before it moved one level deeper. */
   z-index: 2;
 }
 
@@ -106,6 +162,19 @@
   object-fit: cover;
   border-radius: 1px;
   display: block;
+}
+
+.FieldZone-stackLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 1px;
+  /* Faint edge so each layer reads as a distinct card peeking out from
+     behind the one in front of it, rather than a blurry double-image. */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
 }
 
 .FieldZone-pileCount {
