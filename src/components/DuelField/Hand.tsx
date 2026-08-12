@@ -16,6 +16,8 @@ const HAND_GAP = 4;
 // growing without bound and overflowing the screen.
 const MAX_VISIBLE_CARDS = 6;
 const MAX_HAND_WIDTH = MAX_VISIBLE_CARDS * CARD_CELL_WIDTH + (MAX_VISIBLE_CARDS - 1) * HAND_GAP;
+// How far a card rises when hovered.
+const HOVER_LIFT_Y = 20;
 
 // How long to wait before actually hiding the menu after the cursor
 // leaves. Without this, the menu (which only renders while hovered)
@@ -173,12 +175,23 @@ function Hand({
           <motion.div
             key={instanceId}
             layoutId={instanceId}
+            // y is framer-motion's own tracked motion value (not a raw
+            // CSS transform string), so — unlike the Defense Position
+            // rotation issue elsewhere in this app — it composes
+            // correctly with the layoutId-driven layout animation on
+            // this same element rather than fighting it.
+            animate={{ y: hoveredInstanceId === instanceId ? -HOVER_LIFT_Y : 0 }}
             transition={{ duration: 0.3, ease: 'easeInOut' }}
             className="Hand-cell"
             style={{
               width: CARD_CELL_WIDTH,
               height: CARD_CELL_HEIGHT,
               left: index * advance,
+              // Overlapping cards otherwise stack purely by DOM order
+              // (later card on top) — this lets the hovered card rise
+              // above whichever neighbors currently cover part of it,
+              // regardless of its own position in that order.
+              zIndex: hoveredInstanceId === instanceId ? cards.length + 1 : index,
             }}
             onMouseEnter={() => {
               cancelHide();
