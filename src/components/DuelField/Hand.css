@@ -1,6 +1,6 @@
 .Hand {
   position: relative;
-  margin: 0 auto;
+  margin: 8px auto;
   /* Width/height are set inline (computed from the current card count),
      since they now depend on the overlap math rather than being
      flex-content-driven. */
@@ -43,23 +43,20 @@
   margin-bottom: 4px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
   background: #16171dee;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 4px;
-  padding: 4px;
   white-space: nowrap;
-  z-index: 10;
+  z-index: 9999;
+  width: 100px;
 }
 
 .Hand-contextMenuButton {
-  font-size: 12px;
+  font-size: 10px;
   font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
-  padding: 4px 10px;
   cursor: pointer;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 2px;
   color: inherit;
 }
 

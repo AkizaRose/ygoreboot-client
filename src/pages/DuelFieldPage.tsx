@@ -17,7 +17,7 @@ import './DuelFieldPage.css';
 // cursor has to rest on a card for this long before it updates what's
 // shown, and leaving a card early cancels that pending update entirely
 // rather than showing it late regardless.
-const HOVER_DELAY_MS = 400;
+const HOVER_DELAY_MS = 100;
 
 const EMPTY_ZONES: (PlacedCard | null)[] = [null, null, null];
 
@@ -102,6 +102,161 @@ function DuelFieldPage() {
   // sent to hand, must not read a stale "true" from its earlier stint
   // face-down.
   const [handEntryFlips, setHandEntryFlips] = useState<Record<string, boolean>>({});
+  // Same idea again, but for the Main Deck's top-card wrapper instead of
+  // Hand — true means this specific instanceId just arrived at the top
+  // of the deck via a "Stack (to top)" action (from Hand, a field zone,
+  // Grave, or Banished), so it should play the flip-reveal "unfurl"
+  // effect and turn face-down into place, rather than the normal case
+  // of a draw simply exposing whatever card was already underneath
+  // (which was already face-down and shouldn't visually flip at all).
+  // Only ever written true — read once via FieldZone's `initial` prop
+  // on that one mount, so there's no stale-data concern the way there
+  // was with handEntryRotations (nothing ever needs to explicitly clear
+  // it back to false for correctness).
+  const [deckEntryFlips, setDeckEntryFlips] = useState<Record<string, boolean>>({});
+  // Same idea, for a Defense Position monster being Stacked (to top) —
+  // needs to visually rotate back to upright while it moves, at the same
+  // time as deckEntryFlips' flip-reveal. Only ever written from
+  // handleFieldAction's 'stackTop' case (the only "stack to top" source
+  // that can carry a `position`), always explicitly (both -90 and 0),
+  // for the same stale-data reason as every other entry-rotation map.
+  const [deckEntryRotations, setDeckEntryRotations] = useState<Record<string, number>>({});
+
+  // A card currently leaving Main/Extra Deck via a viewer action (e.g.
+  // "To Grave"), which can be any card in the pile — not necessarily the
+  // tracked top or bottom — so there's normally no matching source
+  // element for the destination to animate from at all. This gives it
+  // one, purely so the move has somewhere to animate from.
+  const [mainDeckDepartureCardId, setMainDeckDepartureCardId] = useState<string | undefined>(
+    undefined,
+  );
+  const [extraDeckDepartureCardId, setExtraDeckDepartureCardId] = useState<string | undefined>(
+    undefined,
+  );
+
+  // The actual move (removing the departure marker AND adding the card
+  // to its destination) is deliberately deferred to a separate render
+  // via this effect, rather than happening in the same batch as setting
+  // the departure marker above. If both happened together, the
+  // departure element (deck) and the destination element (Grave/
+  // Banished) would both be FRESH mounts sharing the same layoutId in
+  // the very same render — framer-motion's shared-layout matching
+  // expects at most one element per layoutId at any given moment, and
+  // two simultaneous claims on the same id produced a visible "moves
+  // there, snaps back, then plays the real animation" glitch. Deferring
+  // the destination update to the next render instead means the
+  // departure element unmounts in the EXACT same render the destination
+  // mounts — a clean, sequential unmount/mount pair, matching how every
+  // other working transition (draw, stack-to-top) is structured.
+  const [pendingDeckDeparture, setPendingDeckDeparture] = useState<{
+    source: 'main' | 'extra';
+    instance: CardInstance;
+    destination: 'grave' | 'banish';
+  } | null>(null);
+
+  useEffect(() => {
+    if (!pendingDeckDeparture) return;
+    const { source, instance, destination } = pendingDeckDeparture;
+
+    if (source === 'main') {
+      setMainDeckDepartureCardId(undefined);
+    } else {
+      setExtraDeckDepartureCardId(undefined);
+    }
+    setFieldZoneEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
+    if (destination === 'grave') {
+      setPlayerGrave((prev) => [...prev, instance]);
+    } else {
+      setPlayerBanished((prev) => [...prev, instance]);
+    }
+    setPendingDeckDeparture(null);
+  }, [pendingDeckDeparture]);
+
+  // Unlike Hand and Grave/Banished (where each card keeps a stable React
+  // key for as long as it's there, so `initial` only ever applies once,
+  // on its one genuine arrival), the Main Deck's top card is tracked via
+  // a key that changes to whatever instanceId is currently on top (see
+  // FieldZone's topCardInstanceId) — this is what makes the draw
+  // animation work, but it also means the SAME card can force a fresh
+  // mount a second time, with no action of its own, simply by being
+  // passively re-exposed after something stacked on top of it gets drawn
+  // away. Without clearing a hint once it's been consumed, that second
+  // mount would incorrectly re-read the original (by-then-stale) value
+  // and replay the flip/rotation a second time. This runs right after
+  // the render where a new top card's hint was consumed, so it doesn't
+  // affect the animation already in progress — `initial` is only ever
+  // read at mount, not on subsequent re-renders of the same instance.
+  // Unlike Hand and Grave/Banished (where each card keeps a stable React
+  // key for as long as it's there, so `initial` only ever applies once,
+  // on its one genuine arrival), the Main Deck's top AND bottom cards are
+  // each tracked via a key that changes to whatever instanceId currently
+  // occupies that position (see FieldZone's topCardInstanceId /
+  // bottomCardInstanceId) — this is what makes the draw and stack-to-
+  // bottom animations work, but it also means the SAME card can force a
+  // fresh mount a second time, with no action of its own — e.g. a card
+  // Stacked to the bottom, later passively becoming the top once the
+  // deck has shrunk enough to reach it. Without clearing a hint once
+  // it's been consumed, that second mount would incorrectly re-read the
+  // original (by-then-stale) value and replay the flip/rotation again.
+  // This runs right after the render where a hint was consumed, so it
+  // doesn't affect the animation already in progress — `initial` is only
+  // ever read at mount, not on subsequent re-renders of the same
+  // instance.
+  const mainDeckTopCardIdRef = useRef<string | undefined>(undefined);
+  const mainDeckBottomCardIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const clearDeckEntryHint = (instanceId: string) => {
+      setDeckEntryRotations((prev) => {
+        if (!(instanceId in prev)) return prev;
+        const next = { ...prev };
+        delete next[instanceId];
+        return next;
+      });
+      setDeckEntryFlips((prev) => {
+        if (!(instanceId in prev)) return prev;
+        const next = { ...prev };
+        delete next[instanceId];
+        return next;
+      });
+    };
+
+    const currentTopId = mainDeck[0]?.instanceId;
+    if (currentTopId && currentTopId !== mainDeckTopCardIdRef.current) {
+      clearDeckEntryHint(currentTopId);
+    }
+    mainDeckTopCardIdRef.current = currentTopId;
+
+    // Only meaningfully distinct from the top when there's more than one
+    // card — matches the same guard used when computing the bottom-card
+    // props passed to DuelField, so this doesn't re-process the same
+    // card the top-tracking above already just handled.
+    const currentBottomId =
+      mainDeck.length > 1 ? mainDeck[mainDeck.length - 1]?.instanceId : undefined;
+    if (currentBottomId && currentBottomId !== mainDeckBottomCardIdRef.current) {
+      clearDeckEntryHint(currentBottomId);
+    }
+    mainDeckBottomCardIdRef.current = currentBottomId;
+  }, [mainDeck]);
+  // Same idea as handEntryRotations, for a Defense Position monster
+  // being sent to Grave/Banished instead of Hand — needs to visually
+  // unwind back to upright while it moves there, rather than snapping
+  // straight the instant it arrives. Shared by both zones since an
+  // instanceId is only ever in one place at a time. Always written
+  // explicitly (both the -90 and the 0 case) for the same stale-data
+  // reason as handEntryRotations — a card that was once in Defense
+  // Position, switched back to Attack, then later sent to Grave, must
+  // not read a stale -90 from its earlier stint in Defense.
+  const [fieldZoneEntryRotations, setFieldZoneEntryRotations] = useState<Record<string, number>>(
+    {},
+  );
+  // Same idea, shared by Grave and Banished, for a face-down field card
+  // (Set Spell/Trap/Field Spell) being sent there — needs to visually
+  // unfurl into its revealed face while it moves, rather than the
+  // destination just instantly showing the face while only the move
+  // itself animates. Always written explicitly (both the true and false
+  // case) for the same reason as the others — a card that's already
+  // face-up shouldn't play this at all.
+  const [fieldZoneEntryFlips, setFieldZoneEntryFlips] = useState<Record<string, boolean>>({});
 
   // Resolves the currently-selected saved deck into real card instances
   // (each getting a brand-new instanceId here — this is the ONLY place
@@ -122,6 +277,10 @@ function DuelFieldPage() {
       setPlayerFieldZone(null);
       setHandEntryRotations({});
       setHandEntryFlips({});
+      setDeckEntryFlips({});
+      setDeckEntryRotations({});
+      setFieldZoneEntryRotations({});
+      setFieldZoneEntryFlips({});
       return;
     }
 
@@ -137,6 +296,10 @@ function DuelFieldPage() {
       setPlayerFieldZone(null);
       setHandEntryRotations({});
       setHandEntryFlips({});
+      setDeckEntryFlips({});
+      setDeckEntryRotations({});
+      setFieldZoneEntryRotations({});
+      setFieldZoneEntryFlips({});
       return;
     }
 
@@ -172,6 +335,10 @@ function DuelFieldPage() {
     setPlayerFieldZone(null);
     setHandEntryRotations({});
     setHandEntryFlips({});
+    setDeckEntryFlips({});
+    setDeckEntryRotations({});
+    setFieldZoneEntryRotations({});
+    setFieldZoneEntryFlips({});
   };
 
   // (Re)loads whenever deckId changes — e.g. navigating here for a
@@ -190,6 +357,7 @@ function DuelFieldPage() {
     const [top, ...rest] = mainDeck;
     setMainDeck(rest);
     setHandEntryFlips((prev) => ({ ...prev, [top.instanceId]: true }));
+    setHandEntryRotations((prev) => ({ ...prev, [top.instanceId]: 0 }));
     setHand((prev) => [...prev, top]);
   };
 
@@ -280,6 +448,7 @@ function DuelFieldPage() {
     const instance = hand.find((i) => i.instanceId === instanceId);
     if (!instance) return;
     setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
+    setDeckEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
     setMainDeck((prev) => [instance, ...prev]);
   };
 
@@ -287,6 +456,7 @@ function DuelFieldPage() {
     const instance = hand.find((i) => i.instanceId === instanceId);
     if (!instance) return;
     setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
+    setDeckEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
     setMainDeck((prev) => [...prev, instance]);
   };
 
@@ -383,15 +553,46 @@ function DuelFieldPage() {
         setExtraDeck((prev) => [...prev, placed]);
         break;
       case 'toGrave':
+        if (zoneType === 'monster') {
+          setFieldZoneEntryRotations((prev) => ({
+            ...prev,
+            [placed.instanceId]: placed.position === 'defense' ? -90 : 0,
+          }));
+        }
+        setFieldZoneEntryFlips((prev) => ({ ...prev, [placed.instanceId]: placed.faceDown }));
         setPlayerGrave((prev) => [...prev, placed]);
         break;
       case 'banish':
+        if (zoneType === 'monster') {
+          setFieldZoneEntryRotations((prev) => ({
+            ...prev,
+            [placed.instanceId]: placed.position === 'defense' ? -90 : 0,
+          }));
+        }
+        setFieldZoneEntryFlips((prev) => ({ ...prev, [placed.instanceId]: placed.faceDown }));
         setPlayerBanished((prev) => [...prev, placed]);
         break;
       case 'stackTop':
+        if (zoneType === 'monster') {
+          setDeckEntryRotations((prev) => ({
+            ...prev,
+            [placed.instanceId]: placed.position === 'defense' ? -90 : 0,
+          }));
+        }
+        // Only flip if the card wasn't already showing face-down (a Set
+        // Spell/Trap/Field Spell) — it's already presenting its back,
+        // same as the deck, so there's nothing to turn over.
+        setDeckEntryFlips((prev) => ({ ...prev, [placed.instanceId]: !placed.faceDown }));
         setMainDeck((prev) => [placed, ...prev]);
         break;
       case 'stackBottom':
+        if (zoneType === 'monster') {
+          setDeckEntryRotations((prev) => ({
+            ...prev,
+            [placed.instanceId]: placed.position === 'defense' ? -90 : 0,
+          }));
+        }
+        setDeckEntryFlips((prev) => ({ ...prev, [placed.instanceId]: !placed.faceDown }));
         setMainDeck((prev) => [...prev, placed]);
         break;
     }
@@ -407,7 +608,7 @@ function DuelFieldPage() {
       { key: 'banish', label: 'Banish' },
     ];
     if (card.cardClass === 'Monster') {
-      actions.push({ key: 'specialSummon', label: 'Special Summon' });
+      actions.push({ key: 'specialSummon', label: 'S. Summon' });
     }
     return actions;
   };
@@ -434,13 +635,17 @@ function DuelFieldPage() {
     setMainDeck((prev) => prev.filter((i) => i.instanceId !== instanceId));
     switch (actionKey) {
       case 'toHand':
+        setHandEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
+        setHandEntryRotations((prev) => ({ ...prev, [instance.instanceId]: 0 }));
         setHand((prev) => [...prev, instance]);
         break;
       case 'toGrave':
-        setPlayerGrave((prev) => [...prev, instance]);
+        setMainDeckDepartureCardId(instance.instanceId);
+        setPendingDeckDeparture({ source: 'main', instance, destination: 'grave' });
         break;
       case 'banish':
-        setPlayerBanished((prev) => [...prev, instance]);
+        setMainDeckDepartureCardId(instance.instanceId);
+        setPendingDeckDeparture({ source: 'main', instance, destination: 'banish' });
         break;
     }
   };
@@ -453,7 +658,7 @@ function DuelFieldPage() {
   const getExtraDeckCardActions = () => [
     { key: 'toGrave', label: 'To Grave' },
     { key: 'banish', label: 'Banish' },
-    { key: 'specialSummon', label: 'Special Summon' },
+    { key: 'specialSummon', label: 'S. Summon' },
   ];
 
   const handleExtraDeckCardAction = (instanceId: string, actionKey: string) => {
@@ -478,10 +683,12 @@ function DuelFieldPage() {
     setExtraDeck((prev) => prev.filter((i) => i.instanceId !== instanceId));
     switch (actionKey) {
       case 'toGrave':
-        setPlayerGrave((prev) => [...prev, instance]);
+        setExtraDeckDepartureCardId(instance.instanceId);
+        setPendingDeckDeparture({ source: 'extra', instance, destination: 'grave' });
         break;
       case 'banish':
-        setPlayerBanished((prev) => [...prev, instance]);
+        setExtraDeckDepartureCardId(instance.instanceId);
+        setPendingDeckDeparture({ source: 'extra', instance, destination: 'banish' });
         break;
     }
   };
@@ -497,9 +704,9 @@ function DuelFieldPage() {
       return [
         { key: 'toHand', label: 'To Hand' },
         { key: 'banish', label: 'Banish' },
-        { key: 'stackTop', label: 'Stack (to top)' },
-        { key: 'stackBottom', label: 'Stack (to bottom)' },
-        { key: 'specialSummon', label: 'Special Summon' },
+        { key: 'stackTop', label: 'To T. Deck' },
+        { key: 'stackBottom', label: 'To B. Deck' },
+        { key: 'specialSummon', label: 'S. Summon' },
       ];
     }
 
@@ -507,9 +714,9 @@ function DuelFieldPage() {
       return [
         { key: 'toExtra', label: 'To Extra Deck' },
         { key: 'banish', label: 'Banish' },
-        { key: 'stackTop', label: 'Stack (to top)' },
-        { key: 'stackBottom', label: 'Stack (to bottom)' },
-        { key: 'specialSummon', label: 'Special Summon' },
+        { key: 'stackTop', label: 'To T. Deck' },
+        { key: 'stackBottom', label: 'To B. Deck' },
+        { key: 'specialSummon', label: 'S. Summon' },
       ];
     }
 
@@ -517,8 +724,8 @@ function DuelFieldPage() {
       return [
         { key: 'toHand', label: 'To Hand' },
         { key: 'banish', label: 'Banish' },
-        { key: 'stackTop', label: 'Stack (to top)' },
-        { key: 'stackBottom', label: 'Stack (to bottom)' },
+        { key: 'stackTop', label: 'To T. Deck' },
+        { key: 'stackBottom', label: 'To B. Deck' },
         { key: 'toSpellTrapZone', label: 'To S/T Zone' },
       ];
     }
@@ -572,6 +779,8 @@ function DuelFieldPage() {
     setPlayerGrave((prev) => prev.filter((i) => i.instanceId !== instanceId));
     switch (actionKey) {
       case 'toHand':
+        setHandEntryFlips((prev) => ({ ...prev, [instance.instanceId]: false }));
+        setHandEntryRotations((prev) => ({ ...prev, [instance.instanceId]: 0 }));
         setHand((prev) => [...prev, instance]);
         break;
       case 'toExtra':
@@ -581,9 +790,11 @@ function DuelFieldPage() {
         setPlayerBanished((prev) => [...prev, instance]);
         break;
       case 'stackTop':
+        setDeckEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
         setMainDeck((prev) => [instance, ...prev]);
         break;
       case 'stackBottom':
+        setDeckEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
         setMainDeck((prev) => [...prev, instance]);
         break;
     }
@@ -602,9 +813,9 @@ function DuelFieldPage() {
       return [
         { key: 'toHand', label: 'To Hand' },
         { key: 'toGrave', label: 'To Grave' },
-        { key: 'stackTop', label: 'Stack (to top)' },
-        { key: 'stackBottom', label: 'Stack (to bottom)' },
-        { key: 'specialSummon', label: 'Special Summon' },
+        { key: 'stackTop', label: 'To T. Deck' },
+        { key: 'stackBottom', label: 'To B. Deck' },
+        { key: 'specialSummon', label: 'S. Summon' },
       ];
     }
 
@@ -612,9 +823,9 @@ function DuelFieldPage() {
       return [
         { key: 'toExtra', label: 'To Extra Deck' },
         { key: 'toGrave', label: 'To Grave' },
-        { key: 'stackTop', label: 'Stack (to top)' },
-        { key: 'stackBottom', label: 'Stack (to bottom)' },
-        { key: 'specialSummon', label: 'Special Summon' },
+        { key: 'stackTop', label: 'To T. Deck' },
+        { key: 'stackBottom', label: 'To B. Deck' },
+        { key: 'specialSummon', label: 'S. Summon' },
       ];
     }
 
@@ -622,8 +833,8 @@ function DuelFieldPage() {
       return [
         { key: 'toHand', label: 'To Hand' },
         { key: 'toGrave', label: 'To Grave' },
-        { key: 'stackTop', label: 'Stack (to top)' },
-        { key: 'stackBottom', label: 'Stack (to bottom)' },
+        { key: 'stackTop', label: 'To T. Deck' },
+        { key: 'stackBottom', label: 'To B. Deck' },
         { key: 'toSpellTrapZone', label: 'To S/T Zone' },
       ];
     }
@@ -677,6 +888,8 @@ function DuelFieldPage() {
     setPlayerBanished((prev) => prev.filter((i) => i.instanceId !== instanceId));
     switch (actionKey) {
       case 'toHand':
+        setHandEntryFlips((prev) => ({ ...prev, [instance.instanceId]: false }));
+        setHandEntryRotations((prev) => ({ ...prev, [instance.instanceId]: 0 }));
         setHand((prev) => [...prev, instance]);
         break;
       case 'toExtra':
@@ -686,9 +899,11 @@ function DuelFieldPage() {
         setPlayerGrave((prev) => [...prev, instance]);
         break;
       case 'stackTop':
+        setDeckEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
         setMainDeck((prev) => [instance, ...prev]);
         break;
       case 'stackBottom':
+        setDeckEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
         setMainDeck((prev) => [...prev, instance]);
         break;
     }
@@ -715,10 +930,33 @@ function DuelFieldPage() {
             playerMainDeck={mainDeck.map((i) => i.card)}
             playerExtraDeck={extraDeck.map((i) => i.card)}
             playerMainDeckTopCardId={mainDeck[0]?.instanceId}
+            playerMainDeckTopCardEntryFlip={
+              mainDeck[0] ? !!deckEntryFlips[mainDeck[0].instanceId] : false
+            }
+            playerMainDeckTopCardEntryRotation={
+              mainDeck[0] ? (deckEntryRotations[mainDeck[0].instanceId] ?? 0) : 0
+            }
+            playerMainDeckBottomCardId={
+              mainDeck.length > 1 ? mainDeck[mainDeck.length - 1]?.instanceId : undefined
+            }
+            playerMainDeckBottomCardEntryFlip={
+              mainDeck.length > 1
+                ? !!deckEntryFlips[mainDeck[mainDeck.length - 1].instanceId]
+                : false
+            }
+            playerMainDeckBottomCardEntryRotation={
+              mainDeck.length > 1
+                ? (deckEntryRotations[mainDeck[mainDeck.length - 1].instanceId] ?? 0)
+                : 0
+            }
+            playerMainDeckDepartureCardId={mainDeckDepartureCardId}
+            playerExtraDeckDepartureCardId={extraDeckDepartureCardId}
             playerMonsterZones={playerMonsterZones}
             playerSpellTrapZones={playerSpellTrapZones}
-            playerGrave={playerGrave.map((i) => i.card)}
-            playerBanished={playerBanished.map((i) => i.card)}
+            playerGrave={playerGrave}
+            playerBanished={playerBanished}
+            playerFieldZoneEntryRotations={fieldZoneEntryRotations}
+            playerFieldZoneEntryFlips={fieldZoneEntryFlips}
             playerFieldZone={playerFieldZone}
             onDrawCard={handleDrawCard}
             onCardHover={handleCardHover}

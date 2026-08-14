@@ -1,6 +1,6 @@
 .FieldZone {
-  width: 80px;
-  height: 117px;
+  width: 72px;
+  height: 105px;
   box-sizing: border-box;
   background: #33333340;
   border: 1px solid rgba(255, 255, 255, 0.25);
@@ -81,23 +81,20 @@
   margin-bottom: 4px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
   background: #16171dee;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 4px;
-  padding: 4px;
   white-space: nowrap;
-  z-index: 10;
+  z-index: 9999;
+  width: 72px;
 }
 
 .FieldZone-contextMenuButton {
-  font-size: 12px;
+  font-size: 10px;
   font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
-  padding: 4px 10px;
   cursor: pointer;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 2px;
   color: inherit;
 }
 

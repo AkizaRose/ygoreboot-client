@@ -185,10 +185,10 @@
 }
 .artwork {
   position: absolute;
-  left: 0px;
-  top: 80px;
-  width: 813px;
-  height: 813px;
+  left: 42px;
+  top: 115px;
+  width: 730px;
+  height: 730px;
   z-index: 1
 }
 .frame {

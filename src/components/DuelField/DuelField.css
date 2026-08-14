@@ -4,12 +4,13 @@
   align-items: center;
   gap: 24px;
   padding: 0px;
+  margin-top: 24px
 }
 
 .DuelField-playerField {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 /* 7 columns rather than 6: the extra column is what lets each side's
@@ -40,6 +41,6 @@
 /* Reserves grid space without rendering anything visible — see the
    opponent deck row's leading placeholder in DuelField.tsx. */
 .DuelField-emptyZone {
-  width: 80px;
-  height: 117px;
+  width: 72px;
+  height: 105px;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import CardImage from '../CardView/CardImage';
 import type { CardData } from '../../types/Card';
 import type { CardInstance } from '../../types/CardInstance';
@@ -28,6 +29,7 @@ interface DeckViewerProps {
   onClose: () => void;
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
+
   // Optional per-card hover menu. Both must be supplied together — when
   // omitted, cards in this viewer are hoverable for Card Display only,
   // with no action menu (e.g. Extra Deck / Grave / Banished viewers,
@@ -46,6 +48,15 @@ function DeckViewer({
 }: DeckViewerProps) {
   // Which card (by instanceId) currently shows its context menu.
   const [hoveredInstanceId, setHoveredInstanceId] = useState<string | null>(null);
+
+  // Position of the floating context menu in viewport coordinates.
+  const [menuPosition, setMenuPosition] = useState({
+    left: 0,
+    top: 0,
+  });
+
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const hoveredCellRef = useRef<HTMLDivElement | null>(null);
   const hideTimeoutRef = useRef<number | undefined>(undefined);
 
   const cancelHide = () => {
@@ -58,11 +69,47 @@ function DeckViewer({
   const scheduleHide = (instanceId: string) => {
     cancelHide();
     hideTimeoutRef.current = window.setTimeout(() => {
-      setHoveredInstanceId((current) => (current === instanceId ? null : current));
+      setHoveredInstanceId((current) =>
+        current === instanceId ? null : current,
+      );
     }, MENU_HIDE_DELAY_MS);
   };
 
+  const updateMenuPosition = () => {
+    if (!hoveredCellRef.current) {
+      return;
+    }
+
+    const rect = hoveredCellRef.current.getBoundingClientRect();
+
+    setMenuPosition({
+      left: rect.left + rect.width / 2,
+      top: rect.top,
+    });
+  };
+
   useEffect(() => () => cancelHide(), []);
+
+  // Keep the menu attached to the hovered card when the grid is scrolled.
+  useEffect(() => {
+    const grid = gridRef.current;
+
+    if (!grid || hoveredInstanceId === null) {
+      return;
+    }
+
+    updateMenuPosition();
+
+    const handleScroll = () => {
+      updateMenuPosition();
+    };
+
+    grid.addEventListener('scroll', handleScroll);
+
+    return () => {
+      grid.removeEventListener('scroll', handleScroll);
+    };
+  }, [hoveredInstanceId]);
 
   const handleAction = (instanceId: string, actionKey: string) => {
     cancelHide();
@@ -70,51 +117,71 @@ function DeckViewer({
     onCardAction?.(instanceId, actionKey);
   };
 
+  const hoveredCard = cards.find(
+    ({ instanceId }) => instanceId === hoveredInstanceId,
+  );
+
+  const hoveredActions = hoveredCard && getCardActions
+    ? getCardActions(hoveredCard.card)
+    : [];
+
+  const showMenu = hoveredInstanceId !== null && hoveredActions.length > 0;
+
   return (
     <div className="DeckViewer">
       <div className="DeckViewer-topBar">
-        <button type="button" className="DeckViewer-exitButton" onClick={onClose}>
+        <button
+          type="button"
+          className="DeckViewer-exitButton"
+          onClick={onClose}
+        >
           Exit
         </button>
       </div>
 
       <div
+        ref={gridRef}
         className="DeckViewer-grid"
         style={{ gridTemplateColumns: `repeat(${COLUMNS}, max-content)` }}
       >
         {cards.map(({ instanceId, card }) => {
-          const actions = getCardActions ? getCardActions(card) : [];
-          const showMenu = hoveredInstanceId === instanceId && actions.length > 0;
-
           return (
             <div
               key={instanceId}
+              ref={(element) => {
+                if (hoveredInstanceId === instanceId) {
+                  hoveredCellRef.current = element;
+                }
+              }}
               className="DeckViewer-cell"
-              style={{ width: CARD_WIDTH * SCALE, height: CARD_HEIGHT * SCALE }}
+              style={{
+                width: CARD_WIDTH * SCALE,
+                height: CARD_HEIGHT * SCALE,
+              }}
               onMouseEnter={() => {
                 cancelHide();
+
+                const element = document.querySelector(
+                  `[data-deck-viewer-instance-id="${instanceId}"]`,
+                );
+
+                if (element instanceof HTMLDivElement) {
+                  hoveredCellRef.current = element;
+                }
+
                 setHoveredInstanceId(instanceId);
                 onCardHover?.(card);
+
+                requestAnimationFrame(() => {
+                  updateMenuPosition();
+                });
               }}
               onMouseLeave={() => {
                 scheduleHide(instanceId);
                 onCardHoverEnd?.();
               }}
+              data-deck-viewer-instance-id={instanceId}
             >
-              {showMenu && (
-                <div className="DeckViewer-contextMenu">
-                  {actions.map((action) => (
-                    <button
-                      key={action.key}
-                      type="button"
-                      className="DeckViewer-contextMenuButton"
-                      onClick={() => handleAction(instanceId, action.key)}
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-              )}
               <div
                 className="DeckViewer-cardWrapper"
                 style={{
@@ -129,6 +196,42 @@ function DeckViewer({
           );
         })}
       </div>
+
+      {showMenu &&
+        createPortal(
+          <div
+            className="DeckViewer-contextMenu"
+            style={{
+              position: 'fixed',
+              left: menuPosition.left,
+              top: menuPosition.top,
+              transform: 'translate(-50%, calc(-100% - 4px))',
+            }}
+            onMouseEnter={() => {
+              cancelHide();
+            }}
+            onMouseLeave={() => {
+              if (hoveredInstanceId !== null) {
+                scheduleHide(hoveredInstanceId);
+              }
+            }}
+          >
+            {hoveredActions.map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                className="DeckViewer-contextMenuButton"
+                onClick={() =>
+                  hoveredInstanceId !== null &&
+                  handleAction(hoveredInstanceId, action.key)
+                }
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

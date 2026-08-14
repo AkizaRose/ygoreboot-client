@@ -7,7 +7,7 @@ import './Hand.css';
 
 const CARD_WIDTH = 813;
 const CARD_HEIGHT = 1185;
-const SCALE = 0.1;
+const SCALE = 0.12;
 const CARD_CELL_WIDTH = CARD_WIDTH * SCALE;
 const CARD_CELL_HEIGHT = CARD_HEIGHT * SCALE;
 const HAND_GAP = 4;
@@ -17,7 +17,7 @@ const HAND_GAP = 4;
 const MAX_VISIBLE_CARDS = 6;
 const MAX_HAND_WIDTH = MAX_VISIBLE_CARDS * CARD_CELL_WIDTH + (MAX_VISIBLE_CARDS - 1) * HAND_GAP;
 // How far a card rises when hovered.
-const HOVER_LIFT_Y = 20;
+const HOVER_LIFT_Y = 40;
 
 // How long to wait before actually hiding the menu after the cursor
 // leaves. Without this, the menu (which only renders while hovered)
@@ -43,7 +43,7 @@ function getHandActions(card: CardData): HandAction[] {
     (card.cardSubclass === 'Normal' || card.cardSubclass === 'Effect');
 
   if (isNormalOrEffectMonster) {
-    actions.push({ key: 'normalSummon', label: 'Normal Summon' });
+    actions.push({ key: 'normalSummon', label: 'N. Summon' });
   }
 
   if (card.cardClass === 'Spell') {
@@ -57,8 +57,8 @@ function getHandActions(card: CardData): HandAction[] {
   actions.push(
     { key: 'toGrave', label: 'To Grave' },
     { key: 'banish', label: 'Banish' },
-    { key: 'stackTop', label: 'Stack (to top)' },
-    { key: 'stackBottom', label: 'Stack (to bottom)' },
+    { key: 'stackTop', label: 'To T. Deck' },
+    { key: 'stackBottom', label: 'To B. Deck' },
   );
 
   return actions;
@@ -181,7 +181,7 @@ function Hand({
             // correctly with the layoutId-driven layout animation on
             // this same element rather than fighting it.
             animate={{ y: hoveredInstanceId === instanceId ? -HOVER_LIFT_Y : 0 }}
-            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            transition={{ duration: 0.1, ease: 'easeInOut' }}
             className="Hand-cell"
             style={{
               width: CARD_CELL_WIDTH,
@@ -222,13 +222,13 @@ function Hand({
               style={{ width: '100%', height: '100%' }}
               initial={{ rotate: entryRotations?.[instanceId] ?? 0 }}
               animate={{ rotate: 0 }}
-              transition={{ duration: 0.3, ease: 'easeInOut' }}
+              transition={{ duration: 0.1, ease: 'easeInOut' }}
             >
               <motion.div
                 className="Hand-flipReveal"
                 initial={{ scaleX: entryFlips?.[instanceId] ? 0 : 1 }}
                 animate={{ scaleX: 1 }}
-                transition={{ duration: 0.3, ease: 'easeInOut' }}
+                transition={{ duration: 0.1, ease: 'easeInOut' }}
               >
                 <div
                   className="Hand-cardWrapper"

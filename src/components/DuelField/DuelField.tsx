@@ -1,6 +1,6 @@
 import FieldZone, { type FieldZoneAction } from './FieldZone';
 import type { CardData } from '../../types/Card';
-import type { PlacedCard } from '../../types/CardInstance';
+import type { CardInstance, PlacedCard } from '../../types/CardInstance';
 import cardBackImg from '../../assets/card/CardBack.png';
 import './DuelField.css';
 
@@ -14,8 +14,8 @@ const STANDARD_FIELD_CARD_ACTIONS: FieldZoneAction[] = [
   { key: 'toHand', label: 'To Hand' },
   { key: 'toGrave', label: 'To Grave' },
   { key: 'banish', label: 'Banish' },
-  { key: 'stackTop', label: 'Stack (to top)' },
-  { key: 'stackBottom', label: 'Stack (to bottom)' },
+  { key: 'stackTop', label: 'To T. Deck' },
+  { key: 'stackBottom', label: 'To B. Deck' },
 ];
 
 // Fusion/Ritual/Evolution Monsters only ever belong in the Main Deck,
@@ -130,6 +130,16 @@ interface PlayerFieldProps {
   // topCardInstanceId). Not needed for Extra Deck, which isn't drawn
   // from.
   mainDeckTopCardId?: string;
+  mainDeckTopCardEntryFlip?: boolean;
+  mainDeckTopCardEntryRotation?: number;
+  mainDeckBottomCardId?: string;
+  mainDeckBottomCardEntryFlip?: boolean;
+  mainDeckBottomCardEntryRotation?: number;
+  mainDeckDepartureCardId?: string;
+  // Same idea as mainDeckDepartureCardId, but for Extra Deck — which
+  // otherwise has no top/bottom tracking at all (it's never drawn from,
+  // so there was never a need before now).
+  extraDeckDepartureCardId?: string;
   // The 3 Monster Zone / Spell-Trap Zone slots, left-to-right in the
   // player's own (unreversed) view — index 0 is the leftmost. Only ever
   // passed for the player's side for now.
@@ -137,8 +147,19 @@ interface PlayerFieldProps {
   spellTrapZones?: (PlacedCard | null)[];
   // Grave/Banished piles — shown face-up (top card + count), unlike the
   // face-down Main/Extra Deck piles, since these aren't secret zones.
-  grave?: CardData[];
-  banished?: CardData[];
+  // CardInstance (not just CardData), unlike the Main/Extra Deck props
+  // above — the top card here is individually layoutId-tracked (for the
+  // smooth Hand <-> Grave/Banished transition), which needs a real
+  // instanceId to work, unlike the deck piles' generic pile image.
+  grave?: CardInstance[];
+  banished?: CardInstance[];
+  // Shared by Grave and Banished — a card's instanceId is only ever in
+  // one place at a time, so one map works for both. See FieldZone's
+  // stackCardEntryRotations for the full explanation.
+  fieldZoneEntryRotations?: Record<string, number>;
+  // Same idea, shared by Grave and Banished too — see FieldZone's
+  // stackCardEntryFlips.
+  fieldZoneEntryFlips?: Record<string, boolean>;
   // Single slot (unlike the 3-wide Monster/Spell-Trap zones) — activating
   // a new Field Spell replaces whatever's already here.
   fieldZone?: PlacedCard | null;
@@ -162,10 +183,19 @@ function PlayerField({
   mainDeck = [],
   extraDeck = [],
   mainDeckTopCardId,
+  mainDeckTopCardEntryFlip,
+  mainDeckTopCardEntryRotation,
+  mainDeckBottomCardId,
+  mainDeckBottomCardEntryFlip,
+  mainDeckBottomCardEntryRotation,
+  mainDeckDepartureCardId,
+  extraDeckDepartureCardId,
   monsterZones = [],
   spellTrapZones = [],
   grave = [],
   banished = [],
+  fieldZoneEntryRotations,
+  fieldZoneEntryFlips,
   fieldZone = null,
   onDrawCard,
   onCardHover,
@@ -260,12 +290,18 @@ function PlayerField({
           );
         }
         if (zone.kind === 'grave') {
+          const graveVisibleCount = Math.min(grave.length, GRAVE_STACK_MAX_LAYERS + 1);
+          const graveStackCards = grave.slice(grave.length - graveVisibleCount);
           const topCard = grave.length > 0 ? grave[grave.length - 1] : undefined;
           return (
             <FieldZone
               key={i}
               label={zone.label}
-              card={topCard}
+              card={topCard?.card}
+              instanceId={topCard?.instanceId}
+              stackCards={graveStackCards}
+              stackCardEntryRotations={fieldZoneEntryRotations}
+              stackCardEntryFlips={fieldZoneEntryFlips}
               count={grave.length > 0 ? grave.length : undefined}
               stackOffsetStepX={GRAVE_STACK_OFFSET_STEP_X}
               stackOffsetStepY={GRAVE_STACK_OFFSET_STEP_Y}
@@ -278,12 +314,18 @@ function PlayerField({
           );
         }
         if (zone.kind === 'banished') {
+          const banishedVisibleCount = Math.min(banished.length, BANISHED_STACK_MAX_LAYERS + 1);
+          const banishedStackCards = banished.slice(banished.length - banishedVisibleCount);
           const topCard = banished.length > 0 ? banished[banished.length - 1] : undefined;
           return (
             <FieldZone
               key={i}
               label={zone.label}
-              card={topCard}
+              card={topCard?.card}
+              instanceId={topCard?.instanceId}
+              stackCards={banishedStackCards}
+              stackCardEntryRotations={fieldZoneEntryRotations}
+              stackCardEntryFlips={fieldZoneEntryFlips}
               count={banished.length > 0 ? banished.length : undefined}
               stackOffsetStepX={BANISHED_STACK_OFFSET_STEP_X}
               stackOffsetStepY={BANISHED_STACK_OFFSET_STEP_Y}
@@ -317,6 +359,12 @@ function PlayerField({
               image={cardBackImg}
               count={mainDeck.length}
               topCardInstanceId={mainDeckTopCardId}
+              topCardEntryFlip={mainDeckTopCardEntryFlip}
+              topCardEntryRotation={mainDeckTopCardEntryRotation}
+              bottomCardInstanceId={mainDeckBottomCardId}
+              bottomCardEntryFlip={mainDeckBottomCardEntryFlip}
+              bottomCardEntryRotation={mainDeckBottomCardEntryRotation}
+              departureCardInstanceId={mainDeckDepartureCardId}
               stackOffsetStepX={MAIN_DECK_STACK_OFFSET_STEP_X}
               stackOffsetStepY={MAIN_DECK_STACK_OFFSET_STEP_Y}
               stackMaxLayers={MAIN_DECK_STACK_MAX_LAYERS}
@@ -336,6 +384,7 @@ function PlayerField({
               stackOffsetStepX={EXTRA_DECK_STACK_OFFSET_STEP_X}
               stackOffsetStepY={EXTRA_DECK_STACK_OFFSET_STEP_Y}
               stackMaxLayers={EXTRA_DECK_STACK_MAX_LAYERS}
+              departureCardInstanceId={extraDeckDepartureCardId}
               menuActions={VIEW_ONLY_ACTIONS}
               onMenuAction={onViewExtraDeck ? () => onViewExtraDeck() : undefined}
             />
@@ -389,10 +438,19 @@ interface DuelFieldProps {
   playerMainDeck?: CardData[];
   playerExtraDeck?: CardData[];
   playerMainDeckTopCardId?: string;
+  playerMainDeckTopCardEntryFlip?: boolean;
+  playerMainDeckTopCardEntryRotation?: number;
+  playerMainDeckBottomCardId?: string;
+  playerMainDeckBottomCardEntryFlip?: boolean;
+  playerMainDeckBottomCardEntryRotation?: number;
+  playerMainDeckDepartureCardId?: string;
+  playerExtraDeckDepartureCardId?: string;
   playerMonsterZones?: (PlacedCard | null)[];
   playerSpellTrapZones?: (PlacedCard | null)[];
-  playerGrave?: CardData[];
-  playerBanished?: CardData[];
+  playerGrave?: CardInstance[];
+  playerBanished?: CardInstance[];
+  playerFieldZoneEntryRotations?: Record<string, number>;
+  playerFieldZoneEntryFlips?: Record<string, boolean>;
   playerFieldZone?: PlacedCard | null;
   onDrawCard?: () => void;
   onCardHover?: (card: CardData) => void;
@@ -408,10 +466,19 @@ function DuelField({
   playerMainDeck = [],
   playerExtraDeck = [],
   playerMainDeckTopCardId,
+  playerMainDeckTopCardEntryFlip,
+  playerMainDeckTopCardEntryRotation,
+  playerMainDeckBottomCardId,
+  playerMainDeckBottomCardEntryFlip,
+  playerMainDeckBottomCardEntryRotation,
+  playerMainDeckDepartureCardId,
+  playerExtraDeckDepartureCardId,
   playerMonsterZones = [],
   playerSpellTrapZones = [],
   playerGrave = [],
   playerBanished = [],
+  playerFieldZoneEntryRotations,
+  playerFieldZoneEntryFlips,
   playerFieldZone = null,
   onDrawCard,
   onCardHover,
@@ -430,10 +497,19 @@ function DuelField({
         mainDeck={playerMainDeck}
         extraDeck={playerExtraDeck}
         mainDeckTopCardId={playerMainDeckTopCardId}
+        mainDeckTopCardEntryFlip={playerMainDeckTopCardEntryFlip}
+        mainDeckTopCardEntryRotation={playerMainDeckTopCardEntryRotation}
+        mainDeckBottomCardId={playerMainDeckBottomCardId}
+        mainDeckBottomCardEntryFlip={playerMainDeckBottomCardEntryFlip}
+        mainDeckBottomCardEntryRotation={playerMainDeckBottomCardEntryRotation}
+        mainDeckDepartureCardId={playerMainDeckDepartureCardId}
+        extraDeckDepartureCardId={playerExtraDeckDepartureCardId}
         monsterZones={playerMonsterZones}
         spellTrapZones={playerSpellTrapZones}
         grave={playerGrave}
         banished={playerBanished}
+        fieldZoneEntryRotations={playerFieldZoneEntryRotations}
+        fieldZoneEntryFlips={playerFieldZoneEntryFlips}
         fieldZone={playerFieldZone}
         onDrawCard={onDrawCard}
         onCardHover={onCardHover}
