@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import CardImage from '../CardView/CardImage';
 import type { CardData } from '../../types/Card';
 import type { CardInstance } from '../../types/CardInstance';
@@ -155,6 +155,18 @@ interface FieldZoneProps {
   // the actual card -90° to align with the overlay above; 'attack' (or
   // omitted) renders it upright, unrotated.
   battlePosition?: 'attack' | 'defense';
+  // True only for the one render immediately after this card arrives
+  // here from a face-down source (e.g. Special Summoning straight from
+  // the Main/Extra Deck) — plays the same flip-reveal "unfurl" effect
+  // used elsewhere, so the card turns face-up while it moves rather than
+  // just appearing already face-up. Not set (and no visible effect) for
+  // the ordinary case of a card arriving already face-up (Normal Summon
+  // from Hand, Special Summon from Grave/Banished, etc.). The rotation
+  // for arriving in Defense Position needs no equivalent hint — this
+  // branch's rotation wrapper already always starts at 0 and animates to
+  // battlePosition's target on every fresh mount, which already produces
+  // the right "was upright, rotates to Defense while moving" effect.
+  entryFlip?: boolean;
 }
 
 function FieldZone({
@@ -184,6 +196,7 @@ function FieldZone({
   onMenuAction,
   showRotatedOverlay = false,
   battlePosition = 'attack',
+  entryFlip,
 }: FieldZoneProps) {
   const [showMenu, setShowMenu] = useState(false);
   const hideTimeoutRef = useRef<number | undefined>(undefined);
@@ -270,20 +283,35 @@ function FieldZone({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      {menuEnabled && showMenu && (
-        <div className="FieldZone-contextMenu">
-          {menuActions!.map((action) => (
-            <button
-              key={action.key}
-              type="button"
-              className="FieldZone-contextMenuButton"
-              onClick={(e) => handleAction(e, action.key)}
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {menuEnabled && showMenu && (
+          <motion.div
+            className="FieldZone-contextMenu"
+            // x handles the horizontal centering that used to live in
+            // the CSS as `transform: translateX(-50%)` — framer-motion
+            // needs to own the whole transform itself once it's also
+            // animating y here, since it would otherwise overwrite a
+            // separate CSS transform rule on the same element rather
+            // than combining with it (the same class of conflict as the
+            // Defense Position rotation elsewhere in this app).
+            initial={{ opacity: 0, x: '-50%', y: 10 }}
+            animate={{ opacity: 1, x: '-50%', y: 0 }}
+            exit={{ opacity: 0, x: '-50%', y: 10 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+          >
+            {menuActions!.map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                className="FieldZone-contextMenuButton"
+                onClick={(e) => handleAction(e, action.key)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
       {showRotatedOverlay && (
         <div
           className="FieldZone-rotatedOverlay"
@@ -357,17 +385,43 @@ function FieldZone({
                 animate={{ rotate: battlePosition === 'defense' ? -90 : 0 }}
                 transition={{ duration: 0.3, ease: 'easeInOut' }}
               >
-                <div
-                  className="FieldZone-cardWrapper"
-                  style={{
-                    width: CARD_WIDTH,
-                    height: CARD_HEIGHT,
-                    transform: `scale(${CARD_SCALE})`,
-                  }}
+                <motion.div
+                  className="FieldZone-flipReveal"
+                  initial={{ scaleX: entryFlip ? 0 : 1 }}
+                  animate={{ scaleX: 1 }}
+                  transition={{ duration: 0.3, ease: 'easeInOut' }}
                 >
-                  <CardImage card={card} />
-                </div>
+                  <div
+                    className="FieldZone-cardWrapper"
+                    style={{
+                      width: CARD_WIDTH,
+                      height: CARD_HEIGHT,
+                      transform: `scale(${CARD_SCALE})`,
+                    }}
+                  >
+                    <CardImage card={card} />
+                  </div>
+                </motion.div>
               </motion.div>
+              {card.cardClass === 'Monster' && (card.atk || card.def) && (
+                <div className="FieldZone-statsOverlay">
+                  <span
+                    className={
+                      battlePosition === 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined
+                    }
+                  >
+                    {card.atk ?? '?'}
+                  </span>
+                  /
+                  <span
+                    className={
+                      battlePosition !== 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined
+                    }
+                  >
+                    {card.def ?? '?'}
+                  </span>
+                </div>
+              )}
             </motion.div>
           </div>
         </>

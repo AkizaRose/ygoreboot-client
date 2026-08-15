@@ -6,6 +6,7 @@ import DeckViewer from '../components/DuelField/DeckViewer';
 import ConfirmDialog from '../components/ConfirmDialog/ConfirmDialog';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
 import CardDisplay from '../components/CardDisplay/CardDisplay';
+import LifePointCounter from '../components/DuelField/LifePointCounter';
 import { useSavedDecks } from '../components/DeckManager/useSavedDecks';
 import { shuffle } from '../utils/shuffle';
 import cardData from '../data/carddata.json';
@@ -20,6 +21,28 @@ import './DuelFieldPage.css';
 const HOVER_DELAY_MS = 100;
 
 const EMPTY_ZONES: (PlacedCard | null)[] = [null, null, null];
+
+// Center, then right, then left — the visual priority zones fill in,
+// rather than strict left-to-right index order. Applies identically to
+// Monster Zone and Spell/Trap Zone, since both are the same 3-slot
+// layout.
+const ZONE_PRIORITY_ORDER = [1, 2, 0];
+function findEmptyZoneSlot(zones: (PlacedCard | null)[]): number {
+  for (const index of ZONE_PRIORITY_ORDER) {
+    if (zones[index] === null) return index;
+  }
+  return -1;
+}
+
+const PHASES = ['draw', 'main1', 'battle', 'main2', 'end'] as const;
+type Phase = (typeof PHASES)[number];
+const PHASE_LABELS: Record<Phase, string> = {
+  draw: 'Draw Phase',
+  main1: 'Main Phase 1',
+  battle: 'Battle Phase',
+  main2: 'Main Phase 2',
+  end: 'End Phase',
+};
 
 function DuelFieldPage() {
   const navigate = useNavigate();
@@ -51,8 +74,85 @@ function DuelFieldPage() {
   // the rest of the duel — that's what all the arrays below now hold,
   // rather than plain CardData.
   const [mainDeck, setMainDeck] = useState<CardInstance[]>([]);
+  // Kept in sync with mainDeck on every render (a direct assignment, not
+  // an effect — this is deliberately synchronous, so it's never one
+  // render "behind"). handleDrawCard reads from this instead of the
+  // mainDeck closure directly, so it stays correct even if it's called
+  // from a callback whose closure predates a later mainDeck update — in
+  // particular, StrictMode double-invokes the mount effect that calls
+  // loadDeck in dev, and the auto-draw effect's already-scheduled
+  // timeout (from the first invocation) would otherwise still reference
+  // the pre-reshuffle deck from before the second invocation's fresh
+  // loadDeck/reshuffle, causing exactly this kind of stale read for
+  // whichever draws that first (now-orphaned) timeout chain manages to
+  // perform before the mismatch resolves itself.
+  const mainDeckRef = useRef(mainDeck);
+  mainDeckRef.current = mainDeck;
   const [extraDeck, setExtraDeck] = useState<CardInstance[]>([]);
   const [hand, setHand] = useState<CardInstance[]>([]);
+  const [lifePoints, setLifePoints] = useState(8000);
+  const [phase, setPhase] = useState<Phase>('draw');
+
+  // Drives the "Shuffle Hand" animation — true for the whole duration
+  // (piling, the reorder itself, and spreading back out). See Hand's
+  // `piled` prop for what this changes visually.
+  const [isHandPiled, setIsHandPiled] = useState(false);
+
+  const handleShuffleHand = () => {
+    if (isHandPiled || hand.length < 2 || pendingOpeningDraws > 0) return;
+    setIsHandPiled(true);
+  };
+
+  const handleAddLifePoints = (amount: number) => {
+    setLifePoints((prev) => prev + amount);
+  };
+
+  const handleSubtractLifePoints = (amount: number) => {
+    setLifePoints((prev) => Math.max(0, prev - amount));
+  };
+
+  // Cycles rather than clamping at either end — useful for a tracker
+  // meant to be clicked through continuously across many turns, so
+  // reaching End Phase and clicking "next" rolls straight back to Draw
+  // Phase for the next turn instead of getting stuck.
+  const handlePrevPhase = () => {
+    setPhase((prev) => {
+      const index = PHASES.indexOf(prev);
+      return PHASES[(index - 1 + PHASES.length) % PHASES.length];
+    });
+  };
+
+  const handleNextPhase = () => {
+    setPhase((prev) => {
+      const index = PHASES.indexOf(prev);
+      return PHASES[(index + 1) % PHASES.length];
+    });
+  };
+
+  useEffect(() => {
+    if (!isHandPiled) return;
+
+    // Timed to land after the pile-converge animation (Hand's layout
+    // transition is 0.35s) has visibly finished — the actual reorder is
+    // invisible to the player regardless, since every card is stacked
+    // at the same position with only the top one showing, but waiting
+    // avoids reordering mid-movement.
+    const reorderTimeout = window.setTimeout(() => {
+      setHand((prev) => shuffle(prev));
+    }, 350);
+    // A brief pause once piled (showing the new top card, post-reorder)
+    // before spreading back out, rather than immediately reversing —
+    // reads more like a deliberate shuffle than a glitch.
+    const spreadTimeout = window.setTimeout(() => {
+      setIsHandPiled(false);
+    }, 550);
+
+    return () => {
+      window.clearTimeout(reorderTimeout);
+      window.clearTimeout(spreadTimeout);
+    };
+  }, [isHandPiled]);
+
   const [playerMonsterZones, setPlayerMonsterZones] = useState<(PlacedCard | null)[]>(EMPTY_ZONES);
   const [playerSpellTrapZones, setPlayerSpellTrapZones] =
     useState<(PlacedCard | null)[]>(EMPTY_ZONES);
@@ -63,6 +163,31 @@ function DuelFieldPage() {
     null,
   );
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+
+  // How many of the opening hand's cards still need to be auto-drawn
+  // after a new game starts or Reset is pressed — purely a UI-facing
+  // count (disabling manual draw/shuffle while it's above 0). The actual
+  // scheduling is handled imperatively via openingDrawTimeoutRef below
+  // rather than a useEffect keyed to this value — seeloadDraws for why.
+  const [pendingOpeningDraws, setPendingOpeningDraws] = useState(0);
+  // Deliberately NOT part of React's effect system. A useEffect watching
+  // a counter (the earlier approach here) re-runs its setup function in
+  // response to a dependency change — which is exactly the mechanism
+  // React StrictMode deliberately double-invokes on mount in dev, to
+  // help surface exactly this kind of bug. This project has StrictMode
+  // enabled (see main.tsx), and empirically, some number of the opening
+  // hand's early draws were consistently losing their flip hint — this
+  // ref-based approach sidesteps the whole class of issue by keeping the
+  // scheduling imperative and self-cancelling, rather than declarative
+  // and dependency-triggered.
+  const openingDrawTimeoutRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    return () => {
+      if (openingDrawTimeoutRef.current !== undefined) {
+        window.clearTimeout(openingDrawTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Shared by every summon action (Normal Summon, and Special Summon from
   // each of the four viewers) — rather than duplicating dialog logic at
@@ -102,6 +227,59 @@ function DuelFieldPage() {
   // sent to hand, must not read a stale "true" from its earlier stint
   // face-down.
   const [handEntryFlips, setHandEntryFlips] = useState<Record<string, boolean>>({});
+
+  // Every card in Hand keeps a stable key for as long as it's there, so
+  // in the ordinary case handEntryFlips/handEntryRotations never need
+  // clearing — each card only ever mounts fresh once, on its one genuine
+  // arrival, and `initial` is only ever read at that mount, which
+  // happens synchronously during render/commit — well before any effect
+  // (including this one) gets a chance to run. That's what makes it safe
+  // to clear a hint immediately here, with no delay: by the time this
+  // effect sees a given instanceId for the first time, its one legitimate
+  // read has already happened. Shuffling the hand doesn't remount
+  // anything either (same stable keys, just reordered), so it shouldn't
+  // need this at all — but empirically, a card whose entry hint was
+  // still sitting here from an earlier arrival was visibly replaying its
+  // flip during the shuffle's layout animation, and also (once cards
+  // could arrive in rapid succession, via the opening hand's automatic
+  // draw sequence) during ordinary drawing. An earlier version of this
+  // cleanup used a fixed delay instead of tracking arrivals directly,
+  // which likely broke down under exactly that rapid-succession case —
+  // this version, keyed to genuinely new arrivals rather than a timer,
+  // avoids that regardless of how quickly cards arrive.
+  const seenHandCardIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const currentIds = new Set(hand.map((c) => c.instanceId));
+    const newlyArrivedIds = [...currentIds].filter((id) => !seenHandCardIdsRef.current.has(id));
+
+    if (newlyArrivedIds.length > 0) {
+      setHandEntryFlips((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const id of newlyArrivedIds) {
+          if (id in next) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      setHandEntryRotations((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const id of newlyArrivedIds) {
+          if (id in next) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+
+    seenHandCardIdsRef.current = currentIds;
+  }, [hand]);
+
   // Same idea again, but for the Main Deck's top-card wrapper instead of
   // Hand — true means this specific instanceId just arrived at the top
   // of the deck via a "Stack (to top)" action (from Hand, a field zone,
@@ -151,12 +329,16 @@ function DuelFieldPage() {
   const [pendingDeckDeparture, setPendingDeckDeparture] = useState<{
     source: 'main' | 'extra';
     instance: CardInstance;
-    destination: 'grave' | 'banish';
+    destination: 'grave' | 'banish' | 'monsterZone';
+    // Only used for the 'monsterZone' destination.
+    monsterZoneSlot?: number;
+    monsterPosition?: 'attack' | 'defense';
   } | null>(null);
 
   useEffect(() => {
     if (!pendingDeckDeparture) return;
-    const { source, instance, destination } = pendingDeckDeparture;
+    const { source, instance, destination, monsterZoneSlot, monsterPosition } =
+      pendingDeckDeparture;
 
     if (source === 'main') {
       setMainDeckDepartureCardId(undefined);
@@ -166,37 +348,38 @@ function DuelFieldPage() {
     setFieldZoneEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
     if (destination === 'grave') {
       setPlayerGrave((prev) => [...prev, instance]);
-    } else {
+    } else if (destination === 'banish') {
       setPlayerBanished((prev) => [...prev, instance]);
+    } else if (monsterZoneSlot !== undefined && monsterPosition) {
+      // The rotation for arriving in Defense Position needs no entry-hint
+      // write here, unlike the flip above — the Monster Zone's own
+      // rotation wrapper (see FieldZone) already always starts at 0 and
+      // animates to whatever battlePosition says on every fresh mount,
+      // which already produces the right "was upright in the deck,
+      // rotates to Defense while moving" effect on its own.
+      setPlayerMonsterZones((prev) => {
+        const next = [...prev];
+        next[monsterZoneSlot] = { ...instance, faceDown: false, position: monsterPosition };
+        return next;
+      });
     }
     setPendingDeckDeparture(null);
   }, [pendingDeckDeparture]);
 
   // Unlike Hand and Grave/Banished (where each card keeps a stable React
   // key for as long as it's there, so `initial` only ever applies once,
-  // on its one genuine arrival), the Main Deck's top card is tracked via
-  // a key that changes to whatever instanceId is currently on top (see
-  // FieldZone's topCardInstanceId) — this is what makes the draw
-  // animation work, but it also means the SAME card can force a fresh
-  // mount a second time, with no action of its own, simply by being
-  // passively re-exposed after something stacked on top of it gets drawn
-  // away. Without clearing a hint once it's been consumed, that second
-  // mount would incorrectly re-read the original (by-then-stale) value
-  // and replay the flip/rotation a second time. This runs right after
-  // the render where a new top card's hint was consumed, so it doesn't
-  // affect the animation already in progress — `initial` is only ever
-  // read at mount, not on subsequent re-renders of the same instance.
-  // Unlike Hand and Grave/Banished (where each card keeps a stable React
-  // key for as long as it's there, so `initial` only ever applies once,
-  // on its one genuine arrival), the Main Deck's top AND bottom cards are
-  // each tracked via a key that changes to whatever instanceId currently
-  // occupies that position (see FieldZone's topCardInstanceId /
-  // bottomCardInstanceId) — this is what makes the draw and stack-to-
-  // bottom animations work, but it also means the SAME card can force a
-  // fresh mount a second time, with no action of its own — e.g. a card
-  // Stacked to the bottom, later passively becoming the top once the
-  // deck has shrunk enough to reach it. Without clearing a hint once
-  // it's been consumed, that second mount would incorrectly re-read the
+  // on its one genuine arrival), the Main Deck's top/bottom cards and the
+  // Extra Deck's top card are each tracked via a key that changes to
+  // whatever instanceId currently occupies that position (see FieldZone's
+  // topCardInstanceId / bottomCardInstanceId) — this is what makes the
+  // draw and stack-to-bottom/top animations work, but it also means the
+  // SAME card can force a fresh mount a second time, with no action of
+  // its own — e.g. a card Stacked to the bottom, later passively
+  // becoming the top once the deck has shrunk enough to reach it, or an
+  // Extra Deck card that was under the top, passively becoming the new
+  // top once whatever was on top of it gets Special Summoned or sent to
+  // Grave/Banished via the viewer. Without clearing a hint once it's
+  // been consumed, that second mount would incorrectly re-read the
   // original (by-then-stale) value and replay the flip/rotation again.
   // This runs right after the render where a hint was consumed, so it
   // doesn't affect the animation already in progress — `initial` is only
@@ -204,6 +387,7 @@ function DuelFieldPage() {
   // instance.
   const mainDeckTopCardIdRef = useRef<string | undefined>(undefined);
   const mainDeckBottomCardIdRef = useRef<string | undefined>(undefined);
+  const extraDeckTopCardIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const clearDeckEntryHint = (instanceId: string) => {
       setDeckEntryRotations((prev) => {
@@ -237,6 +421,30 @@ function DuelFieldPage() {
     }
     mainDeckBottomCardIdRef.current = currentBottomId;
   }, [mainDeck]);
+
+  useEffect(() => {
+    const clearDeckEntryHint = (instanceId: string) => {
+      setDeckEntryRotations((prev) => {
+        if (!(instanceId in prev)) return prev;
+        const next = { ...prev };
+        delete next[instanceId];
+        return next;
+      });
+      setDeckEntryFlips((prev) => {
+        if (!(instanceId in prev)) return prev;
+        const next = { ...prev };
+        delete next[instanceId];
+        return next;
+      });
+    };
+
+    const currentTopId = extraDeck[0]?.instanceId;
+    if (currentTopId && currentTopId !== extraDeckTopCardIdRef.current) {
+      clearDeckEntryHint(currentTopId);
+    }
+    extraDeckTopCardIdRef.current = currentTopId;
+  }, [extraDeck]);
+
   // Same idea as handEntryRotations, for a Defense Position monster
   // being sent to Grave/Banished instead of Hand — needs to visually
   // unwind back to upright while it moves there, rather than snapping
@@ -278,9 +486,14 @@ function DuelFieldPage() {
       setHandEntryRotations({});
       setHandEntryFlips({});
       setDeckEntryFlips({});
+      setIsHandPiled(false);
       setDeckEntryRotations({});
       setFieldZoneEntryRotations({});
       setFieldZoneEntryFlips({});
+      setLifePoints(8000);
+      setPhase('draw');
+      scheduleOpeningDraws(0);
+      seenHandCardIdsRef.current = new Set();
       return;
     }
 
@@ -297,9 +510,14 @@ function DuelFieldPage() {
       setHandEntryRotations({});
       setHandEntryFlips({});
       setDeckEntryFlips({});
+      setIsHandPiled(false);
       setDeckEntryRotations({});
       setFieldZoneEntryRotations({});
       setFieldZoneEntryFlips({});
+      setLifePoints(8000);
+      setPhase('draw');
+      scheduleOpeningDraws(0);
+      seenHandCardIdsRef.current = new Set();
       return;
     }
 
@@ -314,20 +532,20 @@ function DuelFieldPage() {
         .filter((c): c is CardData => !!c)
         .map((c) => createCardInstance(c));
 
-    // Main Deck: randomized order, per real deck-building rules — then
-    // the top 5 are dealt straight into the opening hand. slice() handles
-    // a deck with fewer than 5 cards gracefully (just deals what's there,
-    // leaving the Main Deck empty rather than throwing).
+    // Main Deck: randomized order, per real deck-building rules. The
+    // opening hand is no longer dealt directly here — it starts empty
+    // and gets drawn one card at a time (see scheduleOpeningDraws
+    // below), so the player sees each card actually leave the deck via
+    // the normal draw animation, rather than the hand just appearing
+    // fully formed from nothing.
     const shuffledMain = shuffle(resolve(saved.main));
-    const openingHand = shuffledMain.slice(0, 5);
-    const remainingMain = shuffledMain.slice(5);
 
-    setMainDeck(remainingMain);
+    setMainDeck(shuffledMain);
     // Extra Deck: kept in the same order as the Deck Builder — not
     // shuffled, since Extra Deck monsters are chosen deliberately during
     // a duel rather than drawn at random.
     setExtraDeck(resolve(saved.extra));
-    setHand(openingHand);
+    setHand([]);
     setPlayerMonsterZones(EMPTY_ZONES);
     setPlayerSpellTrapZones(EMPTY_ZONES);
     setPlayerGrave([]);
@@ -336,9 +554,14 @@ function DuelFieldPage() {
     setHandEntryRotations({});
     setHandEntryFlips({});
     setDeckEntryFlips({});
+    setIsHandPiled(false);
     setDeckEntryRotations({});
     setFieldZoneEntryRotations({});
     setFieldZoneEntryFlips({});
+    setLifePoints(8000);
+    setPhase('draw');
+    seenHandCardIdsRef.current = new Set();
+    scheduleOpeningDraws(Math.min(5, shuffledMain.length));
   };
 
   // (Re)loads whenever deckId changes — e.g. navigating here for a
@@ -353,23 +576,72 @@ function DuelFieldPage() {
   }, [deckId]);
 
   const handleDrawCard = () => {
-    if (mainDeck.length === 0) return;
-    const [top, ...rest] = mainDeck;
+    const currentDeck = mainDeckRef.current;
+    if (currentDeck.length === 0) return;
+    const [top, ...rest] = currentDeck;
     setMainDeck(rest);
     setHandEntryFlips((prev) => ({ ...prev, [top.instanceId]: true }));
     setHandEntryRotations((prev) => ({ ...prev, [top.instanceId]: 0 }));
     setHand((prev) => [...prev, top]);
   };
 
+  // Mill and Banish Top both move specifically the deck's own tracked
+  // top card (unlike the viewer's "To Grave"/"Banish" actions, which can
+  // target any card in the pile and need the departure-tracking
+  // workaround in scheduleOpeningDraws' neighbors above) — so, like
+  // handleDrawCard, these need no such workaround: the deck's existing
+  // top-card element simply unmounts as mainDeck[0] changes, in the same
+  // render the destination's new stackCards entry mounts, exactly the
+  // same clean single transition that already makes drawing work.
+  const handleMillTopCard = () => {
+    const currentDeck = mainDeckRef.current;
+    if (currentDeck.length === 0) return;
+    const [top, ...rest] = currentDeck;
+    setMainDeck(rest);
+    setFieldZoneEntryFlips((prev) => ({ ...prev, [top.instanceId]: true }));
+    setPlayerGrave((prev) => [...prev, top]);
+  };
+
+  const handleBanishTopCard = () => {
+    const currentDeck = mainDeckRef.current;
+    if (currentDeck.length === 0) return;
+    const [top, ...rest] = currentDeck;
+    setMainDeck(rest);
+    setFieldZoneEntryFlips((prev) => ({ ...prev, [top.instanceId]: true }));
+    setPlayerBanished((prev) => [...prev, top]);
+  };
+
+  // Performs the opening hand's draws one at a time, each via the exact
+  // same handleDrawCard used for a manual draw — so each card gets the
+  // normal draw animation rather than the hand just appearing fully
+  // formed. Called directly from loadDeck (not via an effect — see
+  // openingDrawTimeoutRef above for why). Always cancels any timeout
+  // already in flight before starting a new one, so calling this again
+  // (e.g. Reset pressed) can never leave two chains running at once.
+  const scheduleOpeningDraws = (remaining: number) => {
+    if (openingDrawTimeoutRef.current !== undefined) {
+      window.clearTimeout(openingDrawTimeoutRef.current);
+      openingDrawTimeoutRef.current = undefined;
+    }
+    setPendingOpeningDraws(remaining);
+    if (remaining <= 0) return;
+    openingDrawTimeoutRef.current = window.setTimeout(() => {
+      openingDrawTimeoutRef.current = undefined;
+      handleDrawCard();
+      scheduleOpeningDraws(remaining - 1);
+    }, 400);
+  };
+
   const handleNormalSummon = (instanceId: string) => {
     const instance = hand.find((i) => i.instanceId === instanceId);
     if (!instance) return;
 
-    const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
+    const emptySlot = findEmptyZoneSlot(playerMonsterZones);
     if (emptySlot === -1) return; // no available Monster Zone
 
     requestSummonPosition(instance.card, (position) => {
       setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
+      setFieldZoneEntryFlips((prev) => ({ ...prev, [instance.instanceId]: false }));
       setPlayerMonsterZones((prev) => {
         const next = [...prev];
         next[emptySlot] = { ...instance, faceDown: false, position };
@@ -384,7 +656,7 @@ function DuelFieldPage() {
     const instance = hand.find((i) => i.instanceId === instanceId);
     if (!instance) return;
 
-    const emptySlot = playerSpellTrapZones.findIndex((slot) => slot === null);
+    const emptySlot = findEmptyZoneSlot(playerSpellTrapZones);
     if (emptySlot === -1) return; // no available Spell/Trap Zone
 
     setHand((prev) => prev.filter((i) => i.instanceId !== instanceId));
@@ -475,6 +747,15 @@ function DuelFieldPage() {
     // moving/being removed, so it's handled entirely separately before
     // the shared "read card, clear slot, then route it elsewhere" logic
     // below.
+    if (actionKey === 'attack') {
+      // Deliberately unhandled for now — this app has no attack-
+      // resolution system yet (no opponent field, no damage
+      // calculation), so this is just the menu option itself. Return
+      // early rather than falling through to the shared logic below,
+      // which assumes every action either stays in place or moves the
+      // card somewhere.
+      return;
+    }
     if (actionKey === 'activate') {
       if (zoneType === 'monster') {
         setPlayerMonsterZones((prev) => {
@@ -494,6 +775,25 @@ function DuelFieldPage() {
         });
       } else {
         setPlayerFieldZone((prev) => (prev ? { ...prev, faceDown: false } : prev));
+      }
+      return;
+    }
+
+    // Mirrors Activate above — flips a face-up Spell/Trap back face-down
+    // in place. Only ever offered for spellTrap/field (see
+    // getPlacedCardActions in DuelField.tsx) — there's no Set Monster
+    // yet, so this is never reachable for zoneType 'monster'.
+    if (actionKey === 'set') {
+      if (zoneType === 'spellTrap') {
+        setPlayerSpellTrapZones((prev) => {
+          const slot = prev[index];
+          if (!slot) return prev;
+          const next = [...prev];
+          next[index] = { ...slot, faceDown: true };
+          return next;
+        });
+      } else if (zoneType === 'field') {
+        setPlayerFieldZone((prev) => (prev ? { ...prev, faceDown: true } : prev));
       }
       return;
     }
@@ -550,7 +850,17 @@ function DuelFieldPage() {
         setHand((prev) => [...prev, placed]);
         break;
       case 'toExtra':
-        setExtraDeck((prev) => [...prev, placed]);
+        if (zoneType === 'monster') {
+          setDeckEntryRotations((prev) => ({
+            ...prev,
+            [placed.instanceId]: placed.position === 'defense' ? -90 : 0,
+          }));
+        }
+        // Only flip if the card wasn't already showing face-down — same
+        // reasoning as stackTop/stackBottom above (Field Zone is the
+        // only source here that can already be face-down).
+        setDeckEntryFlips((prev) => ({ ...prev, [placed.instanceId]: !placed.faceDown }));
+        setExtraDeck((prev) => [placed, ...prev]);
         break;
       case 'toGrave':
         if (zoneType === 'monster') {
@@ -618,15 +928,18 @@ function DuelFieldPage() {
     if (!instance) return;
 
     if (actionKey === 'specialSummon') {
-      const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
+      const emptySlot = findEmptyZoneSlot(playerMonsterZones);
       if (emptySlot === -1) return; // no available Monster Zone
 
       requestSummonPosition(instance.card, (position) => {
         setMainDeck((prev) => prev.filter((i) => i.instanceId !== instanceId));
-        setPlayerMonsterZones((prev) => {
-          const next = [...prev];
-          next[emptySlot] = { ...instance, faceDown: false, position };
-          return next;
+        setMainDeckDepartureCardId(instance.instanceId);
+        setPendingDeckDeparture({
+          source: 'main',
+          instance,
+          destination: 'monsterZone',
+          monsterZoneSlot: emptySlot,
+          monsterPosition: position,
         });
       });
       return;
@@ -666,15 +979,18 @@ function DuelFieldPage() {
     if (!instance) return;
 
     if (actionKey === 'specialSummon') {
-      const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
+      const emptySlot = findEmptyZoneSlot(playerMonsterZones);
       if (emptySlot === -1) return; // no available Monster Zone
 
       requestSummonPosition(instance.card, (position) => {
         setExtraDeck((prev) => prev.filter((i) => i.instanceId !== instanceId));
-        setPlayerMonsterZones((prev) => {
-          const next = [...prev];
-          next[emptySlot] = { ...instance, faceDown: false, position };
-          return next;
+        setExtraDeckDepartureCardId(instance.instanceId);
+        setPendingDeckDeparture({
+          source: 'extra',
+          instance,
+          destination: 'monsterZone',
+          monsterZoneSlot: emptySlot,
+          monsterPosition: position,
         });
       });
       return;
@@ -738,11 +1054,12 @@ function DuelFieldPage() {
     if (!instance) return;
 
     if (actionKey === 'specialSummon') {
-      const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
+      const emptySlot = findEmptyZoneSlot(playerMonsterZones);
       if (emptySlot === -1) return; // no available Monster Zone
 
       requestSummonPosition(instance.card, (position) => {
         setPlayerGrave((prev) => prev.filter((i) => i.instanceId !== instanceId));
+        setFieldZoneEntryFlips((prev) => ({ ...prev, [instance.instanceId]: false }));
         setPlayerMonsterZones((prev) => {
           const next = [...prev];
           next[emptySlot] = { ...instance, faceDown: false, position };
@@ -764,7 +1081,7 @@ function DuelFieldPage() {
         return;
       }
 
-      const emptySlot = playerSpellTrapZones.findIndex((slot) => slot === null);
+      const emptySlot = findEmptyZoneSlot(playerSpellTrapZones);
       if (emptySlot === -1) return; // no available Spell/Trap Zone
 
       setPlayerGrave((prev) => prev.filter((i) => i.instanceId !== instanceId));
@@ -784,9 +1101,11 @@ function DuelFieldPage() {
         setHand((prev) => [...prev, instance]);
         break;
       case 'toExtra':
-        setExtraDeck((prev) => [...prev, instance]);
+        setDeckEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
+        setExtraDeck((prev) => [instance, ...prev]);
         break;
       case 'banish':
+        setFieldZoneEntryFlips((prev) => ({ ...prev, [instance.instanceId]: false }));
         setPlayerBanished((prev) => [...prev, instance]);
         break;
       case 'stackTop':
@@ -847,11 +1166,12 @@ function DuelFieldPage() {
     if (!instance) return;
 
     if (actionKey === 'specialSummon') {
-      const emptySlot = playerMonsterZones.findIndex((slot) => slot === null);
+      const emptySlot = findEmptyZoneSlot(playerMonsterZones);
       if (emptySlot === -1) return; // no available Monster Zone
 
       requestSummonPosition(instance.card, (position) => {
         setPlayerBanished((prev) => prev.filter((i) => i.instanceId !== instanceId));
+        setFieldZoneEntryFlips((prev) => ({ ...prev, [instance.instanceId]: false }));
         setPlayerMonsterZones((prev) => {
           const next = [...prev];
           next[emptySlot] = { ...instance, faceDown: false, position };
@@ -873,7 +1193,7 @@ function DuelFieldPage() {
         return;
       }
 
-      const emptySlot = playerSpellTrapZones.findIndex((slot) => slot === null);
+      const emptySlot = findEmptyZoneSlot(playerSpellTrapZones);
       if (emptySlot === -1) return; // no available Spell/Trap Zone
 
       setPlayerBanished((prev) => prev.filter((i) => i.instanceId !== instanceId));
@@ -893,9 +1213,11 @@ function DuelFieldPage() {
         setHand((prev) => [...prev, instance]);
         break;
       case 'toExtra':
-        setExtraDeck((prev) => [...prev, instance]);
+        setDeckEntryFlips((prev) => ({ ...prev, [instance.instanceId]: true }));
+        setExtraDeck((prev) => [instance, ...prev]);
         break;
       case 'toGrave':
+        setFieldZoneEntryFlips((prev) => ({ ...prev, [instance.instanceId]: false }));
         setPlayerGrave((prev) => [...prev, instance]);
         break;
       case 'stackTop':
@@ -927,9 +1249,20 @@ function DuelFieldPage() {
         </div>
         <div className="DuelFieldPage-fieldArea">
           <DuelField
+            playerPhaseLabel={PHASE_LABELS[phase]}
+            onPrevPhase={handlePrevPhase}
+            onNextPhase={handleNextPhase}
+            playerIsBattlePhase={phase === 'battle'}
             playerMainDeck={mainDeck.map((i) => i.card)}
             playerExtraDeck={extraDeck.map((i) => i.card)}
             playerMainDeckTopCardId={mainDeck[0]?.instanceId}
+            playerExtraDeckTopCardId={extraDeck[0]?.instanceId}
+            playerExtraDeckTopCardEntryFlip={
+              extraDeck[0] ? !!deckEntryFlips[extraDeck[0].instanceId] : false
+            }
+            playerExtraDeckTopCardEntryRotation={
+              extraDeck[0] ? (deckEntryRotations[extraDeck[0].instanceId] ?? 0) : 0
+            }
             playerMainDeckTopCardEntryFlip={
               mainDeck[0] ? !!deckEntryFlips[mainDeck[0].instanceId] : false
             }
@@ -958,7 +1291,7 @@ function DuelFieldPage() {
             playerFieldZoneEntryRotations={fieldZoneEntryRotations}
             playerFieldZoneEntryFlips={fieldZoneEntryFlips}
             playerFieldZone={playerFieldZone}
-            onDrawCard={handleDrawCard}
+            onDrawCard={pendingOpeningDraws > 0 ? undefined : handleDrawCard}
             onCardHover={handleCardHover}
             onCardHoverEnd={handleCardHoverEnd}
             onFieldAction={handleFieldAction}
@@ -967,6 +1300,10 @@ function DuelFieldPage() {
                 setViewingDeck('main');
               } else if (actionKey === 'shuffle') {
                 setMainDeck((prev) => shuffle(prev));
+              } else if (actionKey === 'mill') {
+                handleMillTopCard();
+              } else if (actionKey === 'banishTop') {
+                handleBanishTopCard();
               } else if (actionKey === 'reset') {
                 setIsResetConfirmOpen(true);
               }
@@ -989,6 +1326,9 @@ function DuelFieldPage() {
           onBanish={handleBanish}
           onStackTop={handleStackTop}
           onStackBottom={handleStackBottom}
+          piled={isHandPiled}
+          onShuffleHand={handleShuffleHand}
+          shuffleDisabled={pendingOpeningDraws > 0}
         />
       </div>
 
@@ -1059,6 +1399,12 @@ function DuelFieldPage() {
           }}
         />
       )}
+
+      <LifePointCounter
+        value={lifePoints}
+        onAdd={handleAddLifePoints}
+        onSubtract={handleSubtractLifePoints}
+      />
     </div>
   );
 }

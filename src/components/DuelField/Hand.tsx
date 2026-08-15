@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import CardImage from '../CardView/CardImage';
 import type { CardData } from '../../types/Card';
 import type { CardInstance } from '../../types/CardInstance';
@@ -88,6 +88,18 @@ interface HandProps {
   onBanish: (instanceId: string) => void;
   onStackTop: (instanceId: string) => void;
   onStackBottom: (instanceId: string) => void;
+  // True for the whole duration of a hand shuffle (piling, the reorder
+  // itself, and spreading back out) — see DuelFieldPage's isHandPiled.
+  // While true, every card animates to the same central "pile" position
+  // instead of its normal spread-out one, and hover/click interaction is
+  // disabled so nothing can be selected mid-shuffle.
+  piled?: boolean;
+  onShuffleHand?: () => void;
+  // Separately from `piled` (which reflects the shuffle animation
+  // itself) — true while some other reason makes shuffling not currently
+  // valid, e.g. the opening hand still being dealt. Keeps the button
+  // rendered (so it doesn't pop in/out) but visibly disabled instead.
+  shuffleDisabled?: boolean;
 }
 
 function Hand({
@@ -103,6 +115,9 @@ function Hand({
   onBanish,
   onStackTop,
   onStackBottom,
+  piled = false,
+  onShuffleHand,
+  shuffleDisabled = false,
 }: HandProps) {
   // Which hand card (by instanceId) currently shows its context menu —
   // a separate concern from the CardDisplay hover callbacks above,
@@ -125,6 +140,17 @@ function Hand({
   };
 
   useEffect(() => () => cancelHide(), []);
+
+  // Guards against a leftover hover state (e.g. the cursor was still
+  // over a card the instant "Shuffle Hand" was clicked) leaving a
+  // context menu visibly stuck open through the pile animation, even
+  // though hover is disabled for the cards themselves once piled.
+  useEffect(() => {
+    if (piled) {
+      cancelHide();
+      setHoveredInstanceId(null);
+    }
+  }, [piled]);
 
   const handleAction = (instanceId: string, actionKey: string) => {
     cancelHide();
@@ -164,6 +190,11 @@ function Hand({
       ? normalAdvance
       : (MAX_HAND_WIDTH - CARD_CELL_WIDTH) / (n - 1);
   const handWidth = n === 0 ? 0 : (n - 1) * advance + CARD_CELL_WIDTH;
+  // Where every card converges to while piled — horizontally centered
+  // within the hand's own (unchanged) bounding box, so the pile forms
+  // and later spreads back out from the same fixed footprint rather than
+  // the whole hand shifting or resizing around it.
+  const pileLeft = (handWidth - CARD_CELL_WIDTH) / 2;
 
   return (
     <div className="Hand" style={{ width: handWidth, height: CARD_CELL_HEIGHT }}>
@@ -181,42 +212,70 @@ function Hand({
             // correctly with the layoutId-driven layout animation on
             // this same element rather than fighting it.
             animate={{ y: hoveredInstanceId === instanceId ? -HOVER_LIFT_Y : 0 }}
-            transition={{ duration: 0.1, ease: 'easeInOut' }}
+            // Split per-property so the pile/spread movement (driven by
+            // `left` below, picked up automatically as a layout
+            // animation) can run slower and more deliberately than the
+            // snappy hover-lift, without the two fighting over one
+            // shared duration.
+            transition={{
+              y: { duration: 0.1, ease: 'easeInOut' },
+              layout: { duration: 0.35, ease: 'easeInOut' },
+            }}
             className="Hand-cell"
             style={{
               width: CARD_CELL_WIDTH,
               height: CARD_CELL_HEIGHT,
-              left: index * advance,
+              left: piled ? pileLeft : index * advance,
               // Overlapping cards otherwise stack purely by DOM order
               // (later card on top) — this lets the hovered card rise
               // above whichever neighbors currently cover part of it,
-              // regardless of its own position in that order.
-              zIndex: hoveredInstanceId === instanceId ? cards.length + 1 : index,
+              // regardless of its own position in that order. While
+              // piled, hover is disabled (see below) so this just falls
+              // back to plain index order — meaning the last card in the
+              // (possibly just-reordered) array is always the one
+              // visible on top of the pile.
+              zIndex: !piled && hoveredInstanceId === instanceId ? cards.length + 1 : index,
             }}
-            onMouseEnter={() => {
-              cancelHide();
-              setHoveredInstanceId(instanceId);
-              onCardHover?.(card);
-            }}
-            onMouseLeave={() => {
-              scheduleHide(instanceId);
-              onCardHoverEnd?.();
-            }}
+            onMouseEnter={
+              piled
+                ? undefined
+                : () => {
+                    cancelHide();
+                    setHoveredInstanceId(instanceId);
+                    onCardHover?.(card);
+                  }
+            }
+            onMouseLeave={
+              piled
+                ? undefined
+                : () => {
+                    scheduleHide(instanceId);
+                    onCardHoverEnd?.();
+                  }
+            }
           >
-            {showMenu && (
-              <div className="Hand-contextMenu">
-                {actions.map((action) => (
-                  <button
-                    key={action.key}
-                    type="button"
-                    className="Hand-contextMenuButton"
-                    onClick={() => handleAction(instanceId, action.key)}
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <AnimatePresence>
+              {showMenu && (
+                <motion.div
+                  className="Hand-contextMenu"
+                  initial={{ opacity: 0, x: '-50%', y: 10 }}
+                  animate={{ opacity: 1, x: '-50%', y: 0 }}
+                  exit={{ opacity: 0, x: '-50%', y: 10 }}
+                  transition={{ duration: 0.15, ease: 'easeOut' }}
+                >
+                  {actions.map((action) => (
+                    <button
+                      key={action.key}
+                      type="button"
+                      className="Hand-contextMenuButton"
+                      onClick={() => handleAction(instanceId, action.key)}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
             <motion.div
               className="Hand-cardRotation"
               style={{ width: '100%', height: '100%' }}
@@ -245,6 +304,16 @@ function Hand({
           </motion.div>
         );
       })}
+      {onShuffleHand && (
+        <button
+          type="button"
+          className="Hand-shuffleButton"
+          onClick={onShuffleHand}
+          disabled={piled || cards.length < 2 || shuffleDisabled}
+        >
+          Shuffle Hand
+        </button>
+      )}
     </div>
   );
 }

@@ -1,0 +1,75 @@
+.LifePointCounter {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 100;
+}
+
+.LifePointCounter-display {
+  font-family: 'RoGSanSrfStd-UB';
+  font-size: 28px;
+  color: white;
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.LifePointCounter-display:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.LifePointCounter-popover {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 8px;
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 160px;
+}
+
+.LifePointCounter-input {
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 14px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.LifePointCounter-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.LifePointCounter-popoverActions {
+  display: flex;
+  gap: 8px;
+}
+
+.LifePointCounter-actionButton {
+  flex: 1;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.LifePointCounter-actionButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+}

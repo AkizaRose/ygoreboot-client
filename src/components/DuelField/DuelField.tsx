@@ -1,4 +1,5 @@
 import FieldZone, { type FieldZoneAction } from './FieldZone';
+import PhaseTracker from './PhaseTracker';
 import type { CardData } from '../../types/Card';
 import type { CardInstance, PlacedCard } from '../../types/CardInstance';
 import cardBackImg from '../../assets/card/CardBack.png';
@@ -38,12 +39,21 @@ function isExtraDeckMonster(card: CardData): boolean {
 // Face-down cards (Set Spells/Traps, and — once Set Monster exists —
 // face-down monsters too) get an extra "Activate" option at the front,
 // flipping the card face-up in place rather than moving it anywhere.
+// Symmetrically, a face-up Spell/Trap/Field Spell gets a "Set" option
+// that flips it back face-down — but never Monster Zone cards, since
+// there's no Set Monster yet.
 function getPlacedCardActions(card: CardData | undefined, faceDown: boolean): FieldZoneAction[] {
   const base =
     card && isExtraDeckMonster(card)
       ? EXTRA_DECK_MONSTER_FIELD_ACTIONS
       : STANDARD_FIELD_CARD_ACTIONS;
-  return faceDown ? [{ key: 'activate', label: 'Activate' }, ...base] : base;
+  if (faceDown) {
+    return [{ key: 'activate', label: 'Activate' }, ...base];
+  }
+  if (card && card.cardClass !== 'Monster') {
+    return [{ key: 'set', label: 'Set' }, ...base];
+  }
+  return base;
 }
 
 // Main Deck and Extra Deck share "View", but only Main Deck gets Shuffle
@@ -54,6 +64,8 @@ const VIEW_ONLY_ACTIONS: FieldZoneAction[] = [VIEW_ACTION];
 const MAIN_DECK_ACTIONS: FieldZoneAction[] = [
   VIEW_ACTION,
   { key: 'shuffle', label: 'Shuffle' },
+  { key: 'mill', label: 'Mill' },
+  { key: 'banishTop', label: 'Banish Top' },
   { key: 'reset', label: 'Reset' },
 ];
 
@@ -119,6 +131,17 @@ interface PlayerFieldProps {
   // rotated 180° to view from the opponent's own seat, not just stacked
   // above the player's field in the same orientation.
   flipped?: boolean;
+  // Whether Attack should currently appear as an option for Attack
+  // Position monsters — kept as a plain boolean rather than the phase
+  // enum itself, so this component doesn't need to know about phases in
+  // general, just whether attacking is presently valid.
+  isBattlePhase?: boolean;
+  // Rendered in place of the empty grid cell to the left of the Field
+  // Zone (see fieldRow below) — player only, since there's no opponent
+  // turn structure to track in this single-player simulator.
+  phaseLabel?: string;
+  onPrevPhase?: () => void;
+  onNextPhase?: () => void;
   // Loaded deck piles — only meaningful for the player's own side for
   // now (no opponent deck data exists yet). When provided (non-empty),
   // the Main Deck / Extra Deck zones render as face-down piles instead
@@ -130,6 +153,12 @@ interface PlayerFieldProps {
   // topCardInstanceId). Not needed for Extra Deck, which isn't drawn
   // from.
   mainDeckTopCardId?: string;
+  // Same idea, for Extra Deck — a card returned there (Special Summon
+  // reversed, or sent from Grave/Banished/the field) always goes to the
+  // top, same as Main Deck's Stack (to top).
+  extraDeckTopCardId?: string;
+  extraDeckTopCardEntryFlip?: boolean;
+  extraDeckTopCardEntryRotation?: number;
   mainDeckTopCardEntryFlip?: boolean;
   mainDeckTopCardEntryRotation?: number;
   mainDeckBottomCardId?: string;
@@ -180,9 +209,16 @@ interface PlayerFieldProps {
 
 function PlayerField({
   flipped = false,
+  isBattlePhase = false,
+  phaseLabel,
+  onPrevPhase,
+  onNextPhase,
   mainDeck = [],
   extraDeck = [],
   mainDeckTopCardId,
+  extraDeckTopCardId,
+  extraDeckTopCardEntryFlip,
+  extraDeckTopCardEntryRotation,
   mainDeckTopCardEntryFlip,
   mainDeckTopCardEntryRotation,
   mainDeckBottomCardId,
@@ -225,7 +261,12 @@ function PlayerField({
           own column at the outer edge of the board (opponent's on the
           far left, player's on the far right), while the Monster Zones
           land in the same columns for both sides. */}
-      {!flipped && <div className="DuelField-emptyZone" />}
+      {!flipped &&
+        (phaseLabel && onPrevPhase && onNextPhase ? (
+          <PhaseTracker phaseLabel={phaseLabel} onPrev={onPrevPhase} onNext={onNextPhase} />
+        ) : (
+          <div className="DuelField-emptyZone" />
+        ))}
       {fieldZones.map((zone, i) => {
         if (zone.kind === 'field') {
           return (
@@ -266,6 +307,13 @@ function PlayerField({
                 ? [{ key: 'toAttack', label: 'To ATK' }]
                 : [{ key: 'toDefense', label: 'To DEF' }]
               : [];
+          // Only for a face-up monster currently in Attack Position, and
+          // only during Battle Phase — matches how positionAction above
+          // already treats "anything other than defense" as attack.
+          const attackAction: FieldZoneAction[] =
+            placed && !placed.faceDown && placed.position !== 'defense' && isBattlePhase
+              ? [{ key: 'attack', label: 'Attack' }]
+              : [];
           return (
             <FieldZone
               key={i}
@@ -274,9 +322,11 @@ function PlayerField({
               instanceId={placed?.instanceId}
               faceDown={placed?.faceDown}
               battlePosition={placed?.position}
+              entryFlip={placed ? fieldZoneEntryFlips?.[placed.instanceId] : undefined}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               menuActions={[
+                ...attackAction,
                 ...getPlacedCardActions(placed?.card, placed?.faceDown ?? false),
                 ...positionAction,
               ]}
@@ -384,6 +434,9 @@ function PlayerField({
               stackOffsetStepX={EXTRA_DECK_STACK_OFFSET_STEP_X}
               stackOffsetStepY={EXTRA_DECK_STACK_OFFSET_STEP_Y}
               stackMaxLayers={EXTRA_DECK_STACK_MAX_LAYERS}
+              topCardInstanceId={extraDeckTopCardId}
+              topCardEntryFlip={extraDeckTopCardEntryFlip}
+              topCardEntryRotation={extraDeckTopCardEntryRotation}
               departureCardInstanceId={extraDeckDepartureCardId}
               menuActions={VIEW_ONLY_ACTIONS}
               onMenuAction={onViewExtraDeck ? () => onViewExtraDeck() : undefined}
@@ -435,9 +488,16 @@ function PlayerField({
 }
 
 interface DuelFieldProps {
+  playerPhaseLabel?: string;
+  onPrevPhase?: () => void;
+  onNextPhase?: () => void;
+  playerIsBattlePhase?: boolean;
   playerMainDeck?: CardData[];
   playerExtraDeck?: CardData[];
   playerMainDeckTopCardId?: string;
+  playerExtraDeckTopCardId?: string;
+  playerExtraDeckTopCardEntryFlip?: boolean;
+  playerExtraDeckTopCardEntryRotation?: number;
   playerMainDeckTopCardEntryFlip?: boolean;
   playerMainDeckTopCardEntryRotation?: number;
   playerMainDeckBottomCardId?: string;
@@ -463,9 +523,16 @@ interface DuelFieldProps {
 }
 
 function DuelField({
+  playerPhaseLabel,
+  onPrevPhase,
+  onNextPhase,
+  playerIsBattlePhase,
   playerMainDeck = [],
   playerExtraDeck = [],
   playerMainDeckTopCardId,
+  playerExtraDeckTopCardId,
+  playerExtraDeckTopCardEntryFlip,
+  playerExtraDeckTopCardEntryRotation,
   playerMainDeckTopCardEntryFlip,
   playerMainDeckTopCardEntryRotation,
   playerMainDeckBottomCardId,
@@ -494,9 +561,16 @@ function DuelField({
       <PlayerField flipped />
       <div className="DuelField-centerLine" />
       <PlayerField
+        isBattlePhase={playerIsBattlePhase}
+        phaseLabel={playerPhaseLabel}
+        onPrevPhase={onPrevPhase}
+        onNextPhase={onNextPhase}
         mainDeck={playerMainDeck}
         extraDeck={playerExtraDeck}
         mainDeckTopCardId={playerMainDeckTopCardId}
+        extraDeckTopCardId={playerExtraDeckTopCardId}
+        extraDeckTopCardEntryFlip={playerExtraDeckTopCardEntryFlip}
+        extraDeckTopCardEntryRotation={playerExtraDeckTopCardEntryRotation}
         mainDeckTopCardEntryFlip={playerMainDeckTopCardEntryFlip}
         mainDeckTopCardEntryRotation={playerMainDeckTopCardEntryRotation}
         mainDeckBottomCardId={playerMainDeckBottomCardId}

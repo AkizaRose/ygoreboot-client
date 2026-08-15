@@ -7,10 +7,10 @@
   flex-direction: column;
   border: 8px solid #1f2028;
   border-radius: 4px;
-  width: 760px;
+  width: 740px;
   height: 300px;
   left: 450px;
-  top: 50px;
+  top: 45px;
 }
 
 .DeckViewer-topBar {
@@ -29,7 +29,7 @@
 
 .DeckViewer-grid {
   display: grid;
-  justify-content: center;
+  justify-content: left;
   overflow-y: scroll;
   gap: 8px;
   padding: 8px 8px;

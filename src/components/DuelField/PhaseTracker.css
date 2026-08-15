@@ -1,0 +1,40 @@
+.PhaseTracker {
+  width: 72px;
+  height: 105px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px;
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+}
+
+.PhaseTracker-arrow {
+  flex: 0 0 auto;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+.PhaseTracker-arrow:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.PhaseTracker-label {
+  flex: 1;
+  min-width: 0;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--text);
+  text-align: center;
+}
