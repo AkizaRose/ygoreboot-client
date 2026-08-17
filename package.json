@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
+    "firebase": "^12.17.1",
     "framer-motion": "^13.1.0",
     "html-to-image": "^1.11.13",
     "react": "^19.2.7",
@@ -28,5 +30,18 @@
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
-  }
+  },
+  "description": "This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AkizaRose/ygoreboot-client.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/AkizaRose/ygoreboot-client/issues"
+  },
+  "homepage": "https://github.com/AkizaRose/ygoreboot-client#readme"
 }

@@ -1,0 +1,10 @@
+.ProtectedRoute-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 16px;
+}

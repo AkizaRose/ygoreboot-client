@@ -6,7 +6,7 @@ import './DuelMenuPage.css';
 
 function DuelMenuPage() {
   const navigate = useNavigate();
-  const { savedDecks } = useSavedDecks();
+  const { savedDecks, loading } = useSavedDecks();
   const [selectedDeckId, setSelectedDeckId] = useState('');
 
   const handleSoloMode = () => {
@@ -20,8 +20,9 @@ function DuelMenuPage() {
         className="DuelMenuPage-deckSelect"
         value={selectedDeckId}
         onChange={(e) => setSelectedDeckId(e.target.value)}
+        disabled={loading}
       >
-        <option value="">— Select a deck —</option>
+        <option value="">{loading ? 'Loading decks…' : '— Select a deck —'}</option>
         {savedDecks.map((deck) => (
           <option key={deck.id} value={deck.id}>
             {deck.name}

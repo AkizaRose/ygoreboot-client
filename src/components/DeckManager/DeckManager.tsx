@@ -14,8 +14,16 @@ interface DeckManagerProps {
 }
 
 function DeckManager({ cards, mainDeck, extraDeck, sideDeck, onLoadDeck }: DeckManagerProps) {
-  const { savedDecks, selectedDeckId, setSelectedDeckId, getSavedDeck, saveDeck, renameDeck, deleteDeck } =
-    useSavedDecks();
+  const {
+    savedDecks,
+    loading,
+    selectedDeckId,
+    setSelectedDeckId,
+    getSavedDeck,
+    saveDeck,
+    renameDeck,
+    deleteDeck,
+  } = useSavedDecks();
   const [nameInput, setNameInput] = useState('');
 
   // Whenever the selected saved deck changes, populate the name field with
@@ -70,8 +78,9 @@ function DeckManager({ cards, mainDeck, extraDeck, sideDeck, onLoadDeck }: DeckM
         className="DeckManager-select"
         value={selectedDeckId ?? ''}
         onChange={(e) => setSelectedDeckId(e.target.value || null)}
+        disabled={loading}
       >
-        <option value="">— Select a saved deck —</option>
+        <option value="">{loading ? 'Loading decks…' : '— Select a saved deck —'}</option>
         {savedDecks.map((deck) => (
           <option key={deck.id} value={deck.id}>
             {deck.name}

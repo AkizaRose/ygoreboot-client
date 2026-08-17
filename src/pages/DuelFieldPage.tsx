@@ -47,7 +47,7 @@ const PHASE_LABELS: Record<Phase, string> = {
 function DuelFieldPage() {
   const navigate = useNavigate();
   const { deckId } = useParams<{ deckId: string }>();
-  const { getSavedDeck } = useSavedDecks();
+  const { getSavedDeck, loading: savedDecksLoading } = useSavedDecks();
   const cards = cardData as CardData[];
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
@@ -566,14 +566,22 @@ function DuelFieldPage() {
 
   // (Re)loads whenever deckId changes — e.g. navigating here for a
   // different deck. Runs once per deckId, not on every render.
+  // Also waits for savedDecksLoading to clear first — unlike the old
+  // localStorage-backed version, useSavedDecks now reads from Firestore
+  // asynchronously, so on a fresh mount getSavedDeck could easily still
+  // be working from an empty list that hasn't caught up yet. Without
+  // this guard, that looks identical to "this deck doesn't exist" and
+  // loadDeck would wipe the field instead of waiting for the real data.
   useEffect(() => {
+    if (savedDecksLoading) return;
     loadDeck();
-    // Deliberately depends only on deckId — this should only reload (and
-    // re-shuffle) when navigating to a genuinely different deck, not if
-    // the saved-decks list happens to change for an unrelated reason
-    // while this page is open.
+    // Deliberately depends only on deckId and savedDecksLoading — this
+    // should only reload (and re-shuffle) when navigating to a
+    // genuinely different deck, or once loading finishes, not if the
+    // saved-decks list happens to change for an unrelated reason while
+    // this page is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deckId]);
+  }, [deckId, savedDecksLoading]);
 
   const handleDrawCard = () => {
     const currentDeck = mainDeckRef.current;
