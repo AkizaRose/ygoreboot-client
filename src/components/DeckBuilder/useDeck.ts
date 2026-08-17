@@ -2,12 +2,12 @@ import { useCallback, useState } from 'react';
 import type { CardData } from '../../types/Card';
 import type { DeckName, DragPayload } from '../../dragState';
 
-export const MAIN_DECK_SIZE = 40;
+export const MAIN_DECK_SIZE = 50;
 export const EXTRA_DECK_SIZE = 10;
 export const SIDE_DECK_SIZE = 10;
 export const MAX_COPIES = 3;
 export const MAX_LEGEND_COPIES = 1;
-export const MAX_LEGEND_CARDS = 3;
+export const MAX_LEGEND_CARDS = 5;
 
 // Fusion, Ritual, and Evolution Monsters go to the Extra Deck; everything
 // else (Normal/Effect Monsters, Spells, Traps) goes to the Main Deck. The

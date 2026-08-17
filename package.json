@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cards:resolve-ids": "node scripts/resolve-card-ids.js",
+    "artwork:download": "node scripts/download-artwork.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
