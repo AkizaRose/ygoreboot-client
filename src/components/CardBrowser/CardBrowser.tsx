@@ -169,34 +169,36 @@ function CardBrowser({
     const name = nameQuery.trim().toLowerCase();
     const text = textQuery.trim().toLowerCase();
 
-    return cards.filter((card) => {
-      if (name && !card.name.toLowerCase().includes(name)) return false;
-      if (text) {
-        const haystack = `${card.effectText ?? ''} ${card.flavourText ?? ''}`.toLowerCase();
-        if (!haystack.includes(text)) return false;
-      }
-      if (selectedCardClass && card.cardClass !== selectedCardClass) {
-        return false;
-      }
-      if (selectedCardSubclass && card.cardSubclass !== selectedCardSubclass) {
-        return false;
-      }
-      if (selectedAttribute && card.attribute !== selectedAttribute) {
-        return false;
-      }
-      if (selectedMonsterType && card.monsterType !== selectedMonsterType) {
-        return false;
-      }
-      if (levelMin !== 1 || levelMax !== 5) {
-        if (card.level == null || card.level < levelMin || card.level > levelMax) {
+    return cards
+      .filter((card) => {
+        if (name && !card.name.toLowerCase().includes(name)) return false;
+        if (text) {
+          const haystack = `${card.effectText ?? ''} ${card.flavourText ?? ''}`.toLowerCase();
+          if (!haystack.includes(text)) return false;
+        }
+        if (selectedCardClass && card.cardClass !== selectedCardClass) {
           return false;
         }
-      }
-      if (!isWithinStatRange(card.atk, atkMin, atkMax)) return false;
-      if (!isWithinStatRange(card.def, defMin, defMax)) return false;
-      if (selectedLegend && card.legend !== selectedLegend) return false;
-      return true;
-    });
+        if (selectedCardSubclass && card.cardSubclass !== selectedCardSubclass) {
+          return false;
+        }
+        if (selectedAttribute && card.attribute !== selectedAttribute) {
+          return false;
+        }
+        if (selectedMonsterType && card.monsterType !== selectedMonsterType) {
+          return false;
+        }
+        if (levelMin !== 1 || levelMax !== 5) {
+          if (card.level == null || card.level < levelMin || card.level > levelMax) {
+            return false;
+          }
+        }
+        if (!isWithinStatRange(card.atk, atkMin, atkMax)) return false;
+        if (!isWithinStatRange(card.def, defMin, defMax)) return false;
+        if (selectedLegend && card.legend !== selectedLegend) return false;
+        return true;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [
     cards,
     nameQuery,

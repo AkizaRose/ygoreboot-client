@@ -19,6 +19,17 @@ function isExtraDeckCard(card: CardData): boolean {
   );
 }
 
+// What a card counts AS for copy-limit purposes — see CardData's own
+// comment on treatedAsName for the full reasoning. This is the single
+// point every "how many copies of this does the deck already have"
+// check should go through, rather than comparing card.id or card.name
+// directly, so alternate-artwork entries (same name, different id) and
+// "treated as" cards (different name, explicit treatedAsName) both
+// group correctly with no special-casing needed at the call sites.
+function getLimitName(card: CardData): string {
+  return card.treatedAsName ?? card.name;
+}
+
 // Sorting classification — deliberately separate from isExtraDeckCard,
 // since sorting needs to distinguish Normal vs Effect Monsters too, which
 // deck placement doesn't care about.
@@ -134,12 +145,13 @@ const EMPTY_DECK: DeckState = { main: [], extra: [], side: [] };
 function canAddCard(state: DeckState, card: CardData): boolean {
   const combined = [...state.main, ...state.extra, ...state.side];
   const isLegend = !!card.legend;
+  const limitName = getLimitName(card);
 
-  const copiesOfThisCard = combined.filter((c) => c.id === card.id).length;
+  const copiesOfThisCard = combined.filter((c) => getLimitName(c) === limitName).length;
   const maxCopiesForThisCard = isLegend ? MAX_LEGEND_COPIES : MAX_COPIES;
   if (copiesOfThisCard >= maxCopiesForThisCard) {
     console.log(
-      `[useDeck] "${card.name}" already at its ${maxCopiesForThisCard}-copy limit — not added.`,
+      `[useDeck] "${limitName}" already at its ${maxCopiesForThisCard}-copy limit — not added.`,
     );
     return false;
   }
