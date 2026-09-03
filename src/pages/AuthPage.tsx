@@ -5,9 +5,15 @@ import './AuthPage.css';
 
 type Mode = 'login' | 'signup';
 
+// Kept simple and URL/display-safe, since usernames may eventually show
+// up in more places (matchmaking, duel invites) than just this form.
+const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
+
 function getFriendlyErrorMessage(error: unknown): string {
   const code = (error as { code?: string })?.code;
   switch (code) {
+    case 'auth/username-already-in-use':
+      return 'That username is already taken.';
     case 'auth/email-already-in-use':
       return 'An account with that email already exists.';
     case 'auth/invalid-email':
@@ -17,7 +23,7 @@ function getFriendlyErrorMessage(error: unknown): string {
     case 'auth/invalid-credential':
     case 'auth/wrong-password':
     case 'auth/user-not-found':
-      return 'Incorrect email or password.';
+      return 'Incorrect username or password.';
     default:
       return 'Something went wrong. Please try again.';
   }
@@ -25,6 +31,7 @@ function getFriendlyErrorMessage(error: unknown): string {
 
 function AuthPage() {
   const [mode, setMode] = useState<Mode>('login');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -37,17 +44,25 @@ function AuthPage() {
     e.preventDefault();
     setError(null);
 
-    if (mode === 'signup' && password !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
+    if (mode === 'signup') {
+      if (!USERNAME_PATTERN.test(username.trim())) {
+        setError(
+          'Username must be 3-20 characters, using only letters, numbers, and underscores.',
+        );
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Passwords do not match.');
+        return;
+      }
     }
 
     setIsSubmitting(true);
     try {
       if (mode === 'signup') {
-        await signUp(email, password);
+        await signUp(username, email, password);
       } else {
-        await logIn(email, password);
+        await logIn(username, password);
       }
       navigate('/');
     } catch (err) {
@@ -63,14 +78,25 @@ function AuthPage() {
         <h1 className="AuthPage-title">{mode === 'login' ? 'Log In' : 'Create Account'}</h1>
         <form className="AuthPage-form" onSubmit={handleSubmit}>
           <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            type="text"
+            placeholder="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
             className="AuthPage-input"
             required
-            autoComplete="email"
+            autoComplete="username"
           />
+          {mode === 'signup' && (
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="AuthPage-input"
+              required
+              autoComplete="email"
+            />
+          )}
           <input
             type="password"
             placeholder="Password"

@@ -74,13 +74,32 @@ export function useRasterizedCard(card: CardData) {
       console.log(`[CardImage] starting capture for "${card.name}" (${id})`);
 
       return enqueueCapture(
-        () =>
-          toPng(node, {
+        () => {
+          // The node can be detached from the document by now — e.g. the
+          // user paged/filtered away in the Card Browser (unmounting
+          // this CardImage) before this specific capture's turn came up
+          // in the queue, since captures are deliberately serialized one
+          // at a time (see enqueueCapture) rather than all running at
+          // once. Calling toPng() on a detached node doesn't reliably
+          // throw — it can silently produce an incomplete capture
+          // (missing artwork/text, just the border) instead, which would
+          // then get permanently cached as if it were valid, showing
+          // that broken image every time this card is viewed again for
+          // the rest of the session. Bail out explicitly instead, so
+          // this is treated as a normal capture failure (left uncached,
+          // live fallback keeps rendering) rather than a false success.
+          if (!node.isConnected) {
+            return Promise.reject(
+              new Error(`Capture node for card ${id} was unmounted before its turn in the queue`),
+            );
+          }
+          return toPng(node, {
             width: CARD_WIDTH,
             height: CARD_HEIGHT,
             pixelRatio: 1,
             cacheBust: true,
-          }),
+          });
+        },
         `capture for "${card.name}" (${id})`,
       );
     };

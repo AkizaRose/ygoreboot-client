@@ -1,0 +1,56 @@
+.CardPrewarmGate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.CardPrewarmGate-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: var(--text);
+}
+
+.CardPrewarmGate-message p {
+  margin: 0;
+}
+
+.CardPrewarmGate-count {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.CardPrewarmGate-progressTrack {
+  width: 240px;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.CardPrewarmGate-progressFill {
+  height: 100%;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 4px;
+  transition: width 0.2s ease-out;
+}
+
+/* Positioned far off-screen, same technique as CardImage's own capture
+   stage — needs to be genuinely rendered for the capture pipeline to
+   work, just not visible to the person waiting on the loading screen. */
+.CardPrewarmGate-offscreen {
+  position: fixed;
+  top: -20000px;
+  left: -20000px;
+  pointer-events: none;
+}
+
+.CardPrewarmGate-cardSlot {
+  position: relative;
+  width: 813px;
+  height: 1185px;
+}

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext';
 import ProtectedRoute from './auth/ProtectedRoute';
+import CardPrewarmGate from './components/CardView/CardPrewarmGate';
 import AuthPage from './pages/AuthPage';
 import LandingPage from './pages/LandingPage';
 import DuelMenuPage from './pages/DuelMenuPage';
@@ -17,7 +18,9 @@ function App() {
             path="/"
             element={
               <ProtectedRoute>
-                <LandingPage />
+                <CardPrewarmGate>
+                  <LandingPage />
+                </CardPrewarmGate>
               </ProtectedRoute>
             }
           />
@@ -25,7 +28,9 @@ function App() {
             path="/duel"
             element={
               <ProtectedRoute>
-                <DuelMenuPage />
+                <CardPrewarmGate>
+                  <DuelMenuPage />
+                </CardPrewarmGate>
               </ProtectedRoute>
             }
           />
@@ -33,7 +38,9 @@ function App() {
             path="/duel/solo/:deckId"
             element={
               <ProtectedRoute>
-                <DuelFieldPage />
+                <CardPrewarmGate>
+                  <DuelFieldPage />
+                </CardPrewarmGate>
               </ProtectedRoute>
             }
           />
@@ -41,7 +48,9 @@ function App() {
             path="/deck-builder"
             element={
               <ProtectedRoute>
-                <DeckBuilderPage />
+                <CardPrewarmGate>
+                  <DeckBuilderPage />
+                </CardPrewarmGate>
               </ProtectedRoute>
             }
           />
