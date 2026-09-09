@@ -7,6 +7,7 @@ import ConfirmDialog from '../components/ConfirmDialog/ConfirmDialog';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
 import CardDisplay from '../components/CardDisplay/CardDisplay';
 import LifePointCounter from '../components/DuelField/LifePointCounter';
+import PlayerAvatarBox from '../components/Avatar/PlayerAvatarBox';
 import { useSavedDecks } from '../components/DeckManager/useSavedDecks';
 import { shuffle } from '../utils/shuffle';
 import cardData from '../data/carddata.json';
@@ -1408,11 +1409,14 @@ function DuelFieldPage() {
         />
       )}
 
-      <LifePointCounter
-        value={lifePoints}
-        onAdd={handleAddLifePoints}
-        onSubtract={handleSubtractLifePoints}
-      />
+      <div className="DuelFieldPage-playerHud">
+        <PlayerAvatarBox />
+        <LifePointCounter
+          value={lifePoints}
+          onAdd={handleAddLifePoints}
+          onSubtract={handleSubtractLifePoints}
+        />
+      </div>
     </div>
   );
 }

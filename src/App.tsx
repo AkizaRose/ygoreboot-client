@@ -7,6 +7,7 @@ import LandingPage from './pages/LandingPage';
 import DuelMenuPage from './pages/DuelMenuPage';
 import DuelFieldPage from './pages/DuelFieldPage';
 import DeckBuilderPage from './pages/DeckBuilderPage';
+import AccountPage from './pages/AccountPage';
 
 function App() {
   return (
@@ -51,6 +52,14 @@ function App() {
                 <CardPrewarmGate>
                   <DeckBuilderPage />
                 </CardPrewarmGate>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/account"
+            element={
+              <ProtectedRoute>
+                <AccountPage />
               </ProtectedRoute>
             }
           />

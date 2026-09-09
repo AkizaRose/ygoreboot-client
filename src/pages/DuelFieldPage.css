@@ -58,3 +58,18 @@
   padding: 2px 10px;
   cursor: pointer;
 }
+
+/* Takes over the page-anchored positioning LifePointCounter used to
+   apply to itself — now shared by both it and PlayerAvatarBox above it,
+   so the pair moves as one block rather than needing two separately
+   hardcoded positions kept in sync by hand. */
+.DuelFieldPage-playerHud {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}

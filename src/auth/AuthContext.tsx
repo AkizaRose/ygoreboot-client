@@ -5,9 +5,13 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
+  updateEmail,
+  updatePassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
   type User,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 
 interface AuthContextValue {
@@ -19,6 +23,15 @@ interface AuthContextValue {
   signUp: (username: string, email: string, password: string) => Promise<void>;
   logIn: (username: string, password: string) => Promise<void>;
   logOut: () => Promise<void>;
+  // Both require the CURRENT password specifically — Firebase needs
+  // actual proof of identity for security-sensitive changes like these,
+  // and password is the only thing it can verify that way. Re-entering
+  // the already-known current email wouldn't work as identity proof on
+  // its own (anyone could type a known email), so even changeEmail
+  // itself needs the password, not the current email, as its
+  // confirmation input.
+  changeEmail: (currentPassword: string, newEmail: string) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -33,6 +46,19 @@ function usernameDocId(username: string): string {
 // paths just for these two cases.
 function authStyleError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
+}
+
+// Proves the current password is correct before allowing a
+// security-sensitive change (email, password) to proceed — required by
+// Firebase itself for these operations (they fail with
+// auth/requires-recent-login otherwise if the session isn't freshly
+// authenticated), and good practice regardless.
+async function reauthenticate(user: User, currentPassword: string): Promise<void> {
+  if (!user.email) {
+    throw authStyleError('auth/user-not-found', 'Something went wrong. Please try again.');
+  }
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -108,8 +134,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOut(auth);
   };
 
+  const changeEmail = async (currentPassword: string, newEmail: string) => {
+    const user = auth.currentUser;
+    if (!user) {
+      throw authStyleError('auth/user-not-found', 'You must be logged in to do this.');
+    }
+    await reauthenticate(user, currentPassword);
+    await updateEmail(user, newEmail);
+
+    // The username -> email mapping that username-based login relies on
+    // lives in Firestore, entirely separately from Firebase Auth's own
+    // record of this account's email — without updating it here too,
+    // logging in by username would keep resolving to the OLD email
+    // indefinitely, even though the account's real email has changed.
+    // Needs its own security rule permitting this specific update (see
+    // firestore.rules) — usernames/{username} otherwise blocks updates
+    // entirely, to keep reservations permanent once claimed.
+    const userDoc = await getDoc(doc(db, 'users', user.uid));
+    if (userDoc.exists()) {
+      const { username } = userDoc.data() as { username: string };
+      await updateDoc(doc(db, 'usernames', usernameDocId(username)), { email: newEmail });
+    }
+  };
+
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    const user = auth.currentUser;
+    if (!user) {
+      throw authStyleError('auth/user-not-found', 'You must be logged in to do this.');
+    }
+    await reauthenticate(user, currentPassword);
+    await updatePassword(user, newPassword);
+  };
+
   return (
-    <AuthContext.Provider value={{ currentUser, loading, signUp, logIn, logOut }}>
+    <AuthContext.Provider
+      value={{ currentUser, loading, signUp, logIn, logOut, changeEmail, changePassword }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -1,0 +1,69 @@
+.AccountPage {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.AccountPage-content {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.AccountPage-box {
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 32px 28px;
+  width: 400px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.AccountPage-title {
+  margin: 0 0 8px 0;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: var(--text);
+  font-size: 22px;
+  text-align: center;
+}
+
+.AccountPage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: var(--text);
+  font-size: 14px;
+}
+
+.AccountPage-label {
+  color: rgba(255, 255, 255, 0.6);
+  min-width: 80px;
+}
+
+.AccountPage-value {
+  flex: 1;
+  word-break: break-all;
+}
+
+.AccountPage-changeButton {
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.AccountPage-backButton {
+  align-self: center;
+  margin-top: 8px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 13px;
+  padding: 6px 20px;
+  cursor: pointer;
+}

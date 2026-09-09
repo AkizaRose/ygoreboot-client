@@ -1,0 +1,15 @@
+.PlayerAvatarBox {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  overflow: hidden;
+}
+
+.PlayerAvatarBox-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
