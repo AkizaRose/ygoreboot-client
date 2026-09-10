@@ -17,6 +17,15 @@
   cursor: pointer;
 }
 
+/* Highlights a zone currently chosen in an in-progress multi-select
+   interaction (e.g. Fusion Summon material selection) — an inset outline
+   rather than adjusting the border itself, so it doesn't shift this
+   zone's already-tight 72x105 box against its neighbors. */
+.FieldZone--selected {
+  outline: 2px solid #d4af37;
+  outline-offset: -2px;
+}
+
 .FieldZone-cardOuter {
   position: absolute;
   top: 0;

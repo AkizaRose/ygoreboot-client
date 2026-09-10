@@ -163,6 +163,33 @@ function DuelFieldPage() {
   const [viewingDeck, setViewingDeck] = useState<'main' | 'extra' | 'grave' | 'banished' | null>(
     null,
   );
+  // Which Monster Zone slot's stack is currently open in a read-only
+  // viewer (the "View" hover-menu action on a Fusion stack) — separate
+  // from viewingDeck above since a stack's contents come from a specific
+  // zone slot, not one of the fixed piles that already has its own
+  // variant there.
+  const [viewingStackIndex, setViewingStackIndex] = useState<number | null>(null);
+  // Non-null while a Fusion Summon's material-selection step is in
+  // progress — set when "Fusion Summon" is chosen on a Fusion Monster in
+  // the Extra Deck viewer, cleared on Confirm or Cancel (see
+  // handleFusionSummonConfirm/Cancel below). selectedIndices is ordered
+  // by SELECTION sequence (not slot order), since that's what determines
+  // the resulting stack's bottom-to-top order once summoned.
+  const [pendingFusionSummon, setPendingFusionSummon] = useState<{
+    extraDeckInstance: CardInstance;
+    selectedIndices: number[];
+  } | null>(null);
+  // Non-null while an Evolution Summon's material-selection step is in
+  // progress — set when "Evolution Summon" is chosen on an Evolution
+  // Monster in the Extra Deck viewer. Unlike pendingFusionSummon, there's
+  // no selection list to accumulate here: Evolution Summon only ever
+  // needs exactly one material, so a single click on it completes the
+  // whole thing immediately (see handleEvolutionMaterialClick below) —
+  // this state exists just long enough to remember which Extra Deck card
+  // is waiting for that click.
+  const [pendingEvolutionSummon, setPendingEvolutionSummon] = useState<{
+    extraDeckInstance: CardInstance;
+  } | null>(null);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
 
   // How many of the opening hand's cards still need to be auto-drawn
@@ -334,12 +361,31 @@ function DuelFieldPage() {
     // Only used for the 'monsterZone' destination.
     monsterZoneSlot?: number;
     monsterPosition?: 'attack' | 'defense';
+    // Only used for a Fusion Summon's 'monsterZone' destination — the
+    // Fusion Monster's own departure from the Extra Deck reuses this
+    // same mechanism (so it gets the same flip/positioning treatment as
+    // any other Special Summon), but a Fusion Summon ALSO needs to
+    // simultaneously clear every selected material's own zone and bury
+    // them beneath the newly-arriving Fusion Monster — both handled
+    // together in the effect below, so they land in the exact same
+    // render as the Fusion Monster itself, same "avoid a glitch frame"
+    // reasoning this whole two-phase mechanism exists for in the first
+    // place.
+    materialZoneIndices?: number[];
+    stackedBelow?: CardInstance[];
   } | null>(null);
 
   useEffect(() => {
     if (!pendingDeckDeparture) return;
-    const { source, instance, destination, monsterZoneSlot, monsterPosition } =
-      pendingDeckDeparture;
+    const {
+      source,
+      instance,
+      destination,
+      monsterZoneSlot,
+      monsterPosition,
+      materialZoneIndices,
+      stackedBelow,
+    } = pendingDeckDeparture;
 
     if (source === 'main') {
       setMainDeckDepartureCardId(undefined);
@@ -360,7 +406,17 @@ function DuelFieldPage() {
       // rotates to Defense while moving" effect on its own.
       setPlayerMonsterZones((prev) => {
         const next = [...prev];
-        next[monsterZoneSlot] = { ...instance, faceDown: false, position: monsterPosition };
+        if (materialZoneIndices) {
+          for (const idx of materialZoneIndices) {
+            next[idx] = null;
+          }
+        }
+        next[monsterZoneSlot] = {
+          ...instance,
+          faceDown: false,
+          position: monsterPosition,
+          stackedBelow,
+        };
         return next;
       });
     }
@@ -491,6 +547,9 @@ function DuelFieldPage() {
       setDeckEntryRotations({});
       setFieldZoneEntryRotations({});
       setFieldZoneEntryFlips({});
+      setPendingFusionSummon(null);
+      setPendingEvolutionSummon(null);
+      setViewingStackIndex(null);
       setLifePoints(8000);
       setPhase('draw');
       scheduleOpeningDraws(0);
@@ -515,6 +574,9 @@ function DuelFieldPage() {
       setDeckEntryRotations({});
       setFieldZoneEntryRotations({});
       setFieldZoneEntryFlips({});
+      setPendingFusionSummon(null);
+      setPendingEvolutionSummon(null);
+      setViewingStackIndex(null);
       setLifePoints(8000);
       setPhase('draw');
       scheduleOpeningDraws(0);
@@ -559,6 +621,9 @@ function DuelFieldPage() {
     setDeckEntryRotations({});
     setFieldZoneEntryRotations({});
     setFieldZoneEntryFlips({});
+    setPendingFusionSummon(null);
+    setPendingEvolutionSummon(null);
+    setViewingStackIndex(null);
     setLifePoints(8000);
     setPhase('draw');
     seenHandCardIdsRef.current = new Set();
@@ -823,6 +888,19 @@ function DuelFieldPage() {
       return;
     }
 
+    // Opens a read-only viewer for a Monster Zone stack's full contents
+    // — like Activate/set/toDefense/toAttack above, this neither moves
+    // nor modifies the card, so it's handled here rather than falling
+    // through to the shared "clear slot, route elsewhere" logic below.
+    // Only ever offered when a stack genuinely exists (see DuelField.tsx),
+    // but the guard is correct regardless.
+    if (actionKey === 'view') {
+      if (zoneType === 'monster') {
+        setViewingStackIndex(index);
+      }
+      return;
+    }
+
     const placed =
       zoneType === 'monster'
         ? playerMonsterZones[index]
@@ -847,6 +925,61 @@ function DuelFieldPage() {
       setPlayerFieldZone(null);
     }
 
+    // Every action reachable past this point removes `placed` from the
+    // field entirely (to Hand, Grave, Banish, the Main/Extra Deck) — per
+    // this game's own rules for a Fusion stack, only the active TOP card
+    // (placed itself) can ever be sent anywhere; whatever's buried
+    // beneath it always goes straight to the Grave the moment the stack
+    // breaks apart, regardless of where the top card itself ends up.
+    // Only ever populated for Monster Zone cards (see
+    // PlacedCard.stackedBelow), so this is naturally a no-op for
+    // spellTrap/field.
+    if (placed.stackedBelow && placed.stackedBelow.length > 0) {
+      // Every buried card was, up to this exact moment, rendered at the
+      // STACK's one shared rotation (see stackBattlePosition in
+      // FieldZone) — never its own, since only the active top card's
+      // position is ever individually tracked. So the correct rotation
+      // for a buried card to animate FROM on arrival in Grave is that
+      // same shared stack rotation at the moment of departure — NOT
+      // whatever this instanceId's entry hint last happened to hold from
+      // some earlier, unrelated event (e.g. an earlier solo trip to
+      // Grave this same card made, individually, in Defense Position,
+      // before it was ever fused into anything). fieldZoneEntryRotations
+      // is never proactively cleared, only overwritten on each genuine
+      // departure — so explicitly setting it here for every buried card,
+      // not just the top one, is what keeps a stale leftover value from
+      // resurfacing on arrival.
+      const buriedRotation = placed.position === 'defense' ? -90 : 0;
+      setFieldZoneEntryRotations((prev) => {
+        const next = { ...prev };
+        for (const buried of placed.stackedBelow!) {
+          next[buried.instanceId] = buriedRotation;
+        }
+        return next;
+      });
+      setPlayerGrave((prev) => [...prev, ...placed.stackedBelow!]);
+    }
+
+    // Every case below moves `placed` off the field into a plain
+    // CardInstance[] pile (Hand/Grave/Banished/Main Deck/Extra Deck) —
+    // pushing `placed` itself, rather than a fresh { instanceId, card }
+    // built from it, would carry its Monster-Zone-only fields
+    // (faceDown/position/stackedBelow) along for the ride. faceDown/
+    // position sitting unused there is harmless, but stackedBelow isn't:
+    // if this same card is ever picked back up later (Special Summon
+    // from Grave, re-summoned from Hand, etc.), every one of those
+    // "place onto the field" call sites builds the new PlacedCard by
+    // spreading the found instance — a leftover stackedBelow would ride
+    // straight back in, making an unrelated single card falsely render
+    // as a stack whose "buried" cards are ALSO genuinely sitting
+    // elsewhere (e.g. still in Grave) at the same time — the same
+    // instanceId doing double duty, which is exactly what caused the
+    // stale-state symptoms this was fixed in response to. Stripping
+    // down to a clean CardInstance here is what keeps that invariant —
+    // "only a Monster Zone's own PlacedCard ever carries these fields" —
+    // actually true, rather than merely intended.
+    const asCardInstance: CardInstance = { instanceId: placed.instanceId, card: placed.card };
+
     switch (actionKey) {
       case 'toHand':
         setHandEntryFlips((prev) => ({ ...prev, [placed.instanceId]: placed.faceDown }));
@@ -856,7 +989,7 @@ function DuelFieldPage() {
             [placed.instanceId]: placed.position === 'defense' ? -90 : 0,
           }));
         }
-        setHand((prev) => [...prev, placed]);
+        setHand((prev) => [...prev, asCardInstance]);
         break;
       case 'toExtra':
         if (zoneType === 'monster') {
@@ -869,7 +1002,7 @@ function DuelFieldPage() {
         // reasoning as stackTop/stackBottom above (Field Zone is the
         // only source here that can already be face-down).
         setDeckEntryFlips((prev) => ({ ...prev, [placed.instanceId]: !placed.faceDown }));
-        setExtraDeck((prev) => [placed, ...prev]);
+        setExtraDeck((prev) => [asCardInstance, ...prev]);
         break;
       case 'toGrave':
         if (zoneType === 'monster') {
@@ -879,7 +1012,7 @@ function DuelFieldPage() {
           }));
         }
         setFieldZoneEntryFlips((prev) => ({ ...prev, [placed.instanceId]: placed.faceDown }));
-        setPlayerGrave((prev) => [...prev, placed]);
+        setPlayerGrave((prev) => [...prev, asCardInstance]);
         break;
       case 'banish':
         if (zoneType === 'monster') {
@@ -889,7 +1022,7 @@ function DuelFieldPage() {
           }));
         }
         setFieldZoneEntryFlips((prev) => ({ ...prev, [placed.instanceId]: placed.faceDown }));
-        setPlayerBanished((prev) => [...prev, placed]);
+        setPlayerBanished((prev) => [...prev, asCardInstance]);
         break;
       case 'stackTop':
         if (zoneType === 'monster') {
@@ -902,7 +1035,7 @@ function DuelFieldPage() {
         // Spell/Trap/Field Spell) — it's already presenting its back,
         // same as the deck, so there's nothing to turn over.
         setDeckEntryFlips((prev) => ({ ...prev, [placed.instanceId]: !placed.faceDown }));
-        setMainDeck((prev) => [placed, ...prev]);
+        setMainDeck((prev) => [asCardInstance, ...prev]);
         break;
       case 'stackBottom':
         if (zoneType === 'monster') {
@@ -912,9 +1045,185 @@ function DuelFieldPage() {
           }));
         }
         setDeckEntryFlips((prev) => ({ ...prev, [placed.instanceId]: !placed.faceDown }));
-        setMainDeck((prev) => [...prev, placed]);
+        setMainDeck((prev) => [...prev, asCardInstance]);
         break;
     }
+  };
+
+  // Toggles a Monster Zone slot in or out of the material selection —
+  // called while pendingFusionSummon is active (see DuelField.tsx's
+  // isSelectingFusionMaterial/onToggleMaterialSelection).
+  const handleFusionMaterialToggle = (index: number) => {
+    setPendingFusionSummon((prev) => {
+      if (!prev) return prev;
+      const alreadySelected = prev.selectedIndices.includes(index);
+      return {
+        ...prev,
+        // Selection order is preserved (not re-sorted to slot order) —
+        // it's what determines the resulting stack's bottom-to-top
+        // order once summoned, so a player can deliberately choose which
+        // material ends up deepest versus closest to the surface.
+        selectedIndices: alreadySelected
+          ? prev.selectedIndices.filter((i) => i !== index)
+          : [...prev.selectedIndices, index],
+      };
+    });
+  };
+
+  const handleFusionSummonCancel = () => {
+    setPendingFusionSummon(null);
+  };
+
+  // Completes a Fusion Summon once material selection is confirmed —
+  // opens the same shared position dialog every other summon type uses
+  // (requestSummonPosition), then places the Fusion Monster at the first
+  // available Monster Zone with every selected material buried beneath
+  // it.
+  const handleFusionSummonConfirm = () => {
+    if (!pendingFusionSummon || pendingFusionSummon.selectedIndices.length === 0) return;
+    const { extraDeckInstance, selectedIndices } = pendingFusionSummon;
+
+    // The materials themselves are about to be removed as part of this
+    // very fusion, so their own slots should count as available too —
+    // checking findEmptyZoneSlot against the CURRENT zones (still
+    // occupied by the materials) would wrongly report no room in the
+    // common case where the selected materials fill every zone. This
+    // simulates them already being gone before looking for a slot, which
+    // is what actually determines where the new stack lands: the
+    // materials are conceptually cleared out first, and the Fusion
+    // Monster is placed on top of the resulting stack only after that.
+    const zonesAfterMaterialRemoval = [...playerMonsterZones];
+    for (const idx of selectedIndices) {
+      zonesAfterMaterialRemoval[idx] = null;
+    }
+    const emptySlot = findEmptyZoneSlot(zonesAfterMaterialRemoval);
+    if (emptySlot === -1) {
+      // No available Monster Zone even once the materials are accounted
+      // for — nothing more to do here; the pending selection just
+      // clears, same as every other summon path simply no-ops rather
+      // than leaving a dangling selection hanging around.
+      setPendingFusionSummon(null);
+      return;
+    }
+
+    // Every selected material's WHOLE stack — its own top card plus
+    // anything already buried beneath it (a material that's itself
+    // already a Fusion stack brings its own buried cards along too, not
+    // just its visible top card) — becomes buried beneath the newly
+    // arriving Fusion Monster, in selection order.
+    const materialCards: CardInstance[] = [];
+    for (const idx of selectedIndices) {
+      const material = playerMonsterZones[idx];
+      if (!material) continue;
+      materialCards.push(...(material.stackedBelow ?? []));
+      materialCards.push({ instanceId: material.instanceId, card: material.card });
+    }
+
+    // Each material was, up to this moment, an independent monster (or
+    // stack) with its own actual rotation — its entry hint into the new
+    // stack should reflect that true prior state, so it visibly rotates
+    // from wherever it really was into the newly-chosen Battle Position
+    // (chosen next, but this doesn't depend on what that turns out to
+    // be), same reasoning as the Fuse feature this replaced used for its
+    // own source. A material that was itself already a stack shares one
+    // rotation across everything it contributes (both its own top card
+    // and whatever was already buried beneath it), since all of that was
+    // rendered at that one shared rotation up to this point too.
+    setFieldZoneEntryRotations((prev) => {
+      const next = { ...prev };
+      for (const idx of selectedIndices) {
+        const material = playerMonsterZones[idx];
+        if (!material) continue;
+        const materialRotation = material.position === 'defense' ? -90 : 0;
+        next[material.instanceId] = materialRotation;
+        for (const buried of material.stackedBelow ?? []) {
+          next[buried.instanceId] = materialRotation;
+        }
+      }
+      return next;
+    });
+
+    requestSummonPosition(extraDeckInstance.card, (position) => {
+      setExtraDeck((prev) => prev.filter((i) => i.instanceId !== extraDeckInstance.instanceId));
+      setExtraDeckDepartureCardId(extraDeckInstance.instanceId);
+      setPendingDeckDeparture({
+        source: 'extra',
+        instance: extraDeckInstance,
+        destination: 'monsterZone',
+        monsterZoneSlot: emptySlot,
+        monsterPosition: position,
+        materialZoneIndices: selectedIndices,
+        stackedBelow: materialCards,
+      });
+    });
+
+    setPendingFusionSummon(null);
+  };
+
+  const handleEvolutionSummonCancel = () => {
+    setPendingEvolutionSummon(null);
+  };
+
+  // Completes an Evolution Summon the moment its one material is
+  // clicked — no separate Confirm step (exactly one material is ever
+  // needed, so the click itself is unambiguous), and no summon-position
+  // dialog either: Battle Position is inherited from the material, per
+  // this ruleset's own rule that an Evolution Monster is summoned in
+  // whatever position the monster it's evolving from was already in.
+  const handleEvolutionMaterialClick = (index: number) => {
+    if (!pendingEvolutionSummon) return;
+    const { extraDeckInstance } = pendingEvolutionSummon;
+    const material = playerMonsterZones[index];
+    // Defensive only — this slot is only ever clickable while occupied
+    // (see DuelField.tsx), so this shouldn't be reachable in practice.
+    if (!material) {
+      setPendingEvolutionSummon(null);
+      return;
+    }
+
+    const position = material.position ?? 'attack';
+
+    // The material (and anything it already had buried beneath it) is
+    // re-mounting into a stackCards rendering at this same zone — same
+    // "set an explicit entry hint rather than trust whatever's already
+    // there" reasoning established for Fusion Summon and the stale-state
+    // bug fixed before it. The value happens to equal the material's own
+    // current rotation here, since Battle Position is inherited rather
+    // than chosen, so nothing actually rotates visibly — but leaving
+    // this to chance, rather than setting it explicitly, is exactly what
+    // caused that earlier bug.
+    const materialRotation = position === 'defense' ? -90 : 0;
+    setFieldZoneEntryRotations((prev) => {
+      const next = { ...prev };
+      next[material.instanceId] = materialRotation;
+      for (const buried of material.stackedBelow ?? []) {
+        next[buried.instanceId] = materialRotation;
+      }
+      return next;
+    });
+
+    setExtraDeck((prev) => prev.filter((i) => i.instanceId !== extraDeckInstance.instanceId));
+    setExtraDeckDepartureCardId(extraDeckInstance.instanceId);
+    setPendingDeckDeparture({
+      source: 'extra',
+      instance: extraDeckInstance,
+      destination: 'monsterZone',
+      // Same zone the material was already in, not the first available
+      // one — an Evolution Monster replaces what it evolved from in
+      // place, rather than moving the stack elsewhere. materialZoneIndices
+      // isn't needed here the way Fusion Summon needs it: the
+      // destination slot IS the material's own slot, so writing the new
+      // stack there already overwrites it, with nothing separate left to
+      // clear.
+      monsterZoneSlot: index,
+      monsterPosition: position,
+      stackedBelow: [
+        ...(material.stackedBelow ?? []),
+        { instanceId: material.instanceId, card: material.card },
+      ],
+    });
+
+    setPendingEvolutionSummon(null);
   };
 
   // Main Deck viewer-specific actions — every card gets To Hand/To Grave/
@@ -977,15 +1286,39 @@ function DuelFieldPage() {
   // unlike Main Deck's actions there's no per-card-class branching.
   // Deliberately no "To Hand" — Extra Deck monsters go to the field or
   // the Grave/Banished Zone, not back to hand.
-  const getExtraDeckCardActions = () => [
+  const getExtraDeckCardActions = (card: CardData) => [
     { key: 'toGrave', label: 'To Grave' },
     { key: 'banish', label: 'Banish' },
-    { key: 'specialSummon', label: 'S. Summon' },
+    card.cardSubclass === 'Fusion'
+      ? { key: 'fusionSummon', label: 'Fusion Summon' }
+      : card.cardSubclass === 'Evolution'
+        ? { key: 'evolutionSummon', label: 'Evolution Summon' }
+        : { key: 'specialSummon', label: 'S. Summon' },
   ];
 
   const handleExtraDeckCardAction = (instanceId: string, actionKey: string) => {
     const instance = extraDeck.find((i) => i.instanceId === instanceId);
     if (!instance) return;
+
+    if (actionKey === 'fusionSummon') {
+      // Closes the viewer so the field itself is visible for material
+      // selection — the rest of this flow (toggling monsters, Confirm,
+      // choosing a Battle Position) is handled by
+      // handleFusionMaterialToggle/handleFusionSummonConfirm and the
+      // DuelFieldPage-materialSelectionBanner below, not here.
+      setViewingDeck(null);
+      setPendingFusionSummon({ extraDeckInstance: instance, selectedIndices: [] });
+      return;
+    }
+
+    if (actionKey === 'evolutionSummon') {
+      // Same idea as fusionSummon above — closes the viewer so the field
+      // is visible, then hands off to handleEvolutionMaterialClick and
+      // the DuelFieldPage-evolutionSummonBanner below for the rest.
+      setViewingDeck(null);
+      setPendingEvolutionSummon({ extraDeckInstance: instance });
+      return;
+    }
 
     if (actionKey === 'specialSummon') {
       const emptySlot = findEmptyZoneSlot(playerMonsterZones);
@@ -1242,6 +1575,34 @@ function DuelFieldPage() {
 
   return (
     <div className="DuelFieldPage">
+      {pendingFusionSummon && (
+        <div className="DuelFieldPage-materialSelectionBanner">
+          <span>
+            Select monsters to use as Fusion Material ({pendingFusionSummon.selectedIndices.length}{' '}
+            selected)
+          </span>
+          <button
+            type="button"
+            onClick={handleFusionSummonConfirm}
+            disabled={pendingFusionSummon.selectedIndices.length === 0}
+          >
+            Confirm
+          </button>
+          <button type="button" onClick={handleFusionSummonCancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {pendingEvolutionSummon && (
+        <div className="DuelFieldPage-materialSelectionBanner">
+          <span>Select a monster to Evolve from</span>
+          <button type="button" onClick={handleEvolutionSummonCancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+
       <div className="DuelFieldPage-sidePanel">
         <CardDisplay card={hoveredCard} />
       </div>
@@ -1320,6 +1681,11 @@ function DuelFieldPage() {
             onViewExtraDeck={() => setViewingDeck('extra')}
             onViewGrave={() => setViewingDeck('grave')}
             onViewBanished={() => setViewingDeck('banished')}
+            isSelectingFusionMaterial={pendingFusionSummon !== null}
+            selectedMaterialIndices={pendingFusionSummon?.selectedIndices ?? []}
+            onToggleMaterialSelection={handleFusionMaterialToggle}
+            isSelectingEvolutionMaterial={pendingEvolutionSummon !== null}
+            onSelectEvolutionMaterial={handleEvolutionMaterialClick}
           />
         </div>
         <Hand
@@ -1382,6 +1748,31 @@ function DuelFieldPage() {
                     ? handleBanishedCardAction
                     : undefined
           }
+        />
+      )}
+
+      {/* Monster Zone stack's "View" — deliberately passes neither
+          getCardActions nor onCardAction, which is what puts DeckViewer
+          into its plain, hover-for-CardDisplay-only mode: this is purely
+          for the player to check what's in the stack, not to act on any
+          of it directly (see the requirement this was built against). */}
+      {viewingStackIndex !== null && (
+        <DeckViewer
+          cards={(() => {
+            const placed = playerMonsterZones[viewingStackIndex];
+            if (!placed) return [];
+            // Top card first (the most relevant, currently-active one),
+            // then whatever's buried, shallowest first — reversed from
+            // stackedBelow's own bottom-to-top storage order, since that
+            // reads better for a player just checking what's inside.
+            return [
+              { instanceId: placed.instanceId, card: placed.card },
+              ...[...(placed.stackedBelow ?? [])].reverse(),
+            ];
+          })()}
+          onClose={() => setViewingStackIndex(null)}
+          onCardHover={handleCardHover}
+          onCardHoverEnd={handleCardHoverEnd}
         />
       )}
 

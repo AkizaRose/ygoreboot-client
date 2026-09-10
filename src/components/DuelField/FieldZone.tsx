@@ -136,6 +136,12 @@ interface FieldZoneProps {
   stackOffsetStepY?: number;
   stackMaxLayers?: number;
   onClick?: () => void;
+  // Purely visual — a highlighted border indicating this zone is
+  // currently chosen as part of some in-progress multi-select
+  // interaction (e.g. Fusion Summon material selection). Independent of
+  // onClick itself; a zone can be clickable without being selected, or
+  // (in principle) selected without being clickable.
+  selected?: boolean;
   // Only relevant when `card` is present — reports the real card
   // regardless of faceDown, so Card Display can reveal it even though
   // the field itself shows a card back. Never fires for pile content
@@ -155,6 +161,16 @@ interface FieldZoneProps {
   // the actual card -90° to align with the overlay above; 'attack' (or
   // omitted) renders it upright, unrotated.
   battlePosition?: 'attack' | 'defense';
+  // Same idea as battlePosition, but for the stackCards branch — a
+  // Monster Zone Fusion stack needs every layer to share one PERSISTENT
+  // rotation (the whole stack is in Attack or Defense Position, not each
+  // card individually), unlike Grave/Banished's use of stackCards, where
+  // rotation is only ever a one-time entry effect settling back to 0.
+  // Undefined for Grave/Banished (they never pass this), which is what
+  // keeps their own stacking behavior exactly as it was.  Also gates the
+  // ATK/DEF stats overlay, shown only for the top-most layer, only when
+  // this is provided — Grave/Banished stacks never show one.
+  stackBattlePosition?: 'attack' | 'defense';
   // True only for the one render immediately after this card arrives
   // here from a face-down source (e.g. Special Summoning straight from
   // the Main/Extra Deck) — plays the same flip-reveal "unfurl" effect
@@ -190,12 +206,14 @@ function FieldZone({
   stackOffsetStepY = 2,
   stackMaxLayers = 4,
   onClick,
+  selected = false,
   onCardHover,
   onCardHoverEnd,
   menuActions,
   onMenuAction,
   showRotatedOverlay = false,
   battlePosition = 'attack',
+  stackBattlePosition,
   entryFlip,
 }: FieldZoneProps) {
   const [showMenu, setShowMenu] = useState(false);
@@ -278,7 +296,13 @@ function FieldZone({
 
   return (
     <div
-      className={onClick ? 'FieldZone FieldZone--clickable' : 'FieldZone'}
+      className={[
+        'FieldZone',
+        onClick && 'FieldZone--clickable',
+        selected && 'FieldZone--selected',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       onClick={onClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -320,50 +344,87 @@ function FieldZone({
       )}
       {stackCards && stackCards.length > 0 ? (
         <>
-          {stackCards.map((entry, j) => (
-            <motion.div
-              key={entry.instanceId}
-              layoutId={entry.instanceId}
-              transition={{ duration: 0.3, ease: 'easeInOut' }}
-              className="FieldZone-cardOuter"
-              style={{
-                width: ZONE_WIDTH,
-                height: ZONE_HEIGHT,
-                // x/y are framer-motion's own tracked values (not a raw
-                // CSS transform string), so they compose correctly with
-                // the layoutId-driven layout animation on this same
-                // element rather than fighting it — same reasoning as
-                // the Hand hover-lift effect.
-                x: j * stackOffsetStepX,
-                y: j * stackOffsetStepY,
-              }}
-            >
+          {stackCards.map((entry, j) => {
+            const isTopLayer = j === stackCards.length - 1;
+            return (
               <motion.div
-                className="FieldZone-cardRotation"
-                initial={{ rotate: stackCardEntryRotations?.[entry.instanceId] ?? 0 }}
-                animate={{ rotate: 0 }}
+                key={entry.instanceId}
+                layoutId={entry.instanceId}
                 transition={{ duration: 0.3, ease: 'easeInOut' }}
+                className="FieldZone-cardOuter"
+                style={{
+                  width: ZONE_WIDTH,
+                  height: ZONE_HEIGHT,
+                  // x/y are framer-motion's own tracked values (not a raw
+                  // CSS transform string), so they compose correctly with
+                  // the layoutId-driven layout animation on this same
+                  // element rather than fighting it — same reasoning as
+                  // the Hand hover-lift effect.
+                  x: j * stackOffsetStepX,
+                  y: j * stackOffsetStepY,
+                }}
               >
                 <motion.div
-                  className="FieldZone-flipReveal"
-                  initial={{ scaleX: stackCardEntryFlips?.[entry.instanceId] ? 0 : 1 }}
-                  animate={{ scaleX: 1 }}
+                  className="FieldZone-cardRotation"
+                  initial={{ rotate: stackCardEntryRotations?.[entry.instanceId] ?? 0 }}
+                  animate={{
+                    // stackBattlePosition (Monster Zone stacks) is a
+                    // PERSISTENT rotation shared by the whole stack, not
+                    // a one-time entry effect settling back to upright —
+                    // undefined (Grave/Banished, which never pass it)
+                    // keeps their existing "always ends up at 0" behavior
+                    // exactly as it was.
+                    rotate: stackBattlePosition === 'defense' ? -90 : 0,
+                  }}
                   transition={{ duration: 0.3, ease: 'easeInOut' }}
                 >
-                  <div
-                    className="FieldZone-cardWrapper"
-                    style={{
-                      width: CARD_WIDTH,
-                      height: CARD_HEIGHT,
-                      transform: `scale(${CARD_SCALE})`,
-                    }}
+                  <motion.div
+                    className="FieldZone-flipReveal"
+                    initial={{ scaleX: stackCardEntryFlips?.[entry.instanceId] ? 0 : 1 }}
+                    animate={{ scaleX: 1 }}
+                    transition={{ duration: 0.3, ease: 'easeInOut' }}
                   >
-                    <CardImage card={entry.card} />
-                  </div>
+                    <div
+                      className="FieldZone-cardWrapper"
+                      style={{
+                        width: CARD_WIDTH,
+                        height: CARD_HEIGHT,
+                        transform: `scale(${CARD_SCALE})`,
+                      }}
+                    >
+                      <CardImage card={entry.card} />
+                    </div>
+                  </motion.div>
                 </motion.div>
+                {isTopLayer &&
+                  stackBattlePosition &&
+                  entry.card.cardClass === 'Monster' &&
+                  (entry.card.atk || entry.card.def) && (
+                    <div className="FieldZone-statsOverlay">
+                      <span
+                        className={
+                          stackBattlePosition === 'defense'
+                            ? 'FieldZone-statsOverlay--dimmed'
+                            : undefined
+                        }
+                      >
+                        {entry.card.atk ?? '?'}
+                      </span>
+                      /
+                      <span
+                        className={
+                          stackBattlePosition !== 'defense'
+                            ? 'FieldZone-statsOverlay--dimmed'
+                            : undefined
+                        }
+                      >
+                        {entry.card.def ?? '?'}
+                      </span>
+                    </div>
+                  )}
               </motion.div>
-            </motion.div>
-          ))}
+            );
+          })}
         </>
       ) : card && !faceDown ? (
         <>

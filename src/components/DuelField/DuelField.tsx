@@ -61,6 +61,7 @@ function getPlacedCardActions(card: CardData | undefined, faceDown: boolean): Fi
 // isn't meant to be randomized. Grave/Banished also stay view-only.
 const VIEW_ACTION: FieldZoneAction = { key: 'view', label: 'View' };
 const VIEW_ONLY_ACTIONS: FieldZoneAction[] = [VIEW_ACTION];
+
 const MAIN_DECK_ACTIONS: FieldZoneAction[] = [
   VIEW_ACTION,
   { key: 'shuffle', label: 'Shuffle' },
@@ -86,6 +87,14 @@ const EXTRA_DECK_STACK_MAX_LAYERS = 10;
 const GRAVE_STACK_OFFSET_STEP_X = 0.25;
 const GRAVE_STACK_OFFSET_STEP_Y = 0.25;
 const GRAVE_STACK_MAX_LAYERS = 50;
+
+// Deliberately more visible than Grave/Banished's near-flat offset — a
+// Fusion stack is realistically only ever a handful of cards deep, so a
+// subtler offset (fine for piles that can grow into the dozens) would
+// barely read as "there's more than one card here" at that scale.
+const MONSTER_STACK_OFFSET_STEP_X = 1.5;
+const MONSTER_STACK_OFFSET_STEP_Y = 1.5;
+const MONSTER_STACK_MAX_LAYERS = 6;
 const BANISHED_STACK_OFFSET_STEP_X = 0.25;
 const BANISHED_STACK_OFFSET_STEP_Y = 0.25;
 const BANISHED_STACK_MAX_LAYERS = 50;
@@ -205,6 +214,23 @@ interface PlayerFieldProps {
   onViewExtraDeck?: () => void;
   onViewGrave?: () => void;
   onViewBanished?: () => void;
+  // True while a Fusion Summon's material-selection step is in progress
+  // (see DuelFieldPage's pendingFusionSummon) — while set, Monster Zone
+  // hover menus are suppressed here in favor of a direct, multi-select
+  // "click monsters to use as Fusion Material" interaction: every
+  // OCCUPIED Monster Zone slot becomes clickable via
+  // onToggleMaterialSelection instead, toggling that slot in or out of
+  // selectedMaterialIndices rather than acting on it directly.
+  isSelectingFusionMaterial?: boolean;
+  selectedMaterialIndices?: number[];
+  onToggleMaterialSelection?: (index: number) => void;
+  // Same idea, for Evolution Summon (see DuelFieldPage's
+  // pendingEvolutionSummon) — but single-select: exactly one material is
+  // ever needed, so a click on it completes the selection immediately
+  // via onSelectEvolutionMaterial rather than accumulating into a list
+  // the player then has to separately confirm.
+  isSelectingEvolutionMaterial?: boolean;
+  onSelectEvolutionMaterial?: (index: number) => void;
 }
 
 function PlayerField({
@@ -241,6 +267,11 @@ function PlayerField({
   onViewExtraDeck,
   onViewGrave,
   onViewBanished,
+  isSelectingFusionMaterial = false,
+  selectedMaterialIndices = [],
+  onToggleMaterialSelection,
+  isSelectingEvolutionMaterial = false,
+  onSelectEvolutionMaterial,
 }: PlayerFieldProps) {
   const fieldZones = flipped ? [...FIELD_ZONES].reverse() : FIELD_ZONES;
   const deckZones = flipped ? [...DECK_ZONES].reverse() : DECK_ZONES;
@@ -314,27 +345,71 @@ function PlayerField({
             placed && !placed.faceDown && placed.position !== 'defense' && isBattlePhase
               ? [{ key: 'attack', label: 'Attack' }]
               : [];
+          // Only for genuine stacks (created via Fusion Summon) — a lone
+          // monster has nothing extra for View to reveal.
+          const viewStackAction: FieldZoneAction[] =
+            placed?.stackedBelow && placed.stackedBelow.length > 0 ? [VIEW_ACTION] : [];
+
+          // Everything buried beneath the active top card, oldest
+          // (deepest) first, with the top card itself appended last —
+          // matches Grave/Banished's own stackCards convention exactly
+          // (last entry is the actual top of the pile), so the same
+          // rendering path already built for those is reused here
+          // unchanged, just with a persistent battle-position rotation
+          // layered on via stackBattlePosition below (see FieldZone).
+          const stackCards: CardInstance[] | undefined =
+            placed?.stackedBelow && placed.stackedBelow.length > 0
+              ? [...placed.stackedBelow, { instanceId: placed.instanceId, card: placed.card }]
+              : undefined;
+
+          // Either material-selection mode suppresses the normal hover
+          // menu the same way — they're mutually exclusive in practice
+          // (DuelFieldPage never has both pending at once), but combining
+          // the check here means this zone doesn't care which one it is,
+          // only whether some selection is in progress at all.
+          const isSelectingMaterial = isSelectingFusionMaterial || isSelectingEvolutionMaterial;
+
           return (
             <FieldZone
               key={i}
               label={zone.label}
               card={placed?.card}
               instanceId={placed?.instanceId}
+              stackCards={stackCards}
+              stackCardEntryRotations={fieldZoneEntryRotations}
+              stackCardEntryFlips={fieldZoneEntryFlips}
+              stackOffsetStepX={MONSTER_STACK_OFFSET_STEP_X}
+              stackOffsetStepY={MONSTER_STACK_OFFSET_STEP_Y}
+              stackMaxLayers={MONSTER_STACK_MAX_LAYERS}
               faceDown={placed?.faceDown}
               battlePosition={placed?.position}
+              stackBattlePosition={stackCards ? (placed?.position ?? 'attack') : undefined}
               entryFlip={placed ? fieldZoneEntryFlips?.[placed.instanceId] : undefined}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
-              menuActions={[
-                ...attackAction,
-                ...getPlacedCardActions(placed?.card, placed?.faceDown ?? false),
-                ...positionAction,
-              ]}
+              menuActions={
+                isSelectingMaterial
+                  ? []
+                  : [
+                      ...attackAction,
+                      ...viewStackAction,
+                      ...getPlacedCardActions(placed?.card, placed?.faceDown ?? false),
+                      ...positionAction,
+                    ]
+              }
               onMenuAction={
-                placed && onFieldAction
+                placed && onFieldAction && !isSelectingMaterial
                   ? (actionKey) => onFieldAction('monster', slotIndex, actionKey)
                   : undefined
               }
+              onClick={
+                isSelectingFusionMaterial && placed && onToggleMaterialSelection
+                  ? () => onToggleMaterialSelection(slotIndex)
+                  : isSelectingEvolutionMaterial && placed && onSelectEvolutionMaterial
+                    ? () => onSelectEvolutionMaterial(slotIndex)
+                    : undefined
+              }
+              selected={isSelectingFusionMaterial && selectedMaterialIndices.includes(slotIndex)}
               showRotatedOverlay
             />
           );
@@ -520,6 +595,11 @@ interface DuelFieldProps {
   onViewExtraDeck?: () => void;
   onViewGrave?: () => void;
   onViewBanished?: () => void;
+  isSelectingFusionMaterial?: boolean;
+  selectedMaterialIndices?: number[];
+  onToggleMaterialSelection?: (index: number) => void;
+  isSelectingEvolutionMaterial?: boolean;
+  onSelectEvolutionMaterial?: (index: number) => void;
 }
 
 function DuelField({
@@ -555,6 +635,11 @@ function DuelField({
   onViewExtraDeck,
   onViewGrave,
   onViewBanished,
+  isSelectingFusionMaterial,
+  selectedMaterialIndices,
+  onToggleMaterialSelection,
+  isSelectingEvolutionMaterial,
+  onSelectEvolutionMaterial,
 }: DuelFieldProps) {
   return (
     <div className="DuelField">
@@ -591,6 +676,11 @@ function DuelField({
         onFieldAction={onFieldAction}
         onMainDeckAction={onMainDeckAction}
         onViewExtraDeck={onViewExtraDeck}
+        isSelectingFusionMaterial={isSelectingFusionMaterial}
+        selectedMaterialIndices={selectedMaterialIndices}
+        onToggleMaterialSelection={onToggleMaterialSelection}
+        isSelectingEvolutionMaterial={isSelectingEvolutionMaterial}
+        onSelectEvolutionMaterial={onSelectEvolutionMaterial}
         onViewGrave={onViewGrave}
         onViewBanished={onViewBanished}
       />
