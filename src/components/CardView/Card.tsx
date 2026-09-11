@@ -62,9 +62,32 @@ function Card({ card }: CardProps) {
   useLayoutEffect(() => {
     const el = nameRef.current;
     if (!el) return;
-    el.style.transform = 'none'; // reset so scrollWidth reflects natural width
-    const naturalWidth = el.scrollWidth;
-    setNameScaleX(naturalWidth > NAME_MAX_WIDTH ? NAME_MAX_WIDTH / naturalWidth : 1);
+
+    const measure = () => {
+      el.style.transform = 'none'; // reset so scrollWidth reflects natural width
+      const naturalWidth = el.scrollWidth;
+      setNameScaleX(naturalWidth > NAME_MAX_WIDTH ? NAME_MAX_WIDTH / naturalWidth : 1);
+    };
+
+    measure();
+
+    // document.fonts.ready can resolve AFTER this first measurement —
+    // e.g. a cold page load where MatrixRegularSmallCaps' font file is
+    // still downloading when this effect first runs. That measurement
+    // would have been taken against whatever fallback font was showing
+    // at the time, with different character widths than the real one,
+    // so the resulting scale would stay wrong for this mount unless
+    // something re-measures once the actual font is ready. This mirrors
+    // the same fix already applied to the card rasterization pipeline
+    // (see useRasterizedCard.ts) for the same underlying reason.
+    let cancelled = false;
+    document.fonts.ready.then(() => {
+      if (!cancelled) measure();
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [card.name]);
 
   // Rendered as separate spans (bracket / separator / text) rather than a

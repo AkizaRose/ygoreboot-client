@@ -43,27 +43,48 @@ export function useAutoFitText<T extends HTMLElement>(
     const el = ref.current;
     if (!el) return;
 
-    let size = maxFontSize;
-    let leading = maxLineHeight;
-    el.style.fontSize = `${size}px`;
-    el.style.lineHeight = `${leading}`;
-
-    const overflowing = () => el.scrollHeight > el.clientHeight;
-
-    // Phase 1: tighten line spacing, font-size untouched.
-    while (overflowing() && leading > minLineHeight) {
-      leading = Math.max(minLineHeight, leading - lineHeightStep);
-      el.style.lineHeight = `${leading}`;
-    }
-
-    // Phase 2: line-height is already at its floor — now shrink font-size.
-    while (overflowing() && size > minFontSize) {
-      size = Math.max(minFontSize, size - fontSizeStep);
+    const fit = () => {
+      let size = maxFontSize;
+      let leading = maxLineHeight;
       el.style.fontSize = `${size}px`;
-    }
+      el.style.lineHeight = `${leading}`;
 
-    setFontSize(size);
-    setLineHeight(leading);
+      const overflowing = () => el.scrollHeight > el.clientHeight;
+
+      // Phase 1: tighten line spacing, font-size untouched.
+      while (overflowing() && leading > minLineHeight) {
+        leading = Math.max(minLineHeight, leading - lineHeightStep);
+        el.style.lineHeight = `${leading}`;
+      }
+
+      // Phase 2: line-height is already at its floor — now shrink font-size.
+      while (overflowing() && size > minFontSize) {
+        size = Math.max(minFontSize, size - fontSizeStep);
+        el.style.fontSize = `${size}px`;
+      }
+
+      setFontSize(size);
+      setLineHeight(leading);
+    };
+
+    fit();
+
+    // document.fonts.ready can resolve AFTER this first fit — e.g. a
+    // cold page load where the actual font file is still downloading
+    // when this effect first runs. That fit would have measured
+    // overflow against whatever fallback font was showing at the time,
+    // with different character widths/line metrics than the real one,
+    // so the result would stay wrong for this mount unless something
+    // re-fits once the real font is ready. Same fix, same reasoning, as
+    // Card.tsx's own name squash-to-fit logic.
+    let cancelled = false;
+    document.fonts.ready.then(() => {
+      if (!cancelled) fit();
+    });
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 

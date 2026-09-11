@@ -19,6 +19,61 @@
   font-display: swap;
   }
 
+/* These four had NO @font-face declaration at all until now — they only
+   ever rendered correctly when the browser happened to already have
+   them installed as SYSTEM fonts. That's true in normal Firefox on a
+   machine that's had them manually installed (e.g. during development),
+   but Chromium and Firefox Private Browsing both restrict a page's
+   access to arbitrary locally-installed fonts — specifically to prevent
+   a site from using someone's installed-font list to fingerprint them —
+   so neither of those ever loads the intended font at all; they fall
+   straight back to a generic default. That's the same underlying cause
+   behind BOTH symptoms this was reported as: the general site's fonts
+   reverting to default (Yu-Gi-Oh!ITCStoneSerifSmallCaps, used
+   throughout), and the card name squash-to-fit logic in Card.tsx
+   measuring against the wrong font's character widths
+   (MatrixRegularSmallCaps).
+ 
+   IMPORTANT — this alone doesn't finish the fix: the four src urls below
+   assume font files placed at those exact paths in src/assets/fonts/,
+   which aren't something that can be created or sourced without the
+   actual typefaces — they still need to be copied in from wherever they
+   were originally installed from. Filenames/formats here are a
+   reasonable guess (matching the two .otf files already bundled above);
+   adjust the extension/format below if the actual files turn out to be
+   .ttf or .woff instead. */
+@font-face {
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  src: url('./assets/fonts/Yu-Gi-Oh! ITC Stone Serif Small Caps Bold.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'MatrixRegularSmallCaps';
+  src: url('./assets/fonts/Matrix Regular Small Caps.TTF') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Yu-Gi-Oh! Matrix Book';
+  src: url('./assets/fonts/Yu-Gi-Oh! Matrix Book.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Yu-Gi-Oh! StoneSerif LT';
+  src: url('./assets/fonts/Yu-Gi-Oh! ITC Stone Serif LT Italic.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --text: #bcbcbc;
   --text-h: #08060d;
