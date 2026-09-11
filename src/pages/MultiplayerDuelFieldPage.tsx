@@ -174,11 +174,6 @@ function MultiplayerDuelFieldPage() {
   // updater returning the exact same `current` it was given, e.g. a
   // guard failing to find the card in question) skips the write
   // entirely rather than sending an unnecessary no-op update.
-  //
-  // Card animations (entry rotations, flip-reveals, and all the rest)
-  // have been removed from the app entirely for now — see FieldZone.tsx
-  // and Hand.tsx for where that used to live — so there's nothing left
-  // here to synchronize local, per-client animation state for.
   const applyMeUpdate = async (updater: (current: MyDuelState) => MyDuelState) => {
     if (!duelId || !currentUser || !me || !state.role) return;
     const next = updater(me);
