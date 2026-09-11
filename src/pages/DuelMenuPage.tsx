@@ -13,11 +13,6 @@ function DuelMenuPage() {
   const { isHosting, startHosting, stopHosting, joinHost } = useDuelHosting();
   const [hostError, setHostError] = useState<string | null>(null);
 
-  const handleSoloMode = () => {
-    if (!selectedDeckId) return;
-    navigate(`/duel/solo/${selectedDeckId}`);
-  };
-
   const handleHostToggle = async () => {
     if (!isHosting && !selectedDeckId) return;
     setHostError(null);
@@ -50,14 +45,6 @@ function DuelMenuPage() {
         </select>
 
         <nav className="NavMenu-nav">
-          <button
-            type="button"
-            className="NavMenu-button"
-            onClick={handleSoloMode}
-            disabled={!selectedDeckId}
-          >
-            Solo Mode
-          </button>
           <button
             type="button"
             className="NavMenu-button"

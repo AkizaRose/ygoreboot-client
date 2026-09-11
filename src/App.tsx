@@ -5,7 +5,6 @@ import CardPrewarmGate from './components/CardView/CardPrewarmGate';
 import AuthPage from './pages/AuthPage';
 import LandingPage from './pages/LandingPage';
 import DuelMenuPage from './pages/DuelMenuPage';
-import DuelFieldPage from './pages/DuelFieldPage';
 import MultiplayerDuelFieldPage from './pages/MultiplayerDuelFieldPage';
 import DeckBuilderPage from './pages/DeckBuilderPage';
 import AccountPage from './pages/AccountPage';
@@ -32,16 +31,6 @@ function App() {
               <ProtectedRoute>
                 <CardPrewarmGate>
                   <DuelMenuPage />
-                </CardPrewarmGate>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/duel/solo/:deckId"
-            element={
-              <ProtectedRoute>
-                <CardPrewarmGate>
-                  <DuelFieldPage />
                 </CardPrewarmGate>
               </ProtectedRoute>
             }

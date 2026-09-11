@@ -1,8 +1,8 @@
 /* position: relative (not the page-anchoring absolute this used to be —
-   that now lives on the wrapping .DuelFieldPage-playerHud in
-   DuelFieldPage) is still needed here: it's what makes this the
-   containing block .LifePointCounter-popover's own bottom:100% actually
-   anchors against. */
+   that now lives on the wrapping .MultiplayerDuelFieldPage-playerHud) is
+   still needed here: it's what makes this the containing block
+   .LifePointCounter-popover's own bottom:100% actually anchors
+   against. */
 .LifePointCounter {
   position: relative;
 }

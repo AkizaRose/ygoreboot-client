@@ -29,9 +29,8 @@ interface MultiplayerDuelLocationState {
   myDeckId?: string;
 }
 
-// Matches solo mode's own zone priority (center, right, left) exactly —
-// duplicated rather than imported, since it's a tiny, stable helper and
-// solo mode's own copy isn't exported for reuse.
+// Center zone first, then right, then left — the natural order a player
+// scans a 3-slot row in.
 const ZONE_PRIORITY_ORDER = [1, 2, 0];
 function findEmptyZoneSlot(zones: (PlacedCard | null)[]): number {
   for (const index of ZONE_PRIORITY_ORDER) {
@@ -55,13 +54,11 @@ const OPPONENT_HAND_MAX_WIDTH =
   OPPONENT_HAND_MAX_VISIBLE_CARDS * OPPONENT_HAND_CARD_WIDTH +
   (OPPONENT_HAND_MAX_VISIBLE_CARDS - 1) * OPPONENT_HAND_GAP;
 
-// Matches DuelFieldPage's (solo mode) own HOVER_DELAY_MS exactly, for
-// the same Card Display behavior across both: a brief delay before
-// showing a newly-hovered card (so quickly passing the cursor over
-// several cards doesn't flash through all of them), and — see
-// handleCardHoverEnd below — no clearing at all when the cursor leaves,
-// so whatever's currently shown stays displayed until a different card
-// is deliberately hovered next, rather than disappearing.
+// A brief delay before showing a newly-hovered card (so quickly passing
+// the cursor over several cards doesn't flash through all of them), and
+// — see handleCardHoverEnd below — no clearing at all when the cursor
+// leaves, so whatever's currently shown stays displayed until a
+// different card is deliberately hovered next, rather than disappearing.
 const HOVER_DELAY_MS = 100;
 
 // Still not wired up in this pass: Fusion/Evolution Summon, and any
@@ -103,65 +100,6 @@ function MultiplayerDuelFieldPage() {
   );
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
-  // Local-only, per-client animation hints — NOT part of the shared
-  // duel document applyMeUpdate writes, same as solo mode's own
-  // identically-named state. Being added incrementally, one animation
-  // at a time, rather than all at once (see handleFieldAction below for
-  // the first one: Defense Position monsters departing to Grave/
-  // Banished).
-  const [fieldZoneEntryRotations, setFieldZoneEntryRotations] = useState<Record<string, number>>(
-    {},
-  );
-  // Same purpose, opponent's side — but there's no handleFieldAction
-  // call to hook into here, since the opponent's own departure happens
-  // on THEIR client, not this one. This client only ever sees it as an
-  // already-completed change in the synced opponent state (a Monster
-  // Zone slot that was occupied becoming empty), so the only way to
-  // know a departure just happened — and whether it was in Defense
-  // Position — is to compare each incoming snapshot against the
-  // previous one and infer it, via the effect below.
-  const [opponentFieldZoneEntryRotations, setOpponentFieldZoneEntryRotations] = useState<
-    Record<string, number>
-  >({});
-  const prevOpponentMonsterZonesRef = useRef<(PlacedCard | null)[] | null>(null);
-
-  useEffect(() => {
-    if (!opponent) return;
-    const prevZones = prevOpponentMonsterZonesRef.current;
-    prevOpponentMonsterZonesRef.current = opponent.monsterZones;
-    if (!prevZones) return; // first snapshot — nothing to compare against yet
-
-    const stillPresentIds = new Set(
-      opponent.monsterZones
-        .filter((placed): placed is PlacedCard => placed !== null)
-        .map((placed) => placed.instanceId),
-    );
-    // Only Defense Position departures need a hint at all — an Attack
-    // Position departure already starts at rotation 0 by default, same
-    // as handleFieldAction's own version of this logic.
-    const departedDefenders = prevZones.filter(
-      (placed): placed is PlacedCard =>
-        placed !== null && placed.position === 'defense' && !stillPresentIds.has(placed.instanceId),
-    );
-    if (departedDefenders.length === 0) return;
-
-    setOpponentFieldZoneEntryRotations((prev) => {
-      const next = { ...prev };
-      for (const departed of departedDefenders) {
-        next[departed.instanceId] = -90;
-        // Anything buried beneath it shared the same rotation the whole
-        // time it was buried — same reasoning as handleFieldAction's
-        // own buried-cards handling.
-        if (departed.stackedBelow) {
-          for (const buried of departed.stackedBelow) {
-            next[buried.instanceId] = -90;
-          }
-        }
-      }
-      return next;
-    });
-  }, [opponent]);
-
   const hoverTimeoutRef = useRef<number | undefined>(undefined);
   const [viewingOwnPile, setViewingOwnPile] = useState<
     'main' | 'grave' | 'banished' | 'extra' | null
@@ -184,12 +122,12 @@ function MultiplayerDuelFieldPage() {
     source: 'hand' | 'main' | 'extra' | 'grave' | 'banished';
   } | null>(null);
 
-  // Fusion Summon material-selection step — mirrors solo mode's
-  // pendingFusionSummon exactly (multi-select, ordered by selection
-  // sequence, confirmed explicitly rather than completing on a single
-  // click). Once confirmed, the selection itself is done and all that's
-  // left is choosing a Battle Position — tracked separately below, since
-  // by that point this state has nothing further to contribute.
+  // Fusion Summon material-selection step: multi-select, ordered by
+  // selection sequence, confirmed explicitly rather than completing on a
+  // single click. Once confirmed, the selection itself is done and all
+  // that's left is choosing a Battle Position — tracked separately
+  // below, since by that point this state has nothing further to
+  // contribute.
   const [pendingFusionSummon, setPendingFusionSummon] = useState<{
     extraDeckInstance: CardInstance;
     selectedIndices: number[];
@@ -220,9 +158,8 @@ function MultiplayerDuelFieldPage() {
   // Deliberately does NOT reset hoveredCard to null — only cancels a
   // not-yet-fired delayed hover (see handleCardHover above). Whatever's
   // already showing stays showing until a different card is
-  // deliberately hovered next, matching Solo Mode/Deck Builder's own
-  // Card Display behavior, rather than disappearing the moment the
-  // cursor leaves.
+  // deliberately hovered next, matching Deck Builder's own Card Display
+  // behavior, rather than disappearing the moment the cursor leaves.
   const handleCardHoverEnd = useCallback(() => {
     if (hoverTimeoutRef.current !== undefined) {
       window.clearTimeout(hoverTimeoutRef.current);
@@ -238,17 +175,10 @@ function MultiplayerDuelFieldPage() {
   // guard failing to find the card in question) skips the write
   // entirely rather than sending an unnecessary no-op update.
   //
-  // Deliberately still omits MOST of solo mode's per-card entry-
-  // animation hints (handEntryFlips, deckEntryFlips, etc.) — those are
-  // purely cosmetic (which way a card visually unrotates or unfurls as
-  // it arrives somewhere), not part of the shared duel state at all in
-  // this design, and wiring up every one of them for multiplayer would
-  // mean synchronizing local, per-client animation state on top of
-  // everything else here. fieldZoneEntryRotations is the first
-  // exception (see handleFieldAction below), being added incrementally,
-  // one animation at a time, rather than all at once. Cards still move
-  // correctly, they just don't get that extra polish yet for anything
-  // beyond this first case.
+  // Card animations (entry rotations, flip-reveals, and all the rest)
+  // have been removed from the app entirely for now — see FieldZone.tsx
+  // and Hand.tsx for where that used to live — so there's nothing left
+  // here to synchronize local, per-client animation state for.
   const applyMeUpdate = async (updater: (current: MyDuelState) => MyDuelState) => {
     if (!duelId || !currentUser || !me || !state.role) return;
     const next = updater(me);
@@ -336,7 +266,7 @@ function MultiplayerDuelFieldPage() {
         ...prev,
         // Selection order is preserved (not re-sorted to slot order) —
         // it's what determines the resulting stack's bottom-to-top
-        // order once summoned, same as solo mode.
+        // order once summoned.
         selectedIndices: alreadySelected
           ? prev.selectedIndices.filter((i) => i !== index)
           : [...prev.selectedIndices, index],
@@ -367,7 +297,7 @@ function MultiplayerDuelFieldPage() {
       // too — checking findEmptyZoneSlot against the CURRENT zones
       // (still occupied by the materials) would wrongly report no room
       // in the common case where the selected materials fill every
-      // zone. Same fix as solo mode's own Fusion Summon needed.
+      // zone.
       const zonesAfterMaterialRemoval = [...current.monsterZones];
       for (const idx of selectedIndices) zonesAfterMaterialRemoval[idx] = null;
       const emptySlot = findEmptyZoneSlot(zonesAfterMaterialRemoval);
@@ -375,8 +305,7 @@ function MultiplayerDuelFieldPage() {
 
       // Every selected material's WHOLE stack — its own top card plus
       // anything already buried beneath it — becomes buried beneath the
-      // newly arriving Fusion Monster, in selection order. Same as solo
-      // mode's own materialCards construction.
+      // newly arriving Fusion Monster, in selection order.
       const materialCards: CardInstance[] = [];
       for (const idx of selectedIndices) {
         const material = current.monsterZones[idx];
@@ -445,8 +374,7 @@ function MultiplayerDuelFieldPage() {
   };
 
   // Shared by Activate and Set — both place a card into the first
-  // available Spell/Trap Zone, differing only in faceDown. Mirrors solo
-  // mode's own placeInSpellTrapZone exactly.
+  // available Spell/Trap Zone, differing only in faceDown.
   const placeInSpellTrapZone = (instanceId: string, faceDown: boolean) =>
     applyMeUpdate((current) => {
       const instance = current.hand.find((i) => i.instanceId === instanceId);
@@ -462,8 +390,7 @@ function MultiplayerDuelFieldPage() {
     });
 
   // Field Spells go to the single Field Zone instead — activating a new
-  // one while one's already there sends the old one to Grave first,
-  // matching solo mode's placeInFieldZone.
+  // one while one's already there sends the old one to Grave first.
   const placeInFieldZone = (instanceId: string, faceDown: boolean) =>
     applyMeUpdate((current) => {
       const instance = current.hand.find((i) => i.instanceId === instanceId);
@@ -542,15 +469,15 @@ function MultiplayerDuelFieldPage() {
 
   // --- Field actions ---
 
-  // Mirrors solo mode's handleFieldAction exactly, just operating on one
-  // combined MyDuelState object per write instead of several separate
-  // setState calls.
+  // Every card-departure/state-change action for Monster/Spell-Trap/
+  // Field Zone cards, all funneled through one combined MyDuelState
+  // write per action rather than several separate setState calls.
   const handleFieldAction = (
     zoneType: 'monster' | 'spellTrap' | 'field',
     index: number,
     actionKey: string,
   ) => {
-    if (actionKey === 'attack') return; // no combat system yet, same as solo mode
+    if (actionKey === 'attack') return; // no combat system yet
 
     if (actionKey === 'view') {
       if (zoneType === 'monster') setViewingOwnStackIndex(index);
@@ -605,39 +532,6 @@ function MultiplayerDuelFieldPage() {
       return;
     }
 
-    // Read from `me` (the outer closure), not from inside
-    // applyMeUpdate's own updater below — these hints are purely local,
-    // per-client animation state, not part of what gets written to the
-    // shared duel document, same pattern already used for Fusion/
-    // Evolution Summon's own entry-rotation hints elsewhere in this
-    // file. Solo mode sets this for any Monster Zone card departing to
-    // Grave/Banished (so it visibly unrotates from Defense Position on
-    // arrival, rather than snapping to upright first) — multiplayer
-    // never set it at all until now.
-    if (zoneType === 'monster' && (actionKey === 'toGrave' || actionKey === 'banish')) {
-      const departing = me?.monsterZones[index];
-      if (departing) {
-        setFieldZoneEntryRotations((prev) => ({
-          ...prev,
-          [departing.instanceId]: departing.position === 'defense' ? -90 : 0,
-        }));
-        // Anything already buried beneath it was rendered at the
-        // stack's one shared rotation the whole time it was buried —
-        // same reasoning as the stale-rotation fix this mirrors — so it
-        // needs the same hint, not the top card's alone.
-        if (departing.stackedBelow && departing.stackedBelow.length > 0) {
-          const buriedRotation = departing.position === 'defense' ? -90 : 0;
-          setFieldZoneEntryRotations((prev) => {
-            const next = { ...prev };
-            for (const buried of departing.stackedBelow!) {
-              next[buried.instanceId] = buriedRotation;
-            }
-            return next;
-          });
-        }
-      }
-    }
-
     applyMeUpdate((current) => {
       const placed =
         zoneType === 'monster'
@@ -661,7 +555,7 @@ function MultiplayerDuelFieldPage() {
       }
 
       // Buried cards always go to Grave, regardless of the top card's
-      // own destination — same rule as solo mode.
+      // own destination.
       if (placed.stackedBelow && placed.stackedBelow.length > 0) {
         next.grave = [...next.grave, ...placed.stackedBelow];
       }
@@ -1059,8 +953,6 @@ function MultiplayerDuelFieldPage() {
             playerGrave={me.grave}
             playerBanished={me.banished}
             playerFieldZone={me.fieldZone}
-            playerFieldZoneEntryRotations={fieldZoneEntryRotations}
-            opponentFieldZoneEntryRotations={opponentFieldZoneEntryRotations}
             onDrawCard={handleDrawCard}
             onCardHover={handleCardHover}
             onCardHoverEnd={handleCardHoverEnd}
@@ -1071,13 +963,13 @@ function MultiplayerDuelFieldPage() {
               else if (actionKey === 'mill') handleMillTopCard();
               else if (actionKey === 'banishTop') handleBanishTopCard();
               else if (actionKey === 'reset') {
-                // Solo mode's Reset restarts the whole game from
-                // scratch — for two synced players that would mean
-                // either resetting only my own side (leaving the duel
-                // in a broken, mismatched state) or somehow coordinating
-                // both players resetting together, neither of which
-                // this covers yet. Flagged rather than silently doing
-                // the wrong one.
+                // A full "restart the game from scratch" Reset makes
+                // sense for a single player, but for two synced players
+                // that would mean either resetting only my own side
+                // (leaving the duel in a broken, mismatched state) or
+                // somehow coordinating both players resetting together,
+                // neither of which this covers yet. Flagged rather than
+                // silently doing the wrong one.
                 notYetImplemented('Reset');
               }
             }}

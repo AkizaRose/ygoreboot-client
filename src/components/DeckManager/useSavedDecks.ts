@@ -91,10 +91,10 @@ export function useSavedDecks() {
   const { currentUser } = useAuth();
   const [savedDecks, setSavedDecks] = useState<SavedDeck[]>([]);
   // True until the first snapshot for the current user has actually
-  // arrived — consumers that resolve a specific deck by id on mount
-  // (DuelFieldPage's loadDeck, notably) need to wait for this rather
-  // than treating "not loaded yet" the same as "doesn't exist," which
-  // localStorage's synchronous read never had to worry about.
+  // arrived — consumers that resolve a specific deck by id on mount need
+  // to wait for this rather than treating "not loaded yet" the same as
+  // "doesn't exist," which localStorage's synchronous read never had to
+  // worry about.
   const [loading, setLoading] = useState(true);
   const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
 

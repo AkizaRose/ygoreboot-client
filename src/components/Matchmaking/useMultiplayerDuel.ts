@@ -107,7 +107,7 @@ function buildInitialState(
       .map(createCardInstance),
   );
   // Extra Deck order is meaningful (matches the Deck Builder) and is
-  // never shuffled — same rule Solo Mode already follows.
+  // never shuffled.
   const extraInstances = extraIds
     .map((id) => cardById.get(id))
     .filter((card): card is CardData => !!card)

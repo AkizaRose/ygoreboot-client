@@ -6,29 +6,12 @@
      flex-content-driven. */
 }
 
-.Hand-shuffleButton {
-  position: absolute;
-  left: 100%;
-  bottom: 0;
-  margin-left: 12px;
-  font-size: 12px;
-  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
-  padding: 4px 10px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.Hand-shuffleButton:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
 .Hand-cell {
   position: absolute;
   bottom: 0;
 }
 
-.Hand-cardRotation {
+.Hand-cardClip {
   position: relative;
   /* Clips .Hand-cardWrapper's native (pre-scale) 813x1185 footprint,
      which was inflating the whole page's layout even though it renders
@@ -42,12 +25,6 @@
   overflow: hidden;
 }
 
-.Hand-flipReveal {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
 .Hand-cardWrapper {
   transform-origin: top left;
 }
@@ -56,6 +33,7 @@
   position: absolute;
   bottom: 100%;
   left: 50%;
+  transform: translateX(-50%);
   margin-bottom: 4px;
   display: flex;
   flex-direction: column;
