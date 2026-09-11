@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
@@ -103,6 +103,65 @@ function MultiplayerDuelFieldPage() {
   );
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
+  // Local-only, per-client animation hints — NOT part of the shared
+  // duel document applyMeUpdate writes, same as solo mode's own
+  // identically-named state. Being added incrementally, one animation
+  // at a time, rather than all at once (see handleFieldAction below for
+  // the first one: Defense Position monsters departing to Grave/
+  // Banished).
+  const [fieldZoneEntryRotations, setFieldZoneEntryRotations] = useState<Record<string, number>>(
+    {},
+  );
+  // Same purpose, opponent's side — but there's no handleFieldAction
+  // call to hook into here, since the opponent's own departure happens
+  // on THEIR client, not this one. This client only ever sees it as an
+  // already-completed change in the synced opponent state (a Monster
+  // Zone slot that was occupied becoming empty), so the only way to
+  // know a departure just happened — and whether it was in Defense
+  // Position — is to compare each incoming snapshot against the
+  // previous one and infer it, via the effect below.
+  const [opponentFieldZoneEntryRotations, setOpponentFieldZoneEntryRotations] = useState<
+    Record<string, number>
+  >({});
+  const prevOpponentMonsterZonesRef = useRef<(PlacedCard | null)[] | null>(null);
+
+  useEffect(() => {
+    if (!opponent) return;
+    const prevZones = prevOpponentMonsterZonesRef.current;
+    prevOpponentMonsterZonesRef.current = opponent.monsterZones;
+    if (!prevZones) return; // first snapshot — nothing to compare against yet
+
+    const stillPresentIds = new Set(
+      opponent.monsterZones
+        .filter((placed): placed is PlacedCard => placed !== null)
+        .map((placed) => placed.instanceId),
+    );
+    // Only Defense Position departures need a hint at all — an Attack
+    // Position departure already starts at rotation 0 by default, same
+    // as handleFieldAction's own version of this logic.
+    const departedDefenders = prevZones.filter(
+      (placed): placed is PlacedCard =>
+        placed !== null && placed.position === 'defense' && !stillPresentIds.has(placed.instanceId),
+    );
+    if (departedDefenders.length === 0) return;
+
+    setOpponentFieldZoneEntryRotations((prev) => {
+      const next = { ...prev };
+      for (const departed of departedDefenders) {
+        next[departed.instanceId] = -90;
+        // Anything buried beneath it shared the same rotation the whole
+        // time it was buried — same reasoning as handleFieldAction's
+        // own buried-cards handling.
+        if (departed.stackedBelow) {
+          for (const buried of departed.stackedBelow) {
+            next[buried.instanceId] = -90;
+          }
+        }
+      }
+      return next;
+    });
+  }, [opponent]);
+
   const hoverTimeoutRef = useRef<number | undefined>(undefined);
   const [viewingOwnPile, setViewingOwnPile] = useState<
     'main' | 'grave' | 'banished' | 'extra' | null
@@ -179,14 +238,17 @@ function MultiplayerDuelFieldPage() {
   // guard failing to find the card in question) skips the write
   // entirely rather than sending an unnecessary no-op update.
   //
-  // Deliberately omits the per-card entry-animation hints solo mode
-  // tracks (fieldZoneEntryRotations, handEntryFlips, deckEntryFlips,
-  // etc.) — those are purely cosmetic (which way a card visually
-  // unrotates or unfurls as it arrives somewhere), not part of the
-  // shared duel state at all in this design, and wiring them up for
-  // multiplayer would mean synchronizing local, per-client animation
-  // state on top of everything else here. Cards still move correctly,
-  // they just don't get that extra polish yet.
+  // Deliberately still omits MOST of solo mode's per-card entry-
+  // animation hints (handEntryFlips, deckEntryFlips, etc.) — those are
+  // purely cosmetic (which way a card visually unrotates or unfurls as
+  // it arrives somewhere), not part of the shared duel state at all in
+  // this design, and wiring up every one of them for multiplayer would
+  // mean synchronizing local, per-client animation state on top of
+  // everything else here. fieldZoneEntryRotations is the first
+  // exception (see handleFieldAction below), being added incrementally,
+  // one animation at a time, rather than all at once. Cards still move
+  // correctly, they just don't get that extra polish yet for anything
+  // beyond this first case.
   const applyMeUpdate = async (updater: (current: MyDuelState) => MyDuelState) => {
     if (!duelId || !currentUser || !me || !state.role) return;
     const next = updater(me);
@@ -541,6 +603,39 @@ function MultiplayerDuelFieldPage() {
     ) {
       notYetImplemented(`field action: ${actionKey}`);
       return;
+    }
+
+    // Read from `me` (the outer closure), not from inside
+    // applyMeUpdate's own updater below — these hints are purely local,
+    // per-client animation state, not part of what gets written to the
+    // shared duel document, same pattern already used for Fusion/
+    // Evolution Summon's own entry-rotation hints elsewhere in this
+    // file. Solo mode sets this for any Monster Zone card departing to
+    // Grave/Banished (so it visibly unrotates from Defense Position on
+    // arrival, rather than snapping to upright first) — multiplayer
+    // never set it at all until now.
+    if (zoneType === 'monster' && (actionKey === 'toGrave' || actionKey === 'banish')) {
+      const departing = me?.monsterZones[index];
+      if (departing) {
+        setFieldZoneEntryRotations((prev) => ({
+          ...prev,
+          [departing.instanceId]: departing.position === 'defense' ? -90 : 0,
+        }));
+        // Anything already buried beneath it was rendered at the
+        // stack's one shared rotation the whole time it was buried —
+        // same reasoning as the stale-rotation fix this mirrors — so it
+        // needs the same hint, not the top card's alone.
+        if (departing.stackedBelow && departing.stackedBelow.length > 0) {
+          const buriedRotation = departing.position === 'defense' ? -90 : 0;
+          setFieldZoneEntryRotations((prev) => {
+            const next = { ...prev };
+            for (const buried of departing.stackedBelow!) {
+              next[buried.instanceId] = buriedRotation;
+            }
+            return next;
+          });
+        }
+      }
     }
 
     applyMeUpdate((current) => {
@@ -964,6 +1059,8 @@ function MultiplayerDuelFieldPage() {
             playerGrave={me.grave}
             playerBanished={me.banished}
             playerFieldZone={me.fieldZone}
+            playerFieldZoneEntryRotations={fieldZoneEntryRotations}
+            opponentFieldZoneEntryRotations={opponentFieldZoneEntryRotations}
             onDrawCard={handleDrawCard}
             onCardHover={handleCardHover}
             onCardHoverEnd={handleCardHoverEnd}

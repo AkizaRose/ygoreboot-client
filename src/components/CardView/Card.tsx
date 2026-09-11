@@ -71,22 +71,30 @@ function Card({ card }: CardProps) {
 
     measure();
 
-    // document.fonts.ready can resolve AFTER this first measurement —
-    // e.g. a cold page load where MatrixRegularSmallCaps' font file is
-    // still downloading when this effect first runs. That measurement
-    // would have been taken against whatever fallback font was showing
-    // at the time, with different character widths than the real one,
-    // so the resulting scale would stay wrong for this mount unless
-    // something re-measures once the actual font is ready. This mirrors
-    // the same fix already applied to the card rasterization pipeline
-    // (see useRasterizedCard.ts) for the same underlying reason.
-    let cancelled = false;
-    document.fonts.ready.then(() => {
-      if (!cancelled) measure();
-    });
+    // Two earlier attempts here both relied on a PROMISE reflecting
+    // font-loading state at the exact moment it's checked/called
+    // (document.fonts.ready, then document.fonts.load()'s own promise)
+    // — and neither proved reliable, which points at the promise-based
+    // approach itself being the problem, not which specific promise was
+    // used. A useLayoutEffect runs synchronously, before the browser's
+    // first paint — exactly when the browser's own font-loading state is
+    // least predictable to ask about.
+    //
+    // 'loadingdone' sidesteps that entirely: it's a genuine EVENT, fired
+    // whenever the browser actually finishes loading any font, whenever
+    // that genuinely happens — not a promise whose resolution timing
+    // depends on exactly when and how it's checked. Re-measuring every
+    // time it fires, for as long as this card stays mounted, catches
+    // MatrixRegularSmallCaps finishing regardless of the exact timing
+    // that broke both earlier attempts. The explicit load() call below
+    // is kept purely to make sure the fetch actually starts as early as
+    // possible — its own promise just isn't what's driving the
+    // re-measurement anymore.
+    document.fonts.load('92px "MatrixRegularSmallCaps"');
+    document.fonts.addEventListener('loadingdone', measure);
 
     return () => {
-      cancelled = true;
+      document.fonts.removeEventListener('loadingdone', measure);
     };
   }, [card.name]);
 

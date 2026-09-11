@@ -677,6 +677,15 @@ interface DuelFieldProps {
   opponentGrave?: CardInstance[];
   opponentBanished?: CardInstance[];
   opponentFieldZone?: PlacedCard | null;
+  // Same purpose as playerFieldZoneEntryRotations above, just for the
+  // opponent's side — necessarily populated differently by the caller,
+  // though: the player's own side sets this at the moment an action
+  // happens, but the opponent's actions happen entirely on THEIR
+  // client, so this side can only ever be derived after the fact, by
+  // noticing a card that newly appeared in Grave/Banished and looking up
+  // what position it was last seen in before that (see
+  // MultiplayerDuelFieldPage's own diffing logic for this).
+  opponentFieldZoneEntryRotations?: Record<string, number>;
   onViewOpponentGrave?: () => void;
   onViewOpponentBanished?: () => void;
   onViewOpponentStack?: (index: number) => void;
@@ -727,6 +736,7 @@ function DuelField({
   opponentGrave = [],
   opponentBanished = [],
   opponentFieldZone = null,
+  opponentFieldZoneEntryRotations,
   onViewOpponentGrave,
   onViewOpponentBanished,
   onViewOpponentStack,
@@ -742,6 +752,7 @@ function DuelField({
         grave={opponentGrave}
         banished={opponentBanished}
         fieldZone={opponentFieldZone}
+        fieldZoneEntryRotations={opponentFieldZoneEntryRotations}
         onCardHover={onCardHover}
         onCardHoverEnd={onCardHoverEnd}
         onViewOpponentGrave={onViewOpponentGrave}
