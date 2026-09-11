@@ -4,3 +4,21 @@
   padding: 6px 8px;
   min-width: 220px;
 }
+
+/* No centering/viewport styles needed here — #root already centers
+   whatever this page's own root element is (see index.css), the same
+   way it already centered .NavMenu alone before this row wrapper
+   existed. */
+.DuelMenuPage-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.DuelMenuPage-hostError {
+  margin: 0;
+  font-size: 12px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  color: #e06565;
+  text-align: center;
+}

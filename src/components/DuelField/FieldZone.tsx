@@ -171,6 +171,17 @@ interface FieldZoneProps {
   // ATK/DEF stats overlay, shown only for the top-most layer, only when
   // this is provided — Grave/Banished stacks never show one.
   stackBattlePosition?: 'attack' | 'defense';
+  // True for every zone on the opponent's (flipped) side — added on top
+  // of whatever battlePosition/stackBattlePosition already computes,
+  // rather than replacing it, so a card's own Attack/Defense rotation
+  // and the "this whole side is upside-down from the player's view"
+  // rotation compose correctly rather than one overriding the other.
+  // Deliberately doesn't touch the ATK/DEF stats overlay (kept upright
+  // and readable regardless of which side it's on, matching how actual
+  // duel UIs handle this) or the dashed Defense Position guide box
+  // (a symmetric rectangle — rotating it 180° has no visible effect
+  // anyway).
+  rotated180?: boolean;
   // True only for the one render immediately after this card arrives
   // here from a face-down source (e.g. Special Summoning straight from
   // the Main/Extra Deck) — plays the same flip-reveal "unfurl" effect
@@ -214,6 +225,7 @@ function FieldZone({
   showRotatedOverlay = false,
   battlePosition = 'attack',
   stackBattlePosition,
+  rotated180 = false,
   entryFlip,
 }: FieldZoneProps) {
   const [showMenu, setShowMenu] = useState(false);
@@ -366,15 +378,23 @@ function FieldZone({
               >
                 <motion.div
                   className="FieldZone-cardRotation"
-                  initial={{ rotate: stackCardEntryRotations?.[entry.instanceId] ?? 0 }}
+                  initial={{
+                    rotate:
+                      (stackCardEntryRotations?.[entry.instanceId] ?? 0) +
+                      (rotated180 ? 180 : 0),
+                  }}
                   animate={{
                     // stackBattlePosition (Monster Zone stacks) is a
                     // PERSISTENT rotation shared by the whole stack, not
                     // a one-time entry effect settling back to upright —
                     // undefined (Grave/Banished, which never pass it)
                     // keeps their existing "always ends up at 0" behavior
-                    // exactly as it was.
-                    rotate: stackBattlePosition === 'defense' ? -90 : 0,
+                    // exactly as it was. rotated180 (the opponent's
+                    // flipped side) is layered on top of that, not
+                    // instead of it — this stack's own Attack/Defense
+                    // orientation and "this whole side reads
+                    // upside-down" are two separate, composable facts.
+                    rotate: (stackBattlePosition === 'defense' ? -90 : 0) + (rotated180 ? 180 : 0),
                   }}
                   transition={{ duration: 0.3, ease: 'easeInOut' }}
                 >
@@ -442,8 +462,10 @@ function FieldZone({
             >
               <motion.div
                 className="FieldZone-cardRotation"
-                initial={{ rotate: 0 }}
-                animate={{ rotate: battlePosition === 'defense' ? -90 : 0 }}
+                initial={{ rotate: rotated180 ? 180 : 0 }}
+                animate={{
+                  rotate: (battlePosition === 'defense' ? -90 : 0) + (rotated180 ? 180 : 0),
+                }}
                 transition={{ duration: 0.3, ease: 'easeInOut' }}
               >
                 <motion.div

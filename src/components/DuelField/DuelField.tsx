@@ -157,6 +157,13 @@ interface PlayerFieldProps {
   // of plain labels.
   mainDeck?: CardData[];
   extraDeck?: CardData[];
+  // Used INSTEAD of mainDeck/extraDeck's own .length when provided — the
+  // opponent's deck pile only ever has a COUNT available in the first
+  // place (their actual card contents are deliberately never sent to
+  // this client at all — see useMultiplayerDuel), so there's nothing
+  // real to put in a CardData[] for that side.
+  mainDeckCount?: number;
+  extraDeckCount?: number;
   // The specific card currently on top of the Main Deck — used only to
   // give the draw animation something to track (see FieldZone's
   // topCardInstanceId). Not needed for Extra Deck, which isn't drawn
@@ -214,6 +221,17 @@ interface PlayerFieldProps {
   onViewExtraDeck?: () => void;
   onViewGrave?: () => void;
   onViewBanished?: () => void;
+  // Separate from onViewGrave/onViewBanished above — those open the
+  // player's OWN Grave/Banished (with per-card actions); these open the
+  // OPPONENT's, which the player can look through but never act on. Only
+  // ever meaningful when flipped is true.
+  onViewOpponentGrave?: () => void;
+  onViewOpponentBanished?: () => void;
+  // Same idea, for an opponent Monster Zone stack's contents — the only
+  // "menu action" a flipped zone ever offers at all (see the monster
+  // zone rendering below), since everything else there is
+  // player-interaction-only.
+  onViewOpponentStack?: (index: number) => void;
   // True while a Fusion Summon's material-selection step is in progress
   // (see DuelFieldPage's pendingFusionSummon) — while set, Monster Zone
   // hover menus are suppressed here in favor of a direct, multi-select
@@ -241,6 +259,8 @@ function PlayerField({
   onNextPhase,
   mainDeck = [],
   extraDeck = [],
+  mainDeckCount,
+  extraDeckCount,
   mainDeckTopCardId,
   extraDeckTopCardId,
   extraDeckTopCardEntryFlip,
@@ -267,6 +287,9 @@ function PlayerField({
   onViewExtraDeck,
   onViewGrave,
   onViewBanished,
+  onViewOpponentGrave,
+  onViewOpponentBanished,
+  onViewOpponentStack,
   isSelectingFusionMaterial = false,
   selectedMaterialIndices = [],
   onToggleMaterialSelection,
@@ -275,6 +298,12 @@ function PlayerField({
 }: PlayerFieldProps) {
   const fieldZones = flipped ? [...FIELD_ZONES].reverse() : FIELD_ZONES;
   const deckZones = flipped ? [...DECK_ZONES].reverse() : DECK_ZONES;
+  // mainDeckCount/extraDeckCount (opponent) take priority over the
+  // array's own .length (player) when explicitly provided — see the
+  // props' own documentation for why the opponent only ever has a count
+  // in the first place, never real card data.
+  const resolvedMainDeckCount = mainDeckCount ?? mainDeck.length;
+  const resolvedExtraDeckCount = extraDeckCount ?? extraDeck.length;
 
   // Tracks which zone slot (0, 1, 2 — always in the player's own natural
   // left-to-right order) each 'monster'/'spellTrap'-kind entry
@@ -307,9 +336,10 @@ function PlayerField({
               card={fieldZone?.card}
               instanceId={fieldZone?.instanceId}
               faceDown={fieldZone?.faceDown}
-              onCardHover={onCardHover}
+              rotated180={flipped}
+              onCardHover={flipped && fieldZone?.faceDown ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
-              menuActions={getPlacedCardActions(fieldZone?.card, fieldZone?.faceDown ?? false)}
+              menuActions={flipped ? [] : getPlacedCardActions(fieldZone?.card, fieldZone?.faceDown ?? false)}
               onMenuAction={
                 fieldZone && onFieldAction
                   ? (actionKey) => onFieldAction('field', 0, actionKey)
@@ -384,23 +414,32 @@ function PlayerField({
               faceDown={placed?.faceDown}
               battlePosition={placed?.position}
               stackBattlePosition={stackCards ? (placed?.position ?? 'attack') : undefined}
+              rotated180={flipped}
               entryFlip={placed ? fieldZoneEntryFlips?.[placed.instanceId] : undefined}
-              onCardHover={onCardHover}
+              onCardHover={flipped && placed?.faceDown ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               menuActions={
-                isSelectingMaterial
-                  ? []
-                  : [
-                      ...attackAction,
-                      ...viewStackAction,
-                      ...getPlacedCardActions(placed?.card, placed?.faceDown ?? false),
-                      ...positionAction,
-                    ]
+                flipped
+                  ? viewStackAction
+                  : isSelectingMaterial
+                    ? []
+                    : [
+                        ...attackAction,
+                        ...viewStackAction,
+                        ...getPlacedCardActions(placed?.card, placed?.faceDown ?? false),
+                        ...positionAction,
+                      ]
               }
               onMenuAction={
-                placed && onFieldAction && !isSelectingMaterial
-                  ? (actionKey) => onFieldAction('monster', slotIndex, actionKey)
-                  : undefined
+                flipped
+                  ? placed && onViewOpponentStack
+                    ? (actionKey) => {
+                        if (actionKey === 'view') onViewOpponentStack(slotIndex);
+                      }
+                    : undefined
+                  : placed && onFieldAction && !isSelectingMaterial
+                    ? (actionKey) => onFieldAction('monster', slotIndex, actionKey)
+                    : undefined
               }
               onClick={
                 isSelectingFusionMaterial && placed && onToggleMaterialSelection
@@ -431,10 +470,19 @@ function PlayerField({
               stackOffsetStepX={GRAVE_STACK_OFFSET_STEP_X}
               stackOffsetStepY={GRAVE_STACK_OFFSET_STEP_Y}
               stackMaxLayers={GRAVE_STACK_MAX_LAYERS}
+              rotated180={flipped}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               menuActions={VIEW_ONLY_ACTIONS}
-              onMenuAction={onViewGrave ? () => onViewGrave() : undefined}
+              onMenuAction={
+                flipped
+                  ? onViewOpponentGrave
+                    ? () => onViewOpponentGrave()
+                    : undefined
+                  : onViewGrave
+                    ? () => onViewGrave()
+                    : undefined
+              }
             />
           );
         }
@@ -455,10 +503,19 @@ function PlayerField({
               stackOffsetStepX={BANISHED_STACK_OFFSET_STEP_X}
               stackOffsetStepY={BANISHED_STACK_OFFSET_STEP_Y}
               stackMaxLayers={BANISHED_STACK_MAX_LAYERS}
+              rotated180={flipped}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               menuActions={VIEW_ONLY_ACTIONS}
-              onMenuAction={onViewBanished ? () => onViewBanished() : undefined}
+              onMenuAction={
+                flipped
+                  ? onViewOpponentBanished
+                    ? () => onViewOpponentBanished()
+                    : undefined
+                  : onViewBanished
+                    ? () => onViewBanished()
+                    : undefined
+              }
             />
           );
         }
@@ -476,13 +533,13 @@ function PlayerField({
           stay shifted in step with its own field row. */}
       <div className="DuelField-emptyZone" />
       {deckZones.map((zone, i) => {
-        if (zone.kind === 'main' && mainDeck.length > 0) {
+        if (zone.kind === 'main' && resolvedMainDeckCount > 0) {
           return (
             <FieldZone
               key={i}
               label={zone.label}
               image={cardBackImg}
-              count={mainDeck.length}
+              count={resolvedMainDeckCount}
               topCardInstanceId={mainDeckTopCardId}
               topCardEntryFlip={mainDeckTopCardEntryFlip}
               topCardEntryRotation={mainDeckTopCardEntryRotation}
@@ -493,19 +550,19 @@ function PlayerField({
               stackOffsetStepX={MAIN_DECK_STACK_OFFSET_STEP_X}
               stackOffsetStepY={MAIN_DECK_STACK_OFFSET_STEP_Y}
               stackMaxLayers={MAIN_DECK_STACK_MAX_LAYERS}
-              onClick={onDrawCard}
-              menuActions={MAIN_DECK_ACTIONS}
-              onMenuAction={onMainDeckAction}
+              onClick={flipped ? undefined : onDrawCard}
+              menuActions={flipped ? [] : MAIN_DECK_ACTIONS}
+              onMenuAction={flipped ? undefined : onMainDeckAction}
             />
           );
         }
-        if (zone.kind === 'extra' && extraDeck.length > 0) {
+        if (zone.kind === 'extra' && resolvedExtraDeckCount > 0) {
           return (
             <FieldZone
               key={i}
               label={zone.label}
               image={cardBackImg}
-              count={extraDeck.length}
+              count={resolvedExtraDeckCount}
               stackOffsetStepX={EXTRA_DECK_STACK_OFFSET_STEP_X}
               stackOffsetStepY={EXTRA_DECK_STACK_OFFSET_STEP_Y}
               stackMaxLayers={EXTRA_DECK_STACK_MAX_LAYERS}
@@ -513,8 +570,8 @@ function PlayerField({
               topCardEntryFlip={extraDeckTopCardEntryFlip}
               topCardEntryRotation={extraDeckTopCardEntryRotation}
               departureCardInstanceId={extraDeckDepartureCardId}
-              menuActions={VIEW_ONLY_ACTIONS}
-              onMenuAction={onViewExtraDeck ? () => onViewExtraDeck() : undefined}
+              menuActions={flipped ? [] : VIEW_ONLY_ACTIONS}
+              onMenuAction={!flipped && onViewExtraDeck ? () => onViewExtraDeck() : undefined}
             />
           );
         }
@@ -529,11 +586,12 @@ function PlayerField({
               card={placed?.card}
               instanceId={placed?.instanceId}
               faceDown={placed?.faceDown}
-              onCardHover={onCardHover}
+              rotated180={flipped}
+              onCardHover={flipped && placed?.faceDown ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
-              menuActions={getPlacedCardActions(placed?.card, placed?.faceDown ?? false)}
+              menuActions={flipped ? [] : getPlacedCardActions(placed?.card, placed?.faceDown ?? false)}
               onMenuAction={
-                placed && onFieldAction
+                !flipped && placed && onFieldAction
                   ? (actionKey) => onFieldAction('spellTrap', slotIndex, actionKey)
                   : undefined
               }
@@ -600,6 +658,28 @@ interface DuelFieldProps {
   onToggleMaterialSelection?: (index: number) => void;
   isSelectingEvolutionMaterial?: boolean;
   onSelectEvolutionMaterial?: (index: number) => void;
+  // The opponent's side — deliberately a much smaller set of props than
+  // the player's own side gets above. No mainDeck/extraDeck arrays (only
+  // ever a count — see PlayerFieldProps), no per-card action wiring at
+  // all for monster/spellTrap/field zones (read-only, hover-for-face-up
+  // only), and no drawing or deck viewing. Grave/Banished are the one
+  // exception: viewable (read-only) via their own dedicated callbacks,
+  // same as the player's own, just pointed at a different (also
+  // read-only) viewer. Life points and phase aren't handled here at
+  // all — life points are rendered at the page level (see
+  // LifePointCounter, used the same way for the player's own side
+  // already), and there's no turn structure driving multiplayer phases
+  // yet for a phase display to mean anything.
+  opponentMainDeckCount?: number;
+  opponentExtraDeckCount?: number;
+  opponentMonsterZones?: (PlacedCard | null)[];
+  opponentSpellTrapZones?: (PlacedCard | null)[];
+  opponentGrave?: CardInstance[];
+  opponentBanished?: CardInstance[];
+  opponentFieldZone?: PlacedCard | null;
+  onViewOpponentGrave?: () => void;
+  onViewOpponentBanished?: () => void;
+  onViewOpponentStack?: (index: number) => void;
 }
 
 function DuelField({
@@ -640,10 +720,34 @@ function DuelField({
   onToggleMaterialSelection,
   isSelectingEvolutionMaterial,
   onSelectEvolutionMaterial,
+  opponentMainDeckCount,
+  opponentExtraDeckCount,
+  opponentMonsterZones = [],
+  opponentSpellTrapZones = [],
+  opponentGrave = [],
+  opponentBanished = [],
+  opponentFieldZone = null,
+  onViewOpponentGrave,
+  onViewOpponentBanished,
+  onViewOpponentStack,
 }: DuelFieldProps) {
   return (
     <div className="DuelField">
-      <PlayerField flipped />
+      <PlayerField
+        flipped
+        mainDeckCount={opponentMainDeckCount}
+        extraDeckCount={opponentExtraDeckCount}
+        monsterZones={opponentMonsterZones}
+        spellTrapZones={opponentSpellTrapZones}
+        grave={opponentGrave}
+        banished={opponentBanished}
+        fieldZone={opponentFieldZone}
+        onCardHover={onCardHover}
+        onCardHoverEnd={onCardHoverEnd}
+        onViewOpponentGrave={onViewOpponentGrave}
+        onViewOpponentBanished={onViewOpponentBanished}
+        onViewOpponentStack={onViewOpponentStack}
+      />
       <div className="DuelField-centerLine" />
       <PlayerField
         isBattlePhase={playerIsBattlePhase}

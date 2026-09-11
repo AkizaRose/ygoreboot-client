@@ -6,6 +6,7 @@ import AuthPage from './pages/AuthPage';
 import LandingPage from './pages/LandingPage';
 import DuelMenuPage from './pages/DuelMenuPage';
 import DuelFieldPage from './pages/DuelFieldPage';
+import MultiplayerDuelFieldPage from './pages/MultiplayerDuelFieldPage';
 import DeckBuilderPage from './pages/DeckBuilderPage';
 import AccountPage from './pages/AccountPage';
 
@@ -42,6 +43,14 @@ function App() {
                 <CardPrewarmGate>
                   <DuelFieldPage />
                 </CardPrewarmGate>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/duel/multiplayer/:duelId"
+            element={
+              <ProtectedRoute>
+                <MultiplayerDuelFieldPage />
               </ProtectedRoute>
             }
           />
