@@ -294,7 +294,18 @@ function PlayerField({
           // this point in the iteration) would have every Monster Zone's
           // button end up pointing at whatever the FINAL slot index was
           // by the time any of them actually got clicked.
-          const slotIndex = monsterSlotIndex;
+          //
+          // For the opponent (flipped), monsterSlotIndex counts left to
+          // right in DISPLAY order, but monsterZones' own array index is
+          // always the OPPONENT's own left-to-right order, from their
+          // own seat — reversed relative to how it displays here. Not
+          // reversing this would put the opponent's own slot 0 (adjacent
+          // to THEIR Field Zone) on screen next to Grave instead —
+          // exactly backwards from what physically rotating their field
+          // 180° should produce. Same reasoning as cardGeometry.ts's own
+          // getFieldZoneSlot, which needs the identical fix for the card
+          // objects themselves to land in the same boxes these render.
+          const slotIndex = flipped ? 2 - monsterSlotIndex : monsterSlotIndex;
           const placed = monsterZones[slotIndex] ?? undefined;
           // Position toggle only applies to face-up monsters — there's no
           // Set Monster yet, so faceDown is always false here in
@@ -496,7 +507,8 @@ function PlayerField({
         }
         if (zone.kind === 'spellTrap') {
           spellTrapSlotIndex += 1;
-          const slotIndex = spellTrapSlotIndex;
+          // Same reasoning as monsterSlotIndex's own fix above.
+          const slotIndex = flipped ? 2 - spellTrapSlotIndex : spellTrapSlotIndex;
           const placed = spellTrapZones[slotIndex] ?? undefined;
           return (
             <FieldZone

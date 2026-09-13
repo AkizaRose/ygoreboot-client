@@ -136,7 +136,14 @@ export function getFieldZoneSlot(
   index = 0,
 ): ZoneSlot {
   const columns = fieldRowColumns(flipped);
-  const occurrence = kind === 'monster' ? index : 0;
+  // Reversing the zone-KIND sequence (fieldRowColumns above) isn't
+  // enough on its own — the slot INDEX within the 3 Monster Zones also
+  // needs reversing for the opponent, or their own slot 0 (adjacent to
+  // THEIR Field Zone, from their own seat) ends up rendered adjacent to
+  // Grave instead, exactly backwards. Physically rotating a 3-slot row
+  // 180° reverses which end is which: what was adjacent to one
+  // neighbor becomes adjacent to the other.
+  const occurrence = kind === 'monster' ? (flipped ? 2 - index : index) : 0;
   const col = findColumn(columns, kind, occurrence);
   const row = flipped ? 1 : 2;
   return {
@@ -150,7 +157,9 @@ export function getFieldZoneSlot(
 
 export function getDeckZoneSlot(flipped: boolean, kind: DeckZoneKind, index = 0): ZoneSlot {
   const columns = deckRowColumns(flipped);
-  const occurrence = kind === 'spellTrap' ? index : 0;
+  // Same reasoning as getFieldZoneSlot's own occurrence above, for the
+  // 3 Spell/Trap Zones.
+  const occurrence = kind === 'spellTrap' ? (flipped ? 2 - index : index) : 0;
   const col = findColumn(columns, kind, occurrence);
   const row = flipped ? 0 : 3;
   return {
@@ -163,17 +172,42 @@ export function getDeckZoneSlot(flipped: boolean, kind: DeckZoneKind, index = 0)
 }
 
 // --- Stack offsets, for cards buried in a pile (Monster Zone Fusion
-// stacks, Grave, Banished) — exact values from DuelField.tsx. Layer 0 is
-// the deepest/bottom card. ---
-export const STACK_OFFSETS: Record<
+// stacks, Grave, Banished, Main/Extra Deck) — exact values from
+// DuelField.tsx. Layer 0 is the deepest/bottom card.
+//
+// Two independent sets, not one shared set applied to both sides: the
+// opponent's field is viewed rotated 180° from the player's own (see
+// FieldZone's rotated180), so an offset direction that reads as a
+// natural-looking stack lean from the player's own viewpoint doesn't
+// necessarily still look right once mirrored — these are separate
+// constants specifically so each can be tuned independently rather than
+// forcing both sides to share one look.
+export const PLAYER_STACK_OFFSETS: Record<
   'monster' | 'grave' | 'banished' | 'mainDeck' | 'extraDeck',
   { stepX: number; stepY: number; maxLayers: number }
 > = {
-  monster: { stepX: 1.5, stepY: 1.5, maxLayers: 6 },
-  grave: { stepX: 0.25, stepY: 0.25, maxLayers: 50 },
-  banished: { stepX: 0.25, stepY: 0.25, maxLayers: 50 },
-  mainDeck: { stepX: 0.25, stepY: 0.25, maxLayers: 40 },
-  extraDeck: { stepX: -0.25, stepY: 0.25, maxLayers: 10 },
+  monster: { stepX: 1, stepY: 0, maxLayers: 6 },
+  grave: { stepX: 0.2, stepY: 0.2, maxLayers: 50 },
+  banished: { stepX: 0.2, stepY: 0.2, maxLayers: 50 },
+  mainDeck: { stepX: 0.2, stepY: 0.2, maxLayers: 40 },
+  extraDeck: { stepX: -0.2, stepY: 0.2, maxLayers: 10 },
+};
+
+// Starts identical to PLAYER_STACK_OFFSETS above — nothing changes
+// visually until these are edited independently. maxLayers doesn't
+// really need to differ between the two (it's a performance/visual-
+// depth cap, not a perspective choice), but it's included here anyway
+// so this is a complete, self-contained set rather than one that only
+// partially overrides the player's own.
+export const OPPONENT_STACK_OFFSETS: Record<
+  'monster' | 'grave' | 'banished' | 'mainDeck' | 'extraDeck',
+  { stepX: number; stepY: number; maxLayers: number }
+> = {
+  monster: { stepX: -1, stepY: 0, maxLayers: 6 },
+  grave: { stepX: -0.2, stepY: -0.2, maxLayers: 50 },
+  banished: { stepX: -0.2, stepY: -0.2, maxLayers: 50 },
+  mainDeck: { stepX: -0.2, stepY: -0.2, maxLayers: 40 },
+  extraDeck: { stepX: 0.2, stepY: -0.2, maxLayers: 10 },
 };
 
 // Total pixel width of DuelField's own grid (7 columns) — Hand centers

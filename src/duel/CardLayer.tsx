@@ -133,11 +133,23 @@ function AnimatedCard({
   animationDuration?: number;
 }) {
   const targetRotationY = entry.faceDown ? 180 : 0;
-  const initialRotationY = startOverride?.faceDown
-    ? 180
-    : hiddenSource?.faceDown
-      ? 180
-      : targetRotationY;
+  // Reflects whichever source's ACTUAL faceDown value applies — not just
+  // "if true, 180, else fall through further" (which is what this used
+  // to do, and why a card returning from face-up on the field to the
+  // opponent's hand never animated: startOverride.faceDown is false
+  // there, so the old logic fell all the way through to targetRotationY
+  // instead of landing on 0, making the start and end values identical
+  // before the animation even had anything to interpolate between).
+  const initialRotationY =
+    startOverride !== null
+      ? startOverride.faceDown
+        ? 180
+        : 0
+      : hiddenSource !== null
+        ? hiddenSource.faceDown
+          ? 180
+          : 0
+        : targetRotationY;
   const rotationY = useMotionValue(initialRotationY);
 
   const frontOpacity = useTransform(

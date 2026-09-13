@@ -5,7 +5,8 @@ import {
   getFieldZoneSlot,
   getDeckZoneSlot,
   getHandSlot,
-  STACK_OFFSETS,
+  PLAYER_STACK_OFFSETS,
+  OPPONENT_STACK_OFFSETS,
   FIELD_CARD_SCALE,
   HAND_CARD_SCALE,
 } from './cardGeometry';
@@ -73,7 +74,7 @@ function monsterZoneEntries(
       ...stackEntries(
         stackCards,
         defenseCorrectedSlot,
-        STACK_OFFSETS.monster,
+        (flipped ? OPPONENT_STACK_OFFSETS : PLAYER_STACK_OFFSETS).monster,
         rotation,
         placed.faceDown,
         FIELD_CARD_SCALE,
@@ -95,7 +96,7 @@ function pileEntries(
   return stackEntries(
     cards,
     slot,
-    STACK_OFFSETS[kind],
+    (flipped ? OPPONENT_STACK_OFFSETS : PLAYER_STACK_OFFSETS)[kind],
     flipped ? 180 : 0,
     false,
     FIELD_CARD_SCALE,
@@ -166,7 +167,7 @@ function deckPileEntries(
   return stackEntries(
     cards,
     slot,
-    STACK_OFFSETS[kind],
+    (flipped ? OPPONENT_STACK_OFFSETS : PLAYER_STACK_OFFSETS)[kind],
     flipped ? 180 : 0,
     true,
     FIELD_CARD_SCALE,
@@ -205,7 +206,7 @@ function opponentDeckPileEntries(
 ): CardPositionEntry[] {
   if (count === 0) return [];
   const slot = getDeckZoneSlot(true, kind === 'mainDeck' ? 'main' : 'extra');
-  const offsets = STACK_OFFSETS[kind];
+  const offsets = OPPONENT_STACK_OFFSETS[kind];
   const visibleLayers = Math.min(count, offsets.maxLayers + 1);
   return Array.from({ length: visibleLayers }, (_, i) => ({
     instanceId: `opponent-${kind}-${i}`,
