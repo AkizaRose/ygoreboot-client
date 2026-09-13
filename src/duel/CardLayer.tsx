@@ -1,12 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   motion,
   useMotionValue,
   useTransform,
-  animate,
 } from 'framer-motion';
 import type { CardPositionEntry } from './cardPositions';
 import type { OpponentDuelState } from '../components/Matchmaking/useMultiplayerDuel';
+import type { CardInstance } from '../types/CardInstance';
 import CardImage from '../components/CardView/CardImage';
 import cardBackImg from '../assets/card/CardBack.png';
 import {
@@ -22,7 +22,7 @@ interface CardLayerProps {
   opponent?: OpponentDuelState | null;
 }
 
-interface HiddenSource {
+interface CardVisualPosition {
   x: number;
   y: number;
   scale: number;
@@ -30,16 +30,28 @@ interface HiddenSource {
   faceDown: boolean;
 }
 
+interface ReturningOpponentCard {
+  id: string;
+  card: CardInstance['card'];
+  from: CardVisualPosition;
+  to: CardVisualPosition;
+  zIndex: number;
+}
+
+interface HiddenSource extends CardVisualPosition {}
+
 // The visible opponent hand is intentionally kept as a separate, simple row
 // because its actual card identities are private. These coordinates mirror
-// the current opponent-hand styling in MultiplayerDuelFieldPage.css. The
-// important part is that a hidden-source card starts from the same board-space
-// area as the visible opponent hand and then travels into its public
-// destination.
+// the current opponent-hand styling in MultiplayerDuelFieldPage.css.
 const OPPONENT_HAND_TOP = -130;
 
-function containsOpponentInstance(opponent: OpponentDuelState, instanceId: string): boolean {
-  const containsPlaced = (placed: { instanceId: string; stackedBelow?: { instanceId: string }[] } | null) =>
+function containsOpponentInstance(
+  opponent: OpponentDuelState,
+  instanceId: string,
+): boolean {
+  const containsPlaced = (
+    placed: { instanceId: string; stackedBelow?: { instanceId: string }[] } | null,
+  ) =>
     placed?.instanceId === instanceId ||
     placed?.stackedBelow?.some((card) => card.instanceId === instanceId) === true;
 
@@ -68,9 +80,8 @@ function getHiddenSource(
   if (entry.instanceId.startsWith('opponent-')) return null;
   if (containsOpponentInstance(previousOpponent, entry.instanceId)) return null;
 
-  // Hand -> public zone: the real hand position is intentionally hidden, but
-  // we know its current visual row and use the last card as the conservative
-  // source position. Which exact hidden card was used is not public data.
+  // Hand -> public zone: the exact hand position is private, so use the last
+  // visible hand position as the best available visual source.
   if (opponent.handCount < previousOpponent.handCount) {
     const sourceIndex = Math.max(0, previousOpponent.handCount - 1);
     const sourceSlot = getHandSlot(previousOpponent.handCount, sourceIndex);
@@ -83,8 +94,6 @@ function getHiddenSource(
     };
   }
 
-  // Main Deck -> public zone. The exact card is intentionally unknown, but
-  // the pile's board-space origin is public and stable.
   if (opponent.mainDeckCount < previousOpponent.mainDeckCount) {
     const sourceSlot = getDeckZoneSlot(true, 'main');
     return {
@@ -96,7 +105,6 @@ function getHiddenSource(
     };
   }
 
-  // Extra Deck -> public zone uses the same principle as Main Deck.
   if (opponent.extraDeckCount < previousOpponent.extraDeckCount) {
     const sourceSlot = getDeckZoneSlot(true, 'extra');
     return {
@@ -111,34 +119,27 @@ function getHiddenSource(
   return null;
 }
 
-// TEMPORARY DIAGNOSTIC — remove once the animation work is confirmed fixed.
-function MountLogger({ instanceId }: { instanceId: string }) {
-  useEffect(() => {
-    console.log(`[CardLayer] mounted: ${instanceId}`);
-    return () => console.log(`[CardLayer] unmounted: ${instanceId}`);
-  }, [instanceId]);
-  return null;
-}
-
-// A card can be both moving and changing between face-up and face-down.
-// Position/size/board rotation therefore live on the outer motion element,
-// while the 3D card flip lives on a nested element.
-function AnimatedCard({ entry, hiddenSource }: { entry: CardPositionEntry; hiddenSource: HiddenSource | null }) {
+function AnimatedCard({
+  entry,
+  hiddenSource = null,
+  startOverride = null,
+  onAnimationComplete,
+  animationDuration = 0.3,
+}: {
+  entry: CardPositionEntry;
+  hiddenSource?: HiddenSource | null;
+  startOverride?: CardVisualPosition | null;
+  onAnimationComplete?: () => void;
+  animationDuration?: number;
+}) {
   const targetRotationY = entry.faceDown ? 180 : 0;
-  const initialRotationY = hiddenSource?.faceDown ? 180 : targetRotationY;
+  const initialRotationY = startOverride?.faceDown
+    ? 180
+    : hiddenSource?.faceDown
+      ? 180
+      : targetRotationY;
   const rotationY = useMotionValue(initialRotationY);
 
-  useEffect(() => {
-    const controls = animate(rotationY, targetRotationY, {
-      duration: 0.3,
-      ease: 'easeInOut',
-    });
-
-    return () => controls.stop();
-  }, [rotationY, targetRotationY]);
-
-  // Only one face is allowed to contribute visible pixels at a time. The
-  // tiny edge-on interval avoids the front and back visually blending.
   const frontOpacity = useTransform(
     rotationY,
     [0, 88, 92, 180],
@@ -153,13 +154,14 @@ function AnimatedCard({ entry, hiddenSource }: { entry: CardPositionEntry; hidde
   const displayWidth = CARD_NATIVE_WIDTH * entry.scale;
   const displayHeight = CARD_NATIVE_HEIGHT * entry.scale;
 
-  const initialAnimation = hiddenSource
+  const initialPosition = startOverride ?? hiddenSource;
+  const initialAnimation = initialPosition
     ? {
-        x: hiddenSource.x,
-        y: hiddenSource.y,
-        width: CARD_NATIVE_WIDTH * hiddenSource.scale,
-        height: CARD_NATIVE_HEIGHT * hiddenSource.scale,
-        rotate: hiddenSource.rotation,
+        x: initialPosition.x,
+        y: initialPosition.y,
+        width: CARD_NATIVE_WIDTH * initialPosition.scale,
+        height: CARD_NATIVE_HEIGHT * initialPosition.scale,
+        rotate: initialPosition.rotation,
       }
     : false;
 
@@ -174,12 +176,13 @@ function AnimatedCard({ entry, hiddenSource }: { entry: CardPositionEntry; hidde
         rotate: entry.rotation,
       }}
       transition={{
-        x: { duration: 0.3, ease: 'easeInOut' },
-        y: { duration: 0.3, ease: 'easeInOut' },
-        width: { duration: 0.3, ease: 'easeInOut' },
-        height: { duration: 0.3, ease: 'easeInOut' },
-        rotate: { duration: 0.3, ease: 'easeInOut' },
+        x: { duration: animationDuration, ease: 'easeInOut' },
+        y: { duration: animationDuration, ease: 'easeInOut' },
+        width: { duration: animationDuration, ease: 'easeInOut' },
+        height: { duration: animationDuration, ease: 'easeInOut' },
+        rotate: { duration: animationDuration, ease: 'easeInOut' },
       }}
+      onAnimationComplete={onAnimationComplete}
       style={{
         position: 'absolute',
         left: 0,
@@ -187,8 +190,6 @@ function AnimatedCard({ entry, hiddenSource }: { entry: CardPositionEntry; hidde
         zIndex: entry.zIndex,
       }}
     >
-      <MountLogger instanceId={entry.instanceId} />
-
       <div
         style={{
           width: '100%',
@@ -198,16 +199,22 @@ function AnimatedCard({ entry, hiddenSource }: { entry: CardPositionEntry; hidde
         }}
       >
         <motion.div
+          initial={{ rotateY: initialRotationY }}
+          animate={{ rotateY: targetRotationY }}
+          transition={{ duration: animationDuration, ease: 'easeInOut' }}
+          onUpdate={(latest) => {
+            if (typeof latest.rotateY === 'number') {
+              rotationY.set(latest.rotateY);
+            }
+          }}
           style={{
             width: '100%',
             height: '100%',
             position: 'relative',
-            rotateY: rotationY,
             transformStyle: 'preserve-3d',
             transformOrigin: 'center center',
           }}
         >
-          {/* Front face */}
           <motion.div
             style={{
               position: 'absolute',
@@ -229,7 +236,6 @@ function AnimatedCard({ entry, hiddenSource }: { entry: CardPositionEntry; hidde
             </div>
           </motion.div>
 
-          {/* Back face */}
           <motion.div
             style={{
               position: 'absolute',
@@ -266,16 +272,82 @@ function AnimatedCard({ entry, hiddenSource }: { entry: CardPositionEntry; hidde
   );
 }
 
-// One persistent visual element per physical card. Visible-zone moves retain
-// their real instanceId, while a card arriving from a hidden opponent zone
-// receives a one-time inferred starting position and face-down state.
 function CardLayer({ entries, opponent = null }: CardLayerProps) {
   const previousOpponentRef = useRef<OpponentDuelState | null>(null);
+  const previousEntriesRef = useRef<CardPositionEntry[]>([]);
+  const [returningCards, setReturningCards] = useState<ReturningOpponentCard[]>([]);
   const previousOpponent = previousOpponentRef.current;
+  const previousEntries = previousEntriesRef.current;
 
   useEffect(() => {
+    if (previousOpponent && opponent && opponent.handCount > previousOpponent.handCount) {
+      const currentIds = new Set(entries.map((entry) => entry.instanceId));
+      const previousPublicOpponentIds = new Set<string>();
+      const currentPublicOpponentIds = new Set<string>();
+
+      for (const entry of previousEntries) {
+        if (containsOpponentInstance(previousOpponent, entry.instanceId)) {
+          previousPublicOpponentIds.add(entry.instanceId);
+        }
+      }
+
+      for (const entry of entries) {
+        if (containsOpponentInstance(opponent, entry.instanceId)) {
+          currentPublicOpponentIds.add(entry.instanceId);
+        }
+      }
+
+      const disappeared = [...previousPublicOpponentIds].filter(
+        (id) => !currentPublicOpponentIds.has(id) && !currentIds.has(id),
+      );
+
+      if (disappeared.length > 0) {
+        const handCount = opponent.handCount;
+        const firstNewHandIndex = previousOpponent.handCount;
+        const newReturningCards = disappeared
+          .map((id, offset) => {
+            const fromEntry = previousEntries.find((entry) => entry.instanceId === id);
+            if (!fromEntry) return null;
+
+            const targetSlot = getHandSlot(
+              handCount,
+              Math.min(handCount - 1, firstNewHandIndex + offset),
+            );
+
+            const from: CardVisualPosition = {
+              x: fromEntry.x,
+              y: fromEntry.y,
+              scale: fromEntry.scale,
+              rotation: fromEntry.rotation,
+              faceDown: fromEntry.faceDown,
+            };
+            const to: CardVisualPosition = {
+              x: targetSlot.x,
+              y: OPPONENT_HAND_TOP,
+              scale: targetSlot.width / CARD_NATIVE_WIDTH,
+              rotation: 180,
+              faceDown: true,
+            };
+
+            return {
+              id,
+              card: fromEntry.card,
+              from,
+              to,
+              zIndex: 320 + offset,
+            };
+          })
+          .filter((card): card is ReturningOpponentCard => card !== null);
+
+        if (newReturningCards.length > 0) {
+          setReturningCards((current) => [...current, ...newReturningCards]);
+        }
+      }
+    }
+
     previousOpponentRef.current = opponent;
-  }, [opponent]);
+    previousEntriesRef.current = entries;
+  }, [entries, opponent, previousEntries, previousOpponent]);
 
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
@@ -286,6 +358,31 @@ function CardLayer({ entries, opponent = null }: CardLayerProps) {
           hiddenSource={getHiddenSource(entry, previousOpponent, opponent)}
         />
       ))}
+
+      {returningCards.map((card) => {
+        const returningEntry: CardPositionEntry = {
+          instanceId: card.id,
+          card: card.card,
+          x: card.to.x,
+          y: card.to.y,
+          rotation: card.to.rotation,
+          scale: card.to.scale,
+          faceDown: true,
+          zIndex: card.zIndex,
+        };
+
+        return (
+          <AnimatedCard
+            key={`returning-${card.id}`}
+            entry={returningEntry}
+            startOverride={card.from}
+            animationDuration={0.45}
+            onAnimationComplete={() => {
+              setReturningCards((current) => current.filter((item) => item.id !== card.id));
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

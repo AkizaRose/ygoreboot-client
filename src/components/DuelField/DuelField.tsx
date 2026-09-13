@@ -383,6 +383,7 @@ function PlayerField({
               }
               selected={isSelectingFusionMaterial && selectedMaterialIndices.includes(slotIndex)}
               showRotatedOverlay
+              showStats
             />
           );
         }

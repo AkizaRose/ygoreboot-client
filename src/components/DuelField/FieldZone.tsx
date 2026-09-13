@@ -64,6 +64,10 @@ interface FieldZoneProps {
   // however CardLayer happens to be rendering/rotating the card itself
   // right now.
   battlePosition?: 'attack' | 'defense';
+  // Only Monster Zones render ATK/DEF. Grave, Banished, Field, and
+  // Spell/Trap Zones can also receive a Monster card for their top-card
+  // display, but must never show the Monster Zone stats overlay.
+  showStats?: boolean;
 }
 
 function FieldZone({
@@ -80,6 +84,7 @@ function FieldZone({
   onMenuAction,
   showRotatedOverlay = false,
   battlePosition = 'attack',
+  showStats = false,
 }: FieldZoneProps) {
   const [showMenu, setShowMenu] = useState(false);
   const hideTimeoutRef = useRef<number | undefined>(undefined);
@@ -166,7 +171,7 @@ function FieldZone({
           the rotated overlay above, the stats overlay and pile count
           below, and the plain text label when this zone is empty. */}
       {!hasContent && <span className="FieldZone-label">{label}</span>}
-      {card && !faceDown && card.cardClass === 'Monster' && (card.atk || card.def) && (
+      {showStats && card && !faceDown && card.cardClass === 'Monster' && (card.atk || card.def) && (
         <div className="FieldZone-statsOverlay">
           <span className={battlePosition === 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined}>
             {card.atk ?? '?'}
