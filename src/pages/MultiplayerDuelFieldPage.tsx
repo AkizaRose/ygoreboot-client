@@ -73,6 +73,10 @@ function notYetImplemented(action: string) {
   console.info(`[MultiplayerDuelFieldPage] "${action}" isn't wired up for multiplayer yet.`);
 }
 
+function duelStatesEqual(a: MyDuelState, b: MyDuelState): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 function buildPublicState(me: MyDuelState) {
   return {
     lifePoints: me.lifePoints,
@@ -122,6 +126,12 @@ function MultiplayerDuelFieldPage() {
   // problem, since it's computed as one atomic local transform, not
   // assembled from two separate documents.
   const latestMeRef = useRef<MyDuelState | null>(null);
+  // Holds the most recent local state that we optimistically rendered while
+  // Firestore catches up. Incoming snapshots that do not yet match this
+  // state are intermediate halves of the same write (private/public data
+  // arriving separately), so rendering them would make the visible board
+  // disagree with CardLayer for a frame or remove the moving card entirely.
+  const pendingLocalStateRef = useRef<MyDuelState | null>(null);
   // Deliberately a SEPARATE piece of state from latestMeRef, updated one
   // animation frame later (see applyMeUpdate below) rather than in the
   // same synchronous batch as the click itself. latestMeRef alone
@@ -139,6 +149,23 @@ function MultiplayerDuelFieldPage() {
   // set FROM `next`, the same atomic local computation, just applied a
   // moment later).
   const [renderMeState, setRenderMeState] = useState<MyDuelState | null>(null);
+
+  // Keep the visual state in lock-step with the most recent complete `me`
+  // snapshot, while ignoring intermediate Firestore snapshots during one of
+  // our own local moves. Once Firestore has caught up to the exact optimistic
+  // state we asked it to persist, control returns to the live hook state.
+  useEffect(() => {
+    if (!me) return;
+
+    const pending = pendingLocalStateRef.current;
+    if (pending) {
+      if (!duelStatesEqual(me, pending)) return;
+      pendingLocalStateRef.current = null;
+    }
+
+    latestMeRef.current = me;
+    setRenderMeState(me);
+  }, [me]);
   // TEMPORARY DIAGNOSTIC ref — see its use further down, near
   // cardPositionEntries. Remove alongside that code once the animation
   // bug is confirmed fixed.
@@ -240,6 +267,7 @@ function MultiplayerDuelFieldPage() {
     // the stale `me` closure value (which won't reflect this change
     // until its own snapshot round-trips back).
     latestMeRef.current = next;
+    pendingLocalStateRef.current = next;
 
     // Deliberately NOT setRenderMeState(next) here, synchronously — see
     // renderMeState's own comment for why that specifically breaks CSS
@@ -1145,13 +1173,13 @@ function MultiplayerDuelFieldPage() {
             style={{ position: 'relative', width: BOARD_WIDTH, height: STAGE_HEIGHT }}
           >
             <DuelField
-              playerMainDeck={me.mainDeck.map((c) => c.card)}
-              playerExtraDeck={me.extraDeck.map((c) => c.card)}
-              playerMonsterZones={me.monsterZones}
-              playerSpellTrapZones={me.spellTrapZones}
-              playerGrave={me.grave}
-              playerBanished={me.banished}
-              playerFieldZone={me.fieldZone}
+              playerMainDeck={renderMe.mainDeck.map((c) => c.card)}
+              playerExtraDeck={renderMe.extraDeck.map((c) => c.card)}
+              playerMonsterZones={renderMe.monsterZones}
+              playerSpellTrapZones={renderMe.spellTrapZones}
+              playerGrave={renderMe.grave}
+              playerBanished={renderMe.banished}
+              playerFieldZone={renderMe.fieldZone}
               onDrawCard={handleDrawCard}
               onCardHover={handleCardHover}
               onCardHoverEnd={handleCardHoverEnd}
@@ -1193,7 +1221,7 @@ function MultiplayerDuelFieldPage() {
             />
 
             <Hand
-              cards={me.hand}
+              cards={renderMe.hand}
               onCardHover={handleCardHover}
               onCardHoverEnd={handleCardHoverEnd}
               onNormalSummon={handleNormalSummon}
@@ -1211,7 +1239,7 @@ function MultiplayerDuelFieldPage() {
                 chrome and Hand's own cells, without needing an explicit
                 z-index war with FieldZone-rotatedOverlay or anything
                 else in there. */}
-            <CardLayer entries={cardPositionEntries} />
+            <CardLayer entries={cardPositionEntries} opponent={opponent} />
           </div>
 
           {/* A child of fieldArea specifically (not the page root) so its
@@ -1286,7 +1314,7 @@ function MultiplayerDuelFieldPage() {
         </span>
         <PlayerAvatarBox />
         <LifePointCounter
-          value={me.lifePoints}
+          value={renderMe.lifePoints}
           onAdd={(amount) => handleLifePointChange(amount)}
           onSubtract={(amount) => handleLifePointChange(-amount)}
         />
@@ -1338,12 +1366,12 @@ function MultiplayerDuelFieldPage() {
         <DeckViewer
           cards={
             viewingOwnPile === 'main'
-              ? me.mainDeck
+              ? renderMe.mainDeck
               : viewingOwnPile === 'grave'
-                ? me.grave
+                ? renderMe.grave
                 : viewingOwnPile === 'banished'
-                  ? me.banished
-                  : me.extraDeck
+                  ? renderMe.banished
+                  : renderMe.extraDeck
           }
           onClose={() => setViewingOwnPile(null)}
           onCardHover={handleCardHover}
@@ -1381,7 +1409,7 @@ function MultiplayerDuelFieldPage() {
       {viewingOwnStackIndex !== null && (
         <DeckViewer
           cards={(() => {
-            const placed = me.monsterZones[viewingOwnStackIndex];
+            const placed = renderMe.monsterZones[viewingOwnStackIndex];
             if (!placed) return [];
             return [
               { instanceId: placed.instanceId, card: placed.card },
