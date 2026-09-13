@@ -36,17 +36,27 @@
    be far too heavy at this card's actual ~72px field size. */
 .FieldZone-statsOverlay {
   position: absolute;
-  bottom: 2px;
-  left: 0;
-  width: 100%;
+  bottom: 8px;
   text-align: center;
-  font-family: 'RoGSanSrfStd-UB';
+  font-family: 'ROGSanSerifStdB';
   color: white;
-  -webkit-text-stroke: 1px black;
-  font-size: 9px;
+  background:rgba(0, 0, 0, 0.6);
+  font-size: 14px;
   line-height: 1;
   pointer-events: none;
   z-index: 1000;
+  padding: 1px;
+}
+
+/* The opponent's card art is rendered upside-down from the player's own
+   viewpoint (see CardLayer's own 180° rotation) — the card's NAME ends
+   up near the zone's bottom for them, where this overlay would
+   otherwise sit and cover it, while the ATK/DEF area itself ends up
+   near the top instead. Same 2px offset as the player's own version
+   above, just measured from the opposite edge. */
+.FieldZone-statsOverlay--top {
+  bottom: auto;
+  top: 8px;
 }
 
 /* The value that ISN'T currently relevant to combat — DEF while in
@@ -112,18 +122,17 @@
 
 .FieldZone-pileCount {
   position: absolute;
-  bottom: 2px;
-  right: 2px;
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 10px;
-  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  font-size: 16px;
+  font-family: "ROGSanSerifStdB";
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: 8px;
   line-height: 1.2;
   user-select: none;
   /* Same underlying issue as .FieldZone-statsOverlay above (see its own
      comment) — no explicit z-index at all here means it loses to any of
      CardLayer's cards outright, not just to ones with a higher number. */
   z-index: 1000;
+  padding: 4px;
 }

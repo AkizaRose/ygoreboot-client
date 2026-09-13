@@ -68,6 +68,11 @@ interface FieldZoneProps {
   // Spell/Trap Zones can also receive a Monster card for their top-card
   // display, but must never show the Monster Zone stats overlay.
   showStats?: boolean;
+  // True for every zone on the opponent's (flipped) side. Only used here
+  // to flip the stats overlay's own vertical position (see
+  // .FieldZone-statsOverlay--top in FieldZone.css) — the card's own
+  // rotation is CardLayer's concern entirely now, not this component's.
+  rotated180?: boolean;
 }
 
 function FieldZone({
@@ -85,6 +90,7 @@ function FieldZone({
   showRotatedOverlay = false,
   battlePosition = 'attack',
   showStats = false,
+  rotated180 = false,
 }: FieldZoneProps) {
   const [showMenu, setShowMenu] = useState(false);
   const hideTimeoutRef = useRef<number | undefined>(undefined);
@@ -172,7 +178,7 @@ function FieldZone({
           below, and the plain text label when this zone is empty. */}
       {!hasContent && <span className="FieldZone-label">{label}</span>}
       {showStats && card && !faceDown && card.cardClass === 'Monster' && (card.atk || card.def) && (
-        <div className="FieldZone-statsOverlay">
+        <div className={['FieldZone-statsOverlay', rotated180 && 'FieldZone-statsOverlay--top'].filter(Boolean).join(' ')}>
           <span className={battlePosition === 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined}>
             {card.atk ?? '?'}
           </span>
