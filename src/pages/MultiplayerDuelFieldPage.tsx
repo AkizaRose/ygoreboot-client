@@ -10,6 +10,9 @@ import CardDisplay from '../components/CardDisplay/CardDisplay';
 import LifePointCounter from '../components/DuelField/LifePointCounter';
 import PlayerAvatarBox from '../components/Avatar/PlayerAvatarBox';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
+import CardLayer from '../duel/CardLayer';
+import { computeCardPositions } from '../duel/cardPositions';
+import { BOARD_WIDTH, STAGE_HEIGHT } from '../duel/cardGeometry';
 import cardBackImg from '../assets/card/CardBack.png';
 import { getAvatarUrl } from '../components/Avatar/avatars';
 import {
@@ -101,6 +104,51 @@ function MultiplayerDuelFieldPage() {
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
   const hoverTimeoutRef = useRef<number | undefined>(undefined);
+  // Tracks the most recently INTENDED state, updated synchronously by
+  // applyMeUpdate the instant it computes a new `next` — well before
+  // either of its two writes has gone out, let alone come back. Read by
+  // applyMeUpdate itself (so a second rapid action builds on this one's
+  // change instead of a stale value), and is where renderMeState below
+  // eventually gets its value from too — just not synchronously; see
+  // that state's own comment for why. This ref existing at all is what
+  // fixes the "card briefly vanishes" bug: `me` is assembled from TWO
+  // independently arriving Firestore snapshots (the private hand/deck
+  // subcollection, and the public duel document) — a move like Summon
+  // touches both (hand is private, monsterZones is public), and those
+  // two documents' own listeners don't arrive atomically together. In
+  // the gap between them, `me` can genuinely, correctly reflect a card
+  // removed from hand but not yet added to monsterZones — nowhere at
+  // all, for real, not a rendering bug. latestMeRef never has that
+  // problem, since it's computed as one atomic local transform, not
+  // assembled from two separate documents.
+  const latestMeRef = useRef<MyDuelState | null>(null);
+  // Deliberately a SEPARATE piece of state from latestMeRef, updated one
+  // animation frame later (see applyMeUpdate below) rather than in the
+  // same synchronous batch as the click itself. latestMeRef alone
+  // fixed the "card genuinely vanishes" bug, but introduced a new,
+  // more subtle one: the click handler's OWN synchronous state update
+  // (e.g. FieldZone's setShowMenu(false)) triggers a batched re-render
+  // that picks up latestMeRef's new value immediately — meaning the
+  // very first render after the click already shows the FINAL
+  // position, with no separate frame ever painted at the old one in
+  // between. CSS transitions need two genuinely distinct painted
+  // frames to interpolate between, not just two different values
+  // computed within the same commit. Deferring this one frame is what
+  // gives the browser that gap back, without reintroducing the
+  // original bug (this is still always internally consistent — it's
+  // set FROM `next`, the same atomic local computation, just applied a
+  // moment later).
+  const [renderMeState, setRenderMeState] = useState<MyDuelState | null>(null);
+  // TEMPORARY DIAGNOSTIC ref — see its use further down, near
+  // cardPositionEntries. Remove alongside that code once the animation
+  // bug is confirmed fixed.
+  const previousEntryIdsRef = useRef<Set<string> | null>(null);
+  // TEMPORARY DIAGNOSTIC refs — see their use further down, near
+  // cardPositionEntries. Remove alongside that code once the animation
+  // bug is confirmed fixed.
+  const previousMeRef = useRef<typeof me>(null);
+  const previousOpponentRef = useRef<typeof opponent>(null);
+
   const [viewingOwnPile, setViewingOwnPile] = useState<
     'main' | 'grave' | 'banished' | 'extra' | null
   >(null);
@@ -174,10 +222,33 @@ function MultiplayerDuelFieldPage() {
   // updater returning the exact same `current` it was given, e.g. a
   // guard failing to find the card in question) skips the write
   // entirely rather than sending an unnecessary no-op update.
+  //
+  // Card animations (entry rotations, flip-reveals, and all the rest)
+  // have been removed from the app entirely for now — see FieldZone.tsx
+  // and Hand.tsx for where that used to live — so there's nothing left
+  // here to synchronize local, per-client animation state for.
   const applyMeUpdate = async (updater: (current: MyDuelState) => MyDuelState) => {
-    if (!duelId || !currentUser || !me || !state.role) return;
-    const next = updater(me);
-    if (next === me) return;
+    if (!duelId || !currentUser || !state.role) return;
+    const current = latestMeRef.current ?? me;
+    if (!current) return;
+    const next = updater(current);
+    if (next === current) return;
+
+    // Synchronous, immediate — before either write below has even been
+    // issued, let alone come back. This is what a second action
+    // triggered right after this one actually builds on, rather than
+    // the stale `me` closure value (which won't reflect this change
+    // until its own snapshot round-trips back).
+    latestMeRef.current = next;
+
+    // Deliberately NOT setRenderMeState(next) here, synchronously — see
+    // renderMeState's own comment for why that specifically breaks CSS
+    // transitions. One frame later is enough for the browser to have
+    // already painted the pre-move position on its own, separate frame
+    // (from whatever synchronous state update the click handler itself
+    // made, e.g. FieldZone's setShowMenu(false)) before this applies the
+    // new one.
+    requestAnimationFrame(() => setRenderMeState(next));
 
     await setDoc(doc(db, 'duels', duelId, 'private', currentUser.uid), {
       hand: next.hand,
@@ -217,6 +288,13 @@ function MultiplayerDuelFieldPage() {
     const pending = pendingSummon;
     setPendingSummon(null);
     if (!pending) return;
+    // TEMPORARY DIAGNOSTIC — remove once the animation bug is confirmed
+    // fixed. Confirms/denies whether summoning (hand/deck/grave/banished
+    // -> field) is what's actually correlated with the "missing card"
+    // flicker, rather than the later move to Grave/Banished itself.
+    console.log(
+      `[completeSummon] summoning instanceId=${pending.instanceId} from source=${pending.source} position=${position}`,
+    );
     applyMeUpdate((current) => {
       const sourcePile =
         pending.source === 'hand'
@@ -472,6 +550,22 @@ function MultiplayerDuelFieldPage() {
     index: number,
     actionKey: string,
   ) => {
+    // TEMPORARY DIAGNOSTIC — remove once the animation bug is confirmed
+    // fixed. Logs exactly what was clicked and which card (if any) was
+    // actually at that slot right now, in `me` — so this can be
+    // directly compared against whatever instanceId the "MISSING"
+    // diagnostic reports, to confirm or rule out whether that event is
+    // even caused by this specific click.
+    const clickedPlaced =
+      zoneType === 'monster'
+        ? me?.monsterZones[index]
+        : zoneType === 'spellTrap'
+          ? me?.spellTrapZones[index]
+          : me?.fieldZone;
+    console.log(
+      `[handleFieldAction] clicked zoneType=${zoneType} index=${index} actionKey=${actionKey} instanceId=${clickedPlaced?.instanceId ?? '(none)'}`,
+    );
+
     if (actionKey === 'attack') return; // no combat system yet
 
     if (actionKey === 'view') {
@@ -926,6 +1020,101 @@ function MultiplayerDuelFieldPage() {
     );
   }
 
+  // The actual fix for the "card briefly vanishes" bug, combined with
+  // renderMeState's own one-frame deferral fix for the "snaps instantly,
+  // no transition" bug that fixing the first one introduced — see both
+  // renderMeState's and latestMeRef's own declarations above for the
+  // full reasoning. Falls back to `me` only before the very first action
+  // this session (before renderMeState has ever been set); after that,
+  // this is always what rendering uses, never the raw `me`.
+  const renderMe = renderMeState ?? me;
+
+  // Excludes only the opponent's hidden-HAND proxy entries — their
+  // coordinates are documented placeholders, not real geometry yet (the
+  // opponent's hand still renders via its own separate block below,
+  // unchanged, for this integration pass). Everything else, including
+  // the opponent's deck piles, has real board-space coordinates already
+  // (see cardPositions.ts's opponentDeckPileEntries), so those render
+  // normally here.
+  const cardPositionEntries = computeCardPositions(renderMe, opponent).filter(
+    (entry) => !entry.instanceId.startsWith('opponent-hand-'),
+  );
+
+  // TEMPORARY DIAGNOSTIC — remove once the animation bug is confirmed
+  // fixed. Whether me/opponent are literally the SAME object reference
+  // as last render — if they're unchanged but cardPositionEntries still
+  // differs, that points at non-determinism inside computeCardPositions
+  // itself (or something else feeding it) rather than at me/opponent's
+  // actual data.
+  const meChangedThisRender = previousMeRef.current !== me;
+  const opponentChangedThisRender = previousOpponentRef.current !== opponent;
+  if (!meChangedThisRender && !opponentChangedThisRender) {
+    console.log('[MultiplayerDuelFieldPage] re-rendered with the SAME me/opponent references');
+  }
+  previousMeRef.current = me;
+  previousOpponentRef.current = opponent;
+
+  // TEMPORARY DIAGNOSTIC — remove once the animation bug is confirmed
+  // fixed. Two things the mount/unmount log alone can't show: whether
+  // the SAME instanceId appears twice in one render's array (a genuine
+  // key collision — React would only keep one, and could reasonably
+  // treat the "other" occurrence as a fresh mount), or whether an
+  // instanceId present in one render is simply absent from the very
+  // next one (computeCardPositions momentarily not producing an entry
+  // for a card that still exists somewhere in `me`/`opponent`).
+  const seenThisRender = new Set<string>();
+  for (const entry of cardPositionEntries) {
+    if (seenThisRender.has(entry.instanceId)) {
+      console.warn(`[CardLayer] DUPLICATE instanceId in one render: ${entry.instanceId}`);
+    }
+    seenThisRender.add(entry.instanceId);
+  }
+  if (previousEntryIdsRef.current) {
+    for (const id of previousEntryIdsRef.current) {
+      if (!seenThisRender.has(id)) {
+        console.warn(`[CardLayer] instanceId present last render, MISSING this render: ${id}`);
+        // TEMPORARY DIAGNOSTIC — searches `me`/`opponent` directly for
+        // this exact instanceId, so we can see whether it's genuinely
+        // absent from the underlying state (a real data-level gap) or
+        // still present somewhere that computeCardPositions simply
+        // isn't producing an entry for (a bug in that function itself,
+        // not in the state).
+        const locations: string[] = [];
+        const checkPlaced = (label: string, placed: PlacedCard | null | undefined) => {
+          if (placed?.instanceId === id) locations.push(label);
+          if (placed?.stackedBelow?.some((c) => c.instanceId === id)) {
+            locations.push(`${label} (buried in stack)`);
+          }
+        };
+        const checkPile = (label: string, pile: CardInstance[] | undefined) => {
+          if (pile?.some((c) => c.instanceId === id)) locations.push(label);
+        };
+        if (renderMe) {
+          checkPile('me.hand', renderMe.hand);
+          checkPile('me.mainDeck', renderMe.mainDeck);
+          checkPile('me.extraDeck', renderMe.extraDeck);
+          renderMe.monsterZones.forEach((p, i) => checkPlaced(`me.monsterZones[${i}]`, p));
+          renderMe.spellTrapZones.forEach((p, i) => checkPlaced(`me.spellTrapZones[${i}]`, p));
+          checkPlaced('me.fieldZone', renderMe.fieldZone);
+          checkPile('me.grave', renderMe.grave);
+          checkPile('me.banished', renderMe.banished);
+        }
+        if (opponent) {
+          opponent.monsterZones.forEach((p, i) => checkPlaced(`opponent.monsterZones[${i}]`, p));
+          opponent.spellTrapZones.forEach((p, i) => checkPlaced(`opponent.spellTrapZones[${i}]`, p));
+          checkPlaced('opponent.fieldZone', opponent.fieldZone);
+          checkPile('opponent.grave', opponent.grave);
+          checkPile('opponent.banished', opponent.banished);
+        }
+        console.warn(
+          `[CardLayer] ${id} actually found in:`,
+          locations.length > 0 ? locations : '(nowhere — genuinely absent from me/opponent)',
+        );
+      }
+    }
+  }
+  previousEntryIdsRef.current = seenThisRender;
+
   return (
     <div className="MultiplayerDuelFieldPage">
       <div className="MultiplayerDuelFieldPage-sidePanel">
@@ -940,53 +1129,90 @@ function MultiplayerDuelFieldPage() {
         </div>
 
         <div className="MultiplayerDuelFieldPage-fieldArea">
-          <DuelField
-            playerMainDeck={me.mainDeck.map((c) => c.card)}
-            playerExtraDeck={me.extraDeck.map((c) => c.card)}
-            playerMonsterZones={me.monsterZones}
-            playerSpellTrapZones={me.spellTrapZones}
-            playerGrave={me.grave}
-            playerBanished={me.banished}
-            playerFieldZone={me.fieldZone}
-            onDrawCard={handleDrawCard}
-            onCardHover={handleCardHover}
-            onCardHoverEnd={handleCardHoverEnd}
-            onFieldAction={handleFieldAction}
-            onMainDeckAction={(actionKey) => {
-              if (actionKey === 'view') setViewingOwnPile('main');
-              else if (actionKey === 'shuffle') handleShuffleMainDeck();
-              else if (actionKey === 'mill') handleMillTopCard();
-              else if (actionKey === 'banishTop') handleBanishTopCard();
-              else if (actionKey === 'reset') {
-                // A full "restart the game from scratch" Reset makes
-                // sense for a single player, but for two synced players
-                // that would mean either resetting only my own side
-                // (leaving the duel in a broken, mismatched state) or
-                // somehow coordinating both players resetting together,
-                // neither of which this covers yet. Flagged rather than
-                // silently doing the wrong one.
-                notYetImplemented('Reset');
-              }
-            }}
-            onViewExtraDeck={() => setViewingOwnPile('extra')}
-            onViewGrave={() => setViewingOwnPile('grave')}
-            onViewBanished={() => setViewingOwnPile('banished')}
-            opponentMainDeckCount={opponent.mainDeckCount}
-            opponentExtraDeckCount={opponent.extraDeckCount}
-            opponentMonsterZones={opponent.monsterZones}
-            opponentSpellTrapZones={opponent.spellTrapZones}
-            opponentGrave={opponent.grave}
-            opponentBanished={opponent.banished}
-            opponentFieldZone={opponent.fieldZone}
-            onViewOpponentGrave={() => setViewingOpponentPile('grave')}
-            onViewOpponentBanished={() => setViewingOpponentPile('banished')}
-            onViewOpponentStack={(index) => setViewingOpponentStackIndex(index)}
-            isSelectingFusionMaterial={pendingFusionSummon !== null}
-            selectedMaterialIndices={pendingFusionSummon?.selectedIndices ?? []}
-            onToggleMaterialSelection={handleFusionMaterialToggle}
-            isSelectingEvolutionMaterial={pendingEvolutionSummon !== null}
-            onSelectEvolutionMaterial={handleEvolutionMaterialClick}
-          />
+          {/* The shared coordinate origin DuelField's zones, Hand's
+              cells, and CardLayer's rendered cards all agree on — see
+              cardGeometry.ts's own module comment for why this needs to
+              exist as one real container rather than three
+              independently-centered page elements. Explicit
+              width/height (from BOARD_WIDTH/STAGE_HEIGHT) rather than
+              sizing to content, since content here is either absolutely
+              positioned (DuelField's own grid still lays out normally
+              inside it, unaffected) or pointer-events:none
+              (CardLayer) — nothing here would give this box a natural
+              size of its own otherwise. */}
+          <div
+            className="MultiplayerDuelFieldPage-boardStage"
+            style={{ position: 'relative', width: BOARD_WIDTH, height: STAGE_HEIGHT }}
+          >
+            <DuelField
+              playerMainDeck={me.mainDeck.map((c) => c.card)}
+              playerExtraDeck={me.extraDeck.map((c) => c.card)}
+              playerMonsterZones={me.monsterZones}
+              playerSpellTrapZones={me.spellTrapZones}
+              playerGrave={me.grave}
+              playerBanished={me.banished}
+              playerFieldZone={me.fieldZone}
+              onDrawCard={handleDrawCard}
+              onCardHover={handleCardHover}
+              onCardHoverEnd={handleCardHoverEnd}
+              onFieldAction={handleFieldAction}
+              onMainDeckAction={(actionKey) => {
+                if (actionKey === 'view') setViewingOwnPile('main');
+                else if (actionKey === 'shuffle') handleShuffleMainDeck();
+                else if (actionKey === 'mill') handleMillTopCard();
+                else if (actionKey === 'banishTop') handleBanishTopCard();
+                else if (actionKey === 'reset') {
+                  // A full "restart the game from scratch" Reset makes
+                  // sense for a single player, but for two synced players
+                  // that would mean either resetting only my own side
+                  // (leaving the duel in a broken, mismatched state) or
+                  // somehow coordinating both players resetting together,
+                  // neither of which this covers yet. Flagged rather than
+                  // silently doing the wrong one.
+                  notYetImplemented('Reset');
+                }
+              }}
+              onViewExtraDeck={() => setViewingOwnPile('extra')}
+              onViewGrave={() => setViewingOwnPile('grave')}
+              onViewBanished={() => setViewingOwnPile('banished')}
+              opponentMainDeckCount={opponent.mainDeckCount}
+              opponentExtraDeckCount={opponent.extraDeckCount}
+              opponentMonsterZones={opponent.monsterZones}
+              opponentSpellTrapZones={opponent.spellTrapZones}
+              opponentGrave={opponent.grave}
+              opponentBanished={opponent.banished}
+              opponentFieldZone={opponent.fieldZone}
+              onViewOpponentGrave={() => setViewingOpponentPile('grave')}
+              onViewOpponentBanished={() => setViewingOpponentPile('banished')}
+              onViewOpponentStack={(index) => setViewingOpponentStackIndex(index)}
+              isSelectingFusionMaterial={pendingFusionSummon !== null}
+              selectedMaterialIndices={pendingFusionSummon?.selectedIndices ?? []}
+              onToggleMaterialSelection={handleFusionMaterialToggle}
+              isSelectingEvolutionMaterial={pendingEvolutionSummon !== null}
+              onSelectEvolutionMaterial={handleEvolutionMaterialClick}
+            />
+
+            <Hand
+              cards={me.hand}
+              onCardHover={handleCardHover}
+              onCardHoverEnd={handleCardHoverEnd}
+              onNormalSummon={handleNormalSummon}
+              onActivateSpell={handleActivateSpell}
+              onSetSpellOrTrap={handleSetSpellOrTrap}
+              onToGrave={handleHandToGrave}
+              onBanish={handleHandBanish}
+              onStackTop={handleHandStackTop}
+              onStackBottom={handleHandStackBottom}
+            />
+
+            {/* Renders every card in cardPositionEntries on top of
+                everything above — DOM order alone (this is the last
+                child) is enough to put it above DuelField's own zone
+                chrome and Hand's own cells, without needing an explicit
+                z-index war with FieldZone-rotatedOverlay or anything
+                else in there. */}
+            <CardLayer entries={cardPositionEntries} />
+          </div>
 
           {/* A child of fieldArea specifically (not the page root) so its
               horizontal centering is relative to the actual field, not
@@ -1028,18 +1254,6 @@ function MultiplayerDuelFieldPage() {
           })()}
         </div>
 
-        <Hand
-          cards={me.hand}
-          onCardHover={handleCardHover}
-          onCardHoverEnd={handleCardHoverEnd}
-          onNormalSummon={handleNormalSummon}
-          onActivateSpell={handleActivateSpell}
-          onSetSpellOrTrap={handleSetSpellOrTrap}
-          onToGrave={handleHandToGrave}
-          onBanish={handleHandBanish}
-          onStackTop={handleHandStackTop}
-          onStackBottom={handleHandStackBottom}
-        />
       </div>
 
 

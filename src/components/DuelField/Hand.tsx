@@ -1,20 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import CardImage from '../CardView/CardImage';
 import type { CardData } from '../../types/Card';
 import type { CardInstance } from '../../types/CardInstance';
+import { getHandSlot } from '../../duel/cardGeometry';
 import './Hand.css';
-
-const CARD_WIDTH = 813;
-const CARD_HEIGHT = 1185;
-const SCALE = 0.12;
-const CARD_CELL_WIDTH = CARD_WIDTH * SCALE;
-const CARD_CELL_HEIGHT = CARD_HEIGHT * SCALE;
-const HAND_GAP = 4;
-// Beyond this many cards, spacing between cards shrinks (and they start
-// overlapping) so the hand's total width stays capped rather than
-// growing without bound and overflowing the screen.
-const MAX_VISIBLE_CARDS = 6;
-const MAX_HAND_WIDTH = MAX_VISIBLE_CARDS * CARD_CELL_WIDTH + (MAX_VISIBLE_CARDS - 1) * HAND_GAP;
 
 // How long to wait before actually hiding the menu after the cursor
 // leaves. Without this, the menu (which only renders while hovered)
@@ -136,35 +124,35 @@ function Hand({
     setHoveredInstanceId(null);
   };
 
-  // Normal spacing (card width + gap) up to MAX_VISIBLE_CARDS; beyond
-  // that, spacing shrinks so (n-1) advances plus one card width always
-  // equals MAX_HAND_WIDTH exactly, however many cards there are.
-  const n = cards.length;
-  const normalAdvance = CARD_CELL_WIDTH + HAND_GAP;
-  const advance =
-    n <= 1 || n <= MAX_VISIBLE_CARDS
-      ? normalAdvance
-      : (MAX_HAND_WIDTH - CARD_CELL_WIDTH) / (n - 1);
-  const handWidth = n === 0 ? 0 : (n - 1) * advance + CARD_CELL_WIDTH;
+  const hoveredIndex = cards.findIndex((c) => c.instanceId === hoveredInstanceId);
+  const hoveredCard = hoveredIndex === -1 ? null : cards[hoveredIndex];
+  const hoveredActions = hoveredCard ? getHandActions(hoveredCard.card) : [];
+  const hoveredSlot = hoveredIndex === -1 ? null : getHandSlot(cards.length, hoveredIndex);
 
   return (
-    <div className="Hand" style={{ width: handWidth, height: CARD_CELL_HEIGHT }}>
+    // Position (top:0/left:0) comes from .Hand's own CSS rule now — see
+    // that rule's comment for why.
+    <div className="Hand">
       {cards.map(({ instanceId, card }, index) => {
-        const actions = getHandActions(card);
-        const showMenu = hoveredInstanceId === instanceId && actions.length > 0;
+        const slot = getHandSlot(cards.length, index);
 
         return (
           <div
             key={instanceId}
             className="Hand-cell"
             style={{
-              width: CARD_CELL_WIDTH,
-              height: CARD_CELL_HEIGHT,
-              left: index * advance,
+              width: slot.width,
+              height: slot.height,
+              left: slot.x,
+              top: slot.y,
               // Overlapping cards otherwise stack purely by DOM order
               // (later card on top) — this lets the hovered card rise
               // above whichever neighbors currently cover part of it,
-              // regardless of its own position in that order.
+              // regardless of its own position in that order. This
+              // z-index, combined with position:absolute, is exactly
+              // what makes THIS element its own stacking context — which
+              // is precisely why the context menu can no longer live
+              // inside it (see below).
               zIndex: hoveredInstanceId === instanceId ? cards.length + 1 : index,
             }}
             onMouseEnter={() => {
@@ -177,35 +165,56 @@ function Hand({
               onCardHoverEnd?.();
             }}
           >
-            {showMenu && (
-              <div className="Hand-contextMenu">
-                {actions.map((action) => (
-                  <button
-                    key={action.key}
-                    type="button"
-                    className="Hand-contextMenuButton"
-                    onClick={() => handleAction(instanceId, action.key)}
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="Hand-cardClip">
-              <div
-                className="Hand-cardWrapper"
-                style={{
-                  width: CARD_WIDTH,
-                  height: CARD_HEIGHT,
-                  transform: `scale(${SCALE})`,
-                }}
-              >
-                <CardImage card={card} />
-              </div>
-            </div>
+            {/* No card art rendered here anymore — CardLayer (src/duel/)
+                renders every hand card as its own independently-
+                positioned element, sitting visually on top of this
+                cell's exact footprint whenever nothing's mid-move. This
+                div's only remaining job is the hover/click/menu target
+                itself. */}
           </div>
         );
       })}
+
+      {/* Rendered as a direct child of .Hand — deliberately NOT nested
+          inside the hovered .Hand-cell above. That cell's own
+          position:absolute + z-index makes it its own stacking context,
+          which would trap any z-index set on a menu nested inside it:
+          no matter how high, it could only ever win against OTHER
+          things inside that same cell, never against CardLayer's cards
+          (which live entirely outside it, as a sibling of .Hand within
+          .boardStage). .Hand itself has no z-index of its own, so this
+          participates directly in .boardStage's own stacking order
+          instead, where 9999 legitimately beats CardLayer's cards
+          (whose z-index values top out in the low 100s/200s — see
+          cardPositions.ts). Position is computed explicitly from the
+          hovered card's own slot, since it's no longer nested inside
+          that card's cell and so can't rely on that cell's own
+          bottom:100%/left:50% relative positioning anymore. */}
+      {hoveredSlot && hoveredActions.length > 0 && (
+        <div
+          className="Hand-contextMenu"
+          style={{
+            position: 'absolute',
+            left: hoveredSlot.x + hoveredSlot.width / 2,
+            top: hoveredSlot.y,
+            transform: 'translate(-50%, -100%)',
+            marginTop: -4,
+          }}
+          onMouseEnter={cancelHide}
+          onMouseLeave={() => scheduleHide(hoveredInstanceId!)}
+        >
+          {hoveredActions.map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              className="Hand-contextMenuButton"
+              onClick={() => handleAction(hoveredInstanceId!, action.key)}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

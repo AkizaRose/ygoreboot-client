@@ -26,23 +26,14 @@
   outline-offset: -2px;
 }
 
-.FieldZone-cardOuter {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 2;
-  /* Defense Position rotation lives one level down, on
-     .FieldZone-cardRotation, so a stack offset transform here and a
-     rotation transform there don't have to fight over the same
-     property on the same element. */
-}
-
-/* Deliberately a sibling of .FieldZone-cardRotation rather than nested
-   inside it — so this stays upright and readable even when the card
-   itself is rotated for Defense Position, rather than rotating with it.
-   font-size/-webkit-text-stroke are scaled down from the 36px/3px used
-   for the same text on the full-size rasterized card (CardImage), which
-   would be far too heavy at this card's actual ~72px field size. */
+/* This zone's own footprint no longer contains the card itself — see
+   CardLayer, in src/duel/ — so this stays upright and readable
+   independently of whatever CardLayer happens to be doing with the
+   card's own rotation/position right now, rather than needing to stay a
+   sibling of a card-rotation wrapper the way it used to. font-size/
+   -webkit-text-stroke are scaled down from the 36px/3px used for the
+   same text on the full-size rasterized card (CardImage), which would
+   be far too heavy at this card's actual ~72px field size. */
 .FieldZone-statsOverlay {
   position: absolute;
   bottom: 2px;
@@ -55,7 +46,7 @@
   font-size: 9px;
   line-height: 1;
   pointer-events: none;
-  z-index: 3;
+  z-index: 1000;
 }
 
 /* The value that ISN'T currently relevant to combat — DEF while in
@@ -64,29 +55,6 @@
 .FieldZone-statsOverlay--dimmed {
   color: #999;
   font-size: 0.85em;
-}
-
-.FieldZone-cardRotation {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  /* Default transform-origin (center) correctly pivots around the
-     zone's own center, since this wrapper's own size is already the
-     zone's exact footprint (100% of .FieldZone-cardOuter, which is set
-     to the zone's exact dimensions via inline style) — unlike the inner
-     .FieldZone-cardWrapper below, whose much larger native size would
-     make a center-pivot land in the wrong place entirely.
-
-     Rotation itself is a static inline transform (see FieldZone.tsx) —
-     whatever Attack/Defense Position (and, for the opponent's side,
-     rotated180) computes to, applied directly with no transition. */
-}
-
-.FieldZone-cardWrapper {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: top left;
 }
 
 .FieldZone-rotatedOverlay {
@@ -142,59 +110,6 @@
   user-select: none;
 }
 
-.FieldZone-pile {
-  /* absolute (not relative) so this fills the zone's full 80x117 box
-     edge-to-edge, ignoring .FieldZone's own padding — matching how
-     .FieldZone-cardOuter is positioned for face-up cards. Left as
-     `relative` here previously, this stayed in normal flow and got
-     constrained to the smaller padded content area instead, which is
-     why deck piles were rendering visibly smaller than every other card
-     on the field. */
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 2;
-}
-
-.FieldZone-topCardOffset {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  /* This wrapper's own transform (even a no-op translate(0,0) when
-     there's no stack offset) creates a new CSS stacking context, which
-     would otherwise make its z-index:auto lose to
-     .FieldZone-rotatedOverlay's explicit z-index:1 regardless of DOM
-     order — breaking the earlier fix that keeps Monster Zone cards
-     rendering above that overlay. Matches the z-index .FieldZone-cardOuter
-     used to have directly, before it moved one level deeper. */
-  z-index: 2;
-}
-
-.FieldZone-pileImage {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 1px;
-  display: block;
-}
-
-.FieldZone-stackLayer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 1px;
-  /* Faint edge so each layer reads as a distinct card peeking out from
-     behind the one in front of it, rather than a blurry double-image. */
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
-}
-
 .FieldZone-pileCount {
   position: absolute;
   bottom: 2px;
@@ -207,4 +122,8 @@
   border-radius: 2px;
   line-height: 1.2;
   user-select: none;
+  /* Same underlying issue as .FieldZone-statsOverlay above (see its own
+     comment) — no explicit z-index at all here means it loses to any of
+     CardLayer's cards outright, not just to ones with a higher number. */
+  z-index: 1000;
 }

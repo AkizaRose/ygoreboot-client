@@ -45,9 +45,20 @@ export function useRasterizedCard(card: CardData) {
 
     const existing = getInFlightCapture(id);
     if (existing) {
-      existing.then((url) => {
-        if (!cancelled) setImageUrl(url);
-      });
+      existing
+        .then((url) => {
+          if (!cancelled) setImageUrl(url);
+        })
+        .catch((err) => {
+          // Same failure mode as the capture-owner's own .catch() below —
+          // this instance just isn't the one that actually ran the
+          // capture, it was waiting on someone else's. Left uncached
+          // either way; the live fallback keeps rendering for both.
+          console.error(
+            `[CardImage] failed to rasterize card "${card.name}" (${id}) (shared capture):`,
+            err,
+          );
+        });
       return () => {
         cancelled = true;
       };

@@ -1,40 +1,25 @@
+/* top:0/left:0, not the margin:8px auto centering this used to do —
+   getHandSlot (cardGeometry.ts) now returns coordinates already
+   expressed in the shared board space it shares with DuelField's own
+   zones, so this container needs to get out of the way entirely and let
+   each .Hand-cell's own left/top (set inline, computed per-card) carry
+   the real position. */
 .Hand {
-  position: relative;
-  margin: 8px auto;
-  /* Width/height are set inline (computed from the current card count),
-     since they now depend on the overlap math rather than being
-     flex-content-driven. */
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 .Hand-cell {
   position: absolute;
-  bottom: 0;
 }
 
-.Hand-cardClip {
-  position: relative;
-  /* Clips .Hand-cardWrapper's native (pre-scale) 813x1185 footprint,
-     which was inflating the whole page's layout even though it renders
-     visually correctly at its small scaled-down size — CSS transform
-     shrinks how content *paints*, but apparently isn't reliably excluded
-     from how ancestors compute their own overflow/scrollable area here.
-     Safe to clip at this level specifically because .Hand-contextMenu is
-     a sibling of this element (both direct children of .Hand-cell), not
-     a descendant — so it's unaffected and can still escape .Hand-cell's
-     own bounds as before. */
-  overflow: hidden;
-}
-
-.Hand-cardWrapper {
-  transform-origin: top left;
-}
-
+/* position/left/top/transform are set inline now — computed per-render
+   from whichever card is currently hovered (see Hand.tsx), since this
+   is no longer nested inside that card's own .Hand-cell and so can't
+   rely on that cell's own bottom:100%/left:50% relative positioning
+   the way it used to. Only the visual styling lives here now. */
 .Hand-contextMenu {
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 4px;
   display: flex;
   flex-direction: column;
   background: #16171dee;

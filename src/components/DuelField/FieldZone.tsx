@@ -1,20 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import CardImage from '../CardView/CardImage';
 import type { CardData } from '../../types/Card';
-import type { CardInstance } from '../../types/CardInstance';
-import cardBackImg from '../../assets/card/CardBack.png';
-import stackImg from '../../assets/card/Stack.png';
 import './FieldZone.css';
 
-// Matches the zone box's own size (see .FieldZone in FieldZone.css) —
-// deriving the scale from these rather than hardcoding a scale factor
-// means a face-up card always fills the zone exactly, even if the box
-// size changes later.
+// Matches the zone box's own size (see .FieldZone in FieldZone.css).
 const ZONE_WIDTH = 72;
 const ZONE_HEIGHT = 105;
-const CARD_WIDTH = 813;
-const CARD_HEIGHT = 1185;
-const CARD_SCALE = ZONE_WIDTH / CARD_WIDTH;
 
 // Same delay-before-hide reasoning as Hand's context menu — without it,
 // the menu (which only renders while hovered) would unmount the instant
@@ -29,43 +19,24 @@ export interface FieldZoneAction {
 
 interface FieldZoneProps {
   label: string;
-  // A card placed in this zone (e.g. a Normal Summoned monster, or a Set
-  // Spell/Trap). Takes priority over `image` if both are somehow given.
-  // Ignored when `stackCards` is given instead (Grave/Banished).
+  // The occupying card, if any — no longer used to RENDER anything here
+  // (see CardLayer, in src/duel/), only for this zone's own logic: is
+  // there something here to hover/click/show a menu for, and what ATK/
+  // DEF should the stats overlay below show. The actual card art for
+  // whatever's in this zone is a separate, independently-positioned
+  // element in CardLayer, which happens to sit visually on top of this
+  // zone's own footprint whenever nothing's mid-move.
   card?: CardData;
-  // Stable per-card identity (see src/types/CardInstance.ts) — used as
-  // this element's React key so list reconciliation stays correct as
-  // cards move between zones.
-  instanceId?: string;
-  // For face-up multi-card piles (Grave/Banished) — every card actually
-  // gets rendered here, not just the top one, each individually keyed by
-  // its own instanceId and showing its own real face. Ordered
-  // bottom-of-visible-window to top (last entry is the actual top of the
-  // pile); when provided (non-empty), this takes priority over `card`
-  // for rendering, though `card`/`instanceId` (the top card) are still
-  // used for the hover/menu behavior on the outer zone.
-  stackCards?: CardInstance[];
-  // Whether `card` is showing face-down (Set) rather than face-up. Only
-  // affects what's visually rendered — hover still reports the real
-  // card, so the player can check what they've Set via Card Display.
+  // Whether `card` is currently showing face-down (Set) — still matters
+  // here even without rendering anything: hover still reports the real
+  // card via onCardHover regardless, so Card Display can reveal it.
   faceDown?: boolean;
-  // When provided (and no `card`), the zone renders as a face-down pile
-  // (image + count) instead of a plain text label — used for Main Deck /
-  // Extra Deck once real deck data has been loaded.
+  // When provided (and no `card`), this zone represents a face-down pile
+  // (Main Deck / Extra Deck) rather than a single card slot — used for
+  // the pile-count badge and to enable the deck menu/click-to-draw,
+  // same as `card` does for single-card zones.
   image?: string;
   count?: number;
-  // How the pile visually reads as a stack of cards rather than one
-  // flat image. Configurable per-instance (rather than a fixed global
-  // constant) since Main Deck and Extra Deck sit at different distances
-  // from a centered player viewpoint and may need different-looking
-  // stacks to simulate that. X/Y offsets are independent so the stack
-  // can lean more steeply in one direction than the other. Layer count
-  // is capped rather than scaling 1:1 with the actual card count —
-  // beyond a handful of layers the visual difference becomes
-  // imperceptible anyway.
-  stackOffsetStepX?: number;
-  stackOffsetStepY?: number;
-  stackMaxLayers?: number;
   onClick?: () => void;
   // Purely visual — a highlighted border indicating this zone is
   // currently chosen as part of some in-progress multi-select
@@ -88,42 +59,19 @@ interface FieldZoneProps {
   // rotated (Defense Position) card would occupy. Purely decorative for
   // now — only ever passed for Monster Zones.
   showRotatedOverlay?: boolean;
-  // Only meaningful for face-up Monster Zone cards. 'defense' rotates
-  // the actual card -90° to align with the overlay above; 'attack' (or
-  // omitted) renders it upright, unrotated.
+  // Only meaningful for face-up Monster Zone cards — drives the ATK/DEF
+  // stats overlay below (which value is dimmed), independently of
+  // however CardLayer happens to be rendering/rotating the card itself
+  // right now.
   battlePosition?: 'attack' | 'defense';
-  // Same idea as battlePosition, but for the stackCards branch — a
-  // Monster Zone Fusion stack needs every layer to share one rotation
-  // (the whole stack is in Attack or Defense Position, not each card
-  // individually). Undefined for Grave/Banished (they never pass this),
-  // which just renders those upright. Also gates the ATK/DEF stats
-  // overlay, shown only for the top-most layer, only when this is
-  // provided — Grave/Banished stacks never show one.
-  stackBattlePosition?: 'attack' | 'defense';
-  // True for every zone on the opponent's (flipped) side — added on top
-  // of whatever battlePosition/stackBattlePosition already computes,
-  // rather than replacing it, so a card's own Attack/Defense rotation
-  // and the "this whole side is upside-down from the player's view"
-  // rotation compose correctly rather than one overriding the other.
-  // Deliberately doesn't touch the ATK/DEF stats overlay (kept upright
-  // and readable regardless of which side it's on, matching how actual
-  // duel UIs handle this) or the dashed Defense Position guide box
-  // (a symmetric rectangle — rotating it 180° has no visible effect
-  // anyway).
-  rotated180?: boolean;
 }
 
 function FieldZone({
   label,
   card,
-  instanceId,
-  stackCards,
   faceDown = false,
   image,
   count,
-  stackOffsetStepX = 2,
-  stackOffsetStepY = 2,
-  stackMaxLayers = 4,
   onClick,
   selected = false,
   onCardHover,
@@ -132,8 +80,6 @@ function FieldZone({
   onMenuAction,
   showRotatedOverlay = false,
   battlePosition = 'attack',
-  stackBattlePosition,
-  rotated180 = false,
 }: FieldZoneProps) {
   const [showMenu, setShowMenu] = useState(false);
   const hideTimeoutRef = useRef<number | undefined>(undefined);
@@ -179,40 +125,6 @@ function FieldZone({
     onMenuAction?.(actionKey);
   };
 
-  // Shared by both the face-up-card branch (Grave/Banished, which pass
-  // both `card` and `count`) and the pile branch (Main/Extra Deck, which
-  // pass `image` and `count`) — a stack of cards reads the same way
-  // regardless of which is showing on top. Zero for anything that
-  // doesn't pass `count` at all (Monster/Spell-Trap/Field Zone cards),
-  // so those are completely unaffected.
-  const stackLayerCount = count != null ? Math.min(Math.max(count - 1, 0), stackMaxLayers) : 0;
-  // j=0 is the bottom/deepest layer, fixed at zero offset (the "anchor"
-  // of the whole pile). Each layer closer to the top gets progressively
-  // more offset, ending with the actual top card at the largest offset
-  // of all.
-  const topOffsetX = stackLayerCount * stackOffsetStepX;
-  const topOffsetY = stackLayerCount * stackOffsetStepY;
-  // Parameterized by image rather than hardcoded, since the two callers
-  // need different layer art: the face-down pile (Main/Extra Deck) uses
-  // the real card back, while the face-up card branch (Grave/Banished)
-  // uses a plain white-filled card outline (Stack.png) instead — using
-  // the actual card back there would make the cards underneath read as
-  // face-down, which they aren't.
-  const buildStackLayers = (layerImage: string) =>
-    Array.from({ length: stackLayerCount }, (_, j) => j).map((j) => {
-      const offsetX = j * stackOffsetStepX;
-      const offsetY = j * stackOffsetStepY;
-      return (
-        <img
-          key={j}
-          className="FieldZone-stackLayer"
-          src={layerImage}
-          alt=""
-          style={{ transform: `translate(${offsetX}px, ${offsetY}px)` }}
-        />
-      );
-    });
-
   return (
     <div
       className={[
@@ -246,132 +158,26 @@ function FieldZone({
           style={{ width: ZONE_WIDTH, height: ZONE_HEIGHT }}
         />
       )}
-      {stackCards && stackCards.length > 0 ? (
-        <>
-          {stackCards.map((entry, j) => {
-            const isTopLayer = j === stackCards.length - 1;
-            const rotation =
-              (stackBattlePosition === 'defense' ? -90 : 0) + (rotated180 ? 180 : 0);
-            return (
-              <div
-                key={entry.instanceId}
-                className="FieldZone-cardOuter"
-                style={{
-                  width: ZONE_WIDTH,
-                  height: ZONE_HEIGHT,
-                  transform: `translate(${j * stackOffsetStepX}px, ${j * stackOffsetStepY}px)`,
-                }}
-              >
-                <div className="FieldZone-cardRotation" style={{ transform: `rotate(${rotation}deg)` }}>
-                  <div
-                    className="FieldZone-cardWrapper"
-                    style={{
-                      width: CARD_WIDTH,
-                      height: CARD_HEIGHT,
-                      transform: `scale(${CARD_SCALE})`,
-                    }}
-                  >
-                    <CardImage card={entry.card} />
-                  </div>
-                </div>
-                {isTopLayer &&
-                  stackBattlePosition &&
-                  entry.card.cardClass === 'Monster' &&
-                  (entry.card.atk || entry.card.def) && (
-                    <div className="FieldZone-statsOverlay">
-                      <span
-                        className={
-                          stackBattlePosition === 'defense'
-                            ? 'FieldZone-statsOverlay--dimmed'
-                            : undefined
-                        }
-                      >
-                        {entry.card.atk ?? '?'}
-                      </span>
-                      /
-                      <span
-                        className={
-                          stackBattlePosition !== 'defense'
-                            ? 'FieldZone-statsOverlay--dimmed'
-                            : undefined
-                        }
-                      >
-                        {entry.card.def ?? '?'}
-                      </span>
-                    </div>
-                  )}
-              </div>
-            );
-          })}
-        </>
-      ) : card && !faceDown ? (
-        <>
-          {buildStackLayers(stackImg)}
-          <div
-            className="FieldZone-topCardOffset"
-            style={{ transform: `translate(${topOffsetX}px, ${topOffsetY}px)` }}
-          >
-            <div key={instanceId} className="FieldZone-cardOuter" style={{ width: ZONE_WIDTH, height: ZONE_HEIGHT }}>
-              <div
-                className="FieldZone-cardRotation"
-                style={{
-                  transform: `rotate(${(battlePosition === 'defense' ? -90 : 0) + (rotated180 ? 180 : 0)}deg)`,
-                }}
-              >
-                <div
-                  className="FieldZone-cardWrapper"
-                  style={{
-                    width: CARD_WIDTH,
-                    height: CARD_HEIGHT,
-                    transform: `scale(${CARD_SCALE})`,
-                  }}
-                >
-                  <CardImage card={card} />
-                </div>
-              </div>
-              {card.cardClass === 'Monster' && (card.atk || card.def) && (
-                <div className="FieldZone-statsOverlay">
-                  <span
-                    className={
-                      battlePosition === 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined
-                    }
-                  >
-                    {card.atk ?? '?'}
-                  </span>
-                  /
-                  <span
-                    className={
-                      battlePosition !== 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined
-                    }
-                  >
-                    {card.def ?? '?'}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      ) : card && faceDown ? (
-        <div key={instanceId} className="FieldZone-cardOuter" style={{ width: ZONE_WIDTH, height: ZONE_HEIGHT }}>
-          <div className="FieldZone-pile">
-            <img className="FieldZone-pileImage" src={cardBackImg} alt="" />
-          </div>
+      {/* No card/pile art rendered here anymore — CardLayer (src/duel/)
+          renders every card as its own independently-positioned element,
+          which sits visually on top of this zone's footprint whenever
+          nothing's mid-move. This div's only remaining visual jobs: the
+          zone's own border/background (see .FieldZone in FieldZone.css),
+          the rotated overlay above, the stats overlay and pile count
+          below, and the plain text label when this zone is empty. */}
+      {!hasContent && <span className="FieldZone-label">{label}</span>}
+      {card && !faceDown && card.cardClass === 'Monster' && (card.atk || card.def) && (
+        <div className="FieldZone-statsOverlay">
+          <span className={battlePosition === 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined}>
+            {card.atk ?? '?'}
+          </span>
+          /
+          <span className={battlePosition !== 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined}>
+            {card.def ?? '?'}
+          </span>
         </div>
-      ) : image ? (
-        <div className="FieldZone-pile">
-          {buildStackLayers(cardBackImg)}
-          <div
-            className="FieldZone-topCardOffset"
-            style={{ transform: `translate(${topOffsetX}px, ${topOffsetY}px)` }}
-          >
-            <img className="FieldZone-pileImage" src={image} alt={label} />
-          </div>
-          {count != null && <span className="FieldZone-pileCount">{count}</span>}
-        </div>
-      ) : (
-        <span className="FieldZone-label">{label}</span>
       )}
-      {card && count != null && <span className="FieldZone-pileCount">{count}</span>}
+      {count != null && <span className="FieldZone-pileCount">{count}</span>}
     </div>
   );
 }

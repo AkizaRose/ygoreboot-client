@@ -215,7 +215,29 @@ export function useMultiplayerDuel(
     const unsubscribe = onSnapshot(
       doc(db, 'duels', duelId),
       (snapshot) => {
-        setDuelDoc(snapshot.exists() ? (snapshot.data() as DuelDoc) : null);
+        const data = snapshot.exists() ? (snapshot.data() as DuelDoc) : null;
+        // TEMPORARY DIAGNOSTIC — remove once the animation bug is
+        // confirmed fixed. Logs the RAW data this specific snapshot
+        // firing actually delivered — hasPendingWrites/fromCache tell us
+        // whether this is a local optimistic echo or a server-confirmed
+        // value, and the instanceId lists let us directly compare
+        // against what MultiplayerDuelFieldPage's own diagnostic
+        // reported as missing, rather than inferring it secondhand.
+        const summarize = (role: 'player1' | 'player2') => {
+          const p = data?.[role];
+          if (!p) return null;
+          return {
+            monsterZones: p.monsterZones.map((c) => c?.instanceId ?? null),
+            grave: p.grave.map((c) => c.instanceId),
+          };
+        };
+        console.log('[useMultiplayerDuel] duelDoc snapshot', {
+          hasPendingWrites: snapshot.metadata.hasPendingWrites,
+          fromCache: snapshot.metadata.fromCache,
+          player1: summarize('player1'),
+          player2: summarize('player2'),
+        });
+        setDuelDoc(data);
       },
       (err) => {
         // A silent failure here (no error callback at all) is exactly
