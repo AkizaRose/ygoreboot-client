@@ -259,11 +259,13 @@ export function getHandSlot(handCount: number, index: number): ZoneSlot {
 
 // The x/width math is identical to getHandSlot's own — same card size,
 // same max-visible-then-shrink overlap rule, same BOARD_WIDTH-centered
-// row — the opponent's hand only differs in where it sits (above the
-// board, not below) and that it reads upside-down from the player's own
-// viewpoint. A thin wrapper rather than each caller repeating "call
-// getHandSlot for x, then override y and rotated180" separately.
+// row. The important difference is horizontal mirroring: `index` is still
+// the card's position in the OPPONENT'S own left-to-right hand order, but
+// the opponent is facing the player, so that order appears right-to-left
+// from the player's viewpoint. The final index is therefore mirrored before
+// being converted into the shared board-space x coordinate.
 export function getOpponentHandSlot(handCount: number, index: number): ZoneSlot {
-  const slot = getHandSlot(handCount, index);
+  const mirroredIndex = Math.max(0, handCount - 1 - index);
+  const slot = getHandSlot(handCount, mirroredIndex);
   return { ...slot, y: OPPONENT_HAND_TOP, rotated180: true };
 }

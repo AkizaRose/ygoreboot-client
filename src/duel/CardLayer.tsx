@@ -222,21 +222,39 @@ function AnimatedCard({
   // an approximation — repeating the same value for two consecutive
   // keyframes means no movement happens between them, which is exactly
   // what "briefly stacked at the center before fanning back out" needs.
+  const shuffleStart = initialPosition ?? viaOverride;
   const animateTarget = viaOverride
     ? {
-        x: [viaOverride.x + offsetX, viaOverride.x + offsetX, entry.x + offsetX],
-        y: [viaOverride.y + offsetY, viaOverride.y + offsetY, entry.y + offsetY],
+        x: [
+          shuffleStart!.x + offsetX,
+          viaOverride.x + offsetX,
+          viaOverride.x + offsetX,
+          entry.x + offsetX,
+        ],
+        y: [
+          shuffleStart!.y + offsetY,
+          viaOverride.y + offsetY,
+          viaOverride.y + offsetY,
+          entry.y + offsetY,
+        ],
         width: [
+          CARD_NATIVE_WIDTH * shuffleStart!.scale,
           CARD_NATIVE_WIDTH * viaOverride.scale,
           CARD_NATIVE_WIDTH * viaOverride.scale,
           displayWidth,
         ],
         height: [
+          CARD_NATIVE_HEIGHT * shuffleStart!.scale,
           CARD_NATIVE_HEIGHT * viaOverride.scale,
           CARD_NATIVE_HEIGHT * viaOverride.scale,
           displayHeight,
         ],
-        rotate: [viaOverride.rotation, viaOverride.rotation, entry.rotation],
+        rotate: [
+          shuffleStart!.rotation,
+          viaOverride.rotation,
+          viaOverride.rotation,
+          entry.rotation,
+        ],
       }
     : {
         x: entry.x + offsetX,
@@ -248,7 +266,7 @@ function AnimatedCard({
   // times is only meaningful alongside an actual keyframe array — for the
   // plain (non-via) case above, framer-motion ignores it entirely, since
   // there's only one value to reach, not a sequence to schedule.
-  const keyframeTimes = viaOverride ? [0.4, 0.6, 1] : undefined;
+  const keyframeTimes = viaOverride ? [0, 0.4, 0.6, 1] : undefined;
 
   return (
     <motion.div
