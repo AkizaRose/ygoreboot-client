@@ -32,8 +32,13 @@ const COLUMN_GAP = 40;
 const COLUMN_PITCH = COLUMN_WIDTH + COLUMN_GAP;
 const ROW_GAP = 6; // .DuelField-playerField's own gap, between fieldRow/deckRow
 const ROW_PITCH = ZONE_HEIGHT + ROW_GAP;
-const SIDE_GAP = 24; // .DuelField's own gap, opponent block <-> centerLine <-> player block
-const CENTER_LINE_HEIGHT = 1;
+const SIDE_GAP = 24; // .DuelField's own gap, opponent block <-> tracker row <-> player block
+// Must match PhaseTracker.css's own explicit height on .PhaseTracker
+// exactly (see that file's own comment on why it's explicit rather than
+// left to padding/font-size) — this used to be CENTER_LINE_HEIGHT (a
+// plain 1px dividing line, before the Phase Tracker replaced it), and
+// the row it now describes is considerably taller.
+const PHASE_TRACKER_ROW_HEIGHT = 1;
 
 export type FieldZoneKind = 'field' | 'monster' | 'grave' | 'banished';
 export type DeckZoneKind = 'extra' | 'spellTrap' | 'main';
@@ -102,7 +107,7 @@ function rowY(rowIndex: 0 | 1 | 2 | 3): number {
   // and adding just one more ZONE_HEIGHT on top of it is what correctly
   // measures "the bottom edge of the opponent's whole block," with
   // nothing extra.
-  const afterOpponent = rowY(1) + ZONE_HEIGHT + SIDE_GAP + CENTER_LINE_HEIGHT + SIDE_GAP;
+  const afterOpponent = rowY(1) + ZONE_HEIGHT + SIDE_GAP + PHASE_TRACKER_ROW_HEIGHT + SIDE_GAP;
   return afterOpponent + (rowIndex - 2) * ROW_PITCH;
 }
 
@@ -218,7 +223,7 @@ export const BOARD_WIDTH = 6 * COLUMN_PITCH + COLUMN_WIDTH;
 // Hand.css's own `margin: 8px auto` top margin, reproduced as a fixed
 // offset now that Hand's vertical position is computed here instead of
 // coming from being a normal-flow sibling below DuelField.
-const HAND_TOP_MARGIN = 8;
+const HAND_TOP_MARGIN = 12;
 
 // --- Hand layout (Hand.tsx's own overlap math, reproduced exactly) ---
 // handCount is the CURRENT total size of the hand (needed to know

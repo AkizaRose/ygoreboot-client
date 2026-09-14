@@ -138,6 +138,15 @@
   cursor: pointer;
 }
 
+/* The "[username] will go first" banner shown once, before the field
+   itself ever mounts — larger and more prominent than the plain status
+   text (e.g. "Waiting for both players…") this shares a container with,
+   since this is a one-time announcement rather than a passive status
+   line. */
+.MultiplayerDuelFieldPage-firstPlayerAnnouncement {
+  font-size: 28px;
+}
+
 /* Floats above the field, centered, while either Fusion or Evolution
    Summon's material selection is in progress — see pendingFusionSummon /
    pendingEvolutionSummon in MultiplayerDuelFieldPage.tsx. */

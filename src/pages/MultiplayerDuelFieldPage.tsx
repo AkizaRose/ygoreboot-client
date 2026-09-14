@@ -16,9 +16,11 @@ import { BOARD_WIDTH, STAGE_HEIGHT } from '../duel/cardGeometry';
 import { getAvatarUrl } from '../components/Avatar/avatars';
 import {
   useMultiplayerDuel,
+  TURN_PHASES,
   type PlayerRole,
   type OpponentInfo,
   type MyDuelState,
+  type TurnPhase,
 } from '../components/Matchmaking/useMultiplayerDuel';
 import type { CardData } from '../types/Card';
 import type { CardInstance, PlacedCard } from '../types/CardInstance';
@@ -86,14 +88,27 @@ function MultiplayerDuelFieldPage() {
   const { currentUser } = useAuth();
   const state = (location.state ?? {}) as MultiplayerDuelLocationState;
 
-  const { loading, error, me, opponent } = useMultiplayerDuel(
-    duelId,
-    state.role,
-    state.opponentInfo,
-    state.myDeckId,
-  );
+  const {
+    loading,
+    error,
+    me,
+    opponent,
+    turnPlayer,
+    currentPhase,
+    turnEnding,
+    turnNumber,
+    isMyTurn,
+  } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
+  // Shown once, briefly, before the actual field ever renders — see the
+  // render guard further down. Starts true on every mount rather than
+  // being tied to turnNumber === 1 specifically, since a fresh page load
+  // re-runs useMultiplayerDuel's own initialization effect the same way
+  // it currently re-shuffles a fresh starting hand on refresh — this
+  // banner reappearing on refresh is consistent with that existing
+  // behavior, not a new one introduced here.
+  const [showFirstPlayerBanner, setShowFirstPlayerBanner] = useState(true);
   const hoverTimeoutRef = useRef<number | undefined>(undefined);
   // Tracks the most recently INTENDED state, updated synchronously by
   // applyMeUpdate the instant it computes a new `next` — well before
@@ -153,6 +168,16 @@ function MultiplayerDuelFieldPage() {
     latestMeRef.current = me;
     setRenderMeState(me);
   }, [me]);
+
+  // Auto-dismisses the "will go first" banner a couple of seconds after
+  // turnPlayer first becomes known — before that, there's nothing to
+  // announce yet (still waiting on the duel doc's first snapshot), so
+  // the timer deliberately doesn't start until turnPlayer is non-null.
+  useEffect(() => {
+    if (!turnPlayer) return;
+    const timeoutId = window.setTimeout(() => setShowFirstPlayerBanner(false), 2500);
+    return () => window.clearTimeout(timeoutId);
+  }, [turnPlayer]);
   // TEMPORARY DIAGNOSTIC ref — see its use further down, near
   // cardPositionEntries. Remove alongside that code once the animation
   // bug is confirmed fixed.
@@ -333,6 +358,67 @@ function MultiplayerDuelFieldPage() {
       hand: shuffle(current.hand),
       handShuffleVersion: current.handShuffleVersion + 1,
     }));
+
+  // --- Turn / Phase actions ---
+
+  // Writes to the shared, top-level turn/phase fields — unlike
+  // applyMeUpdate, this isn't "my own" state to own exclusively: which
+  // client is ever allowed to call this for a given transition is
+  // enforced entirely by the handlers below (only the turn player
+  // advances phases; only the non-turn-player starts their own turn),
+  // not by anything at this level.
+  const applyTurnUpdate = (
+    patch: Partial<{
+      turnPlayer: PlayerRole;
+      currentPhase: TurnPhase;
+      turnEnding: boolean;
+      turnNumber: number;
+    }>,
+  ) => {
+    if (!duelId) return;
+    setDoc(doc(db, 'duels', duelId), patch, { merge: true }).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to update turn state:', err);
+    });
+  };
+
+  // Turn-player-only, same guard duplicated in PhaseTracker itself (which
+  // disables the arrows) — kept here too since PhaseTracker only
+  // controls what's clickABLE, not what's possible to call directly.
+  const handlePrevPhase = () => {
+    if (!isMyTurn || turnEnding || !currentPhase) return;
+    const index = TURN_PHASES.indexOf(currentPhase);
+    if (index <= 0) return;
+    applyTurnUpdate({ currentPhase: TURN_PHASES[index - 1] });
+  };
+
+  const handleNextPhase = () => {
+    if (!isMyTurn || turnEnding || !currentPhase) return;
+    const index = TURN_PHASES.indexOf(currentPhase);
+    if (index < TURN_PHASES.length - 1) {
+      applyTurnUpdate({ currentPhase: TURN_PHASES[index + 1] });
+    } else {
+      // Already at End Phase — there's no sixth phase to advance to, so
+      // this signals ending the turn instead, handed off via turnEnding
+      // rather than a further currentPhase change.
+      applyTurnUpdate({ turnEnding: true });
+    }
+  };
+
+  // Only the player NOT currently turnPlayer can ever call this — the
+  // one exception to "only the turn player can interact" (see
+  // PhaseTracker's own comment on the same thing), since ending your
+  // turn doesn't itself start the other player's; they have to
+  // separately claim it.
+  const handleStartTurn = () => {
+    if (isMyTurn || !turnEnding || !turnPlayer) return;
+    const nextTurnPlayer: PlayerRole = turnPlayer === 'player1' ? 'player2' : 'player1';
+    applyTurnUpdate({
+      turnPlayer: nextTurnPlayer,
+      currentPhase: 'draw',
+      turnEnding: false,
+      turnNumber: turnNumber + 1,
+    });
+  };
 
   // --- Hand actions ---
 
@@ -1079,6 +1165,21 @@ function MultiplayerDuelFieldPage() {
     );
   }
 
+  // Shown once, before the field itself ever mounts — turnPlayer is
+  // always known by this point (set as part of the same initial write
+  // as everything else loading has already waited on above), so this is
+  // just "has the timeout in the effect above fired yet."
+  if (showFirstPlayerBanner && turnPlayer) {
+    const firstPlayerName = turnPlayer === state.role ? currentUser?.displayName : opponent.username;
+    return (
+      <div className="MultiplayerDuelFieldPage-status">
+        <p className="MultiplayerDuelFieldPage-firstPlayerAnnouncement">
+          {firstPlayerName} will go first
+        </p>
+      </div>
+    );
+  }
+
   // The actual fix for the "card briefly vanishes" bug, combined with
   // renderMeState's own one-frame deferral fix for the "snaps instantly,
   // no transition" bug that fixing the first one introduced — see both
@@ -1248,6 +1349,12 @@ function MultiplayerDuelFieldPage() {
               onToggleMaterialSelection={handleFusionMaterialToggle}
               isSelectingEvolutionMaterial={pendingEvolutionSummon !== null}
               onSelectEvolutionMaterial={handleEvolutionMaterialClick}
+              currentPhase={currentPhase}
+              turnEnding={turnEnding}
+              isMyTurn={isMyTurn}
+              onPrevPhase={handlePrevPhase}
+              onNextPhase={handleNextPhase}
+              onStartTurn={handleStartTurn}
             />
 
             <Hand

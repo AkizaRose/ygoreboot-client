@@ -31,11 +31,15 @@
   gap: 40px;
 }
 
-.DuelField-centerLine {
-  width: 100%;
-  max-width: 800px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.25);
+/* Applied alongside .DuelField-row (not instead of it) on the one row
+   that holds PhaseTracker — reserves the exact same height whether or
+   not PhaseTracker itself has rendered yet (currentPhase briefly null
+   while the duel doc's first snapshot is still in flight), so nothing
+   shifts once it appears. Must match PhaseTracker's own explicit height
+   exactly — see cardGeometry.ts's PHASE_TRACKER_ROW_HEIGHT, which this
+   same 32px value needs to stay in sync with. */
+.DuelField-phaseTrackerRow {
+  min-height: 2px;
 }
 
 /* Reserves grid space without rendering anything visible — see the

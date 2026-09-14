@@ -13,6 +13,29 @@ const OPENING_HAND_SIZE = 5;
 
 export type PlayerRole = 'player1' | 'player2';
 
+// Draw -> Main 1 -> Battle -> Main 2 -> End, in the order the Phase
+// Tracker steps through them. "End Turn"/"Start Turn" (see
+// MultiplayerDuelFieldPage's own applyTurnUpdate) is a separate,
+// explicit turnEnding flag layered on top of 'end' rather than a sixth
+// phase here — advancing past 'end' hands the turn off entirely, it
+// doesn't move to a new named phase.
+export const TURN_PHASES = ['draw', 'main1', 'battle', 'main2', 'end'] as const;
+export type TurnPhase = (typeof TURN_PHASES)[number];
+
+// A pure function of the duel + both players' UIDs — every client
+// computes the exact same result independently, with nothing to
+// coordinate and no write race between two clients both trying to flip
+// the same coin. Not cryptographically meaningful, just needs to look
+// evenly distributed across different duels.
+function determineFirstPlayer(duelId: string, player1Uid: string, player2Uid: string): PlayerRole {
+  const seed = `${duelId}:${player1Uid}:${player2Uid}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (Math.imul(hash, 31) + seed.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % 2 === 0 ? 'player1' : 'player2';
+}
+
 export interface OpponentInfo {
   uid: string;
   username: string;
@@ -79,6 +102,17 @@ interface DuelDoc {
   player2AvatarId: string;
   player1?: PublicPlayerState;
   player2?: PublicPlayerState;
+  // Whose turn it currently is, and what phase of it — global, shared
+  // state that belongs to neither player individually, so these live at
+  // the top level of the document rather than nested under player1/
+  // player2. turnEnding is true in the window between the turn player
+  // clicking past End Phase and the OTHER player clicking "Start Turn"
+  // to actually claim it — see MultiplayerDuelFieldPage's own
+  // applyTurnUpdate/handleStartTurn for that handoff.
+  turnPlayer?: PlayerRole;
+  currentPhase?: TurnPhase;
+  turnEnding?: boolean;
+  turnNumber?: number;
 }
 
 export interface MyDuelState {
@@ -111,6 +145,15 @@ interface UseMultiplayerDuelResult {
   error: string | null;
   me: MyDuelState | null;
   opponent: OpponentDuelState | null;
+  // null only until the very first snapshot of the duel doc arrives —
+  // in practice, always non-null by the time loading is false, since
+  // both are written as part of the same initial setDoc as the rest of
+  // this player's own starting state.
+  turnPlayer: PlayerRole | null;
+  currentPhase: TurnPhase | null;
+  turnEnding: boolean;
+  turnNumber: number;
+  isMyTurn: boolean;
 }
 
 function buildInitialState(
@@ -205,17 +248,26 @@ export function useMultiplayerDuel(
       savedDeck.extra,
     );
     const isPlayer1 = role === 'player1';
+    const player1Uid = isPlayer1 ? currentUser.uid : opponentInfo.uid;
+    const player2Uid = isPlayer1 ? opponentInfo.uid : currentUser.uid;
 
     setDoc(
       doc(db, 'duels', duelId),
       {
-        player1Uid: isPlayer1 ? currentUser.uid : opponentInfo.uid,
+        player1Uid,
         player1Username: isPlayer1 ? currentUser.displayName : opponentInfo.username,
         player1AvatarId: isPlayer1 ? myAvatarId : opponentInfo.avatarId,
-        player2Uid: isPlayer1 ? opponentInfo.uid : currentUser.uid,
+        player2Uid,
         player2Username: isPlayer1 ? opponentInfo.username : currentUser.displayName,
         player2AvatarId: isPlayer1 ? opponentInfo.avatarId : myAvatarId,
         createdAt: serverTimestamp(),
+        // Computed identically by both clients (see determineFirstPlayer's
+        // own comment) — same idempotent-merge safety as player1Uid/
+        // player2Uid above, not something that needs a coordinated write.
+        turnPlayer: determineFirstPlayer(duelId, player1Uid, player2Uid),
+        currentPhase: 'draw',
+        turnEnding: false,
+        turnNumber: 1,
         [role]: publicState,
       },
       { merge: true },
@@ -312,5 +364,21 @@ export function useMultiplayerDuel(
     }
   }
 
-  return { loading: !me || !opponent, error, me, opponent };
+  const turnPlayer = duelDoc?.turnPlayer ?? null;
+  const currentPhase = duelDoc?.currentPhase ?? null;
+  const turnEnding = duelDoc?.turnEnding ?? false;
+  const turnNumber = duelDoc?.turnNumber ?? 1;
+  const isMyTurn = turnPlayer !== null && turnPlayer === role;
+
+  return {
+    loading: !me || !opponent,
+    error,
+    me,
+    opponent,
+    turnPlayer,
+    currentPhase,
+    turnEnding,
+    turnNumber,
+    isMyTurn,
+  };
 }

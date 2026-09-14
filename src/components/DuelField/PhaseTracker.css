@@ -1,0 +1,84 @@
+/* Sits where the old center dividing line used to be, horizontally
+   aligned with the player's own Banished Zone column (see DuelField.tsx
+   — this renders at grid-column: 7 of that same row, matching exactly
+   how Banished Zone's own column is positioned there). Deliberately
+   wider than one 72px column — the arrows need room on either side of
+   the label — so this is allowed to overflow into the row's own 40px
+   gaps rather than being squeezed into a single column's width. */
+.PhaseTracker {
+  grid-column: 7;
+  justify-self: center;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  z-index: 10;
+  /* Explicit, exact height rather than letting padding/font-size
+     determine it — cardGeometry.ts's own layout math (see
+     PHASE_TRACKER_ROW_HEIGHT there) needs to know precisely how tall
+     this is, in a way that doesn't depend on font metrics it has no way
+     to predict. Keep both in sync if this ever changes. */
+  height: 1px;
+}
+
+.PhaseTracker-arrow {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.PhaseTracker-arrow:hover:not(:disabled) {
+  opacity: 1;
+}
+
+/* Kept in the layout (not unmounted) even when not the turn player's
+   turn to interact with, so the tracker's own width — and therefore the
+   label's horizontal position — doesn't shift depending on who's
+   allowed to click right now. Just visually inert and unclickable. */
+.PhaseTracker-arrow:disabled {
+  opacity: 0;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Red for the main player's own turn, blue for the opponent's — this
+   class is applied based on THIS client's own isMyTurn, so naturally,
+   independently, each player sees red exactly when it's actually their
+   turn and blue when it's the other player's, without either side
+   needing to be told which color means what. */
+.PhaseTracker-label {
+  min-width: 80px;
+  text-align: center;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 13px;
+  padding: 3px 3px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.PhaseTracker-label--mine {
+  background: #7a1f1fee;
+}
+
+.PhaseTracker-label--opponent {
+  background: #1f3f7aee;
+}
+
+/* Only the "Start Turn" state is ever actually clickable (by the
+   non-turn player, to claim their turn) — everything else the label
+   shows is a plain status readout, not a button, so this is the only
+   state that gets pointer/hover affordances at all. */
+.PhaseTracker-label--clickable {
+  cursor: pointer;
+}
+
+.PhaseTracker-label--clickable:hover {
+  filter: brightness(1.15);
+}

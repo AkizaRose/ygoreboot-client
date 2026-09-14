@@ -1,4 +1,6 @@
 import FieldZone, { type FieldZoneAction } from './FieldZone';
+import PhaseTracker from './PhaseTracker';
+import type { TurnPhase } from '../Matchmaking/useMultiplayerDuel';
 import type { CardData } from '../../types/Card';
 import type { CardInstance, PlacedCard } from '../../types/CardInstance';
 import cardBackImg from '../../assets/card/CardBack.png';
@@ -207,6 +209,10 @@ interface PlayerFieldProps {
   // the player then has to separately confirm.
   isSelectingEvolutionMaterial?: boolean;
   onSelectEvolutionMaterial?: (index: number) => void;
+  // Only meaningful for the player's own (non-flipped) side — gates the
+  // Attack menu option below to the turn player's own Battle Phase.
+  currentPhase?: TurnPhase | null;
+  isMyTurn?: boolean;
 }
 
 function PlayerField({
@@ -236,6 +242,8 @@ function PlayerField({
   onToggleMaterialSelection,
   isSelectingEvolutionMaterial = false,
   onSelectEvolutionMaterial,
+  currentPhase,
+  isMyTurn = false,
 }: PlayerFieldProps) {
   const fieldZones = flipped ? [...FIELD_ZONES].reverse() : FIELD_ZONES;
   const deckZones = flipped ? [...DECK_ZONES].reverse() : DECK_ZONES;
@@ -315,10 +323,18 @@ function PlayerField({
                 ? [{ key: 'toAttack', label: 'To ATK' }]
                 : [{ key: 'toDefense', label: 'To DEF' }]
               : [];
-          // Only for a face-up monster currently in Attack Position — no
-          // Battle Phase concept exists yet, so this doesn't gate on one.
+          // Only for a face-up monster currently in Attack Position,
+          // during the TURN PLAYER's own Battle Phase — currentPhase and
+          // isMyTurn are only ever meaningfully passed for the player's
+          // own (non-flipped) side in the first place (see
+          // PlayerFieldProps' own docs), so this never shows for the
+          // opponent's monsters regardless.
           const attackAction: FieldZoneAction[] =
-            placed && !placed.faceDown && placed.position !== 'defense'
+            placed &&
+            !placed.faceDown &&
+            placed.position !== 'defense' &&
+            currentPhase === 'battle' &&
+            isMyTurn
               ? [{ key: 'attack', label: 'Attack' }]
               : [];
           // Only for genuine stacks (created via Fusion Summon) — a lone
@@ -595,6 +611,16 @@ interface DuelFieldProps {
   onViewOpponentGrave?: () => void;
   onViewOpponentBanished?: () => void;
   onViewOpponentStack?: (index: number) => void;
+  // Phase Tracker — see PhaseTracker.tsx for the component itself.
+  // currentPhase/turnEnding/isMyTurn are also what gates the Attack
+  // menu option below (only shown during the turn player's own Battle
+  // Phase), not just what the tracker itself displays.
+  currentPhase?: TurnPhase | null;
+  turnEnding?: boolean;
+  isMyTurn?: boolean;
+  onPrevPhase?: () => void;
+  onNextPhase?: () => void;
+  onStartTurn?: () => void;
 }
 
 function DuelField({
@@ -628,6 +654,12 @@ function DuelField({
   onViewOpponentGrave,
   onViewOpponentBanished,
   onViewOpponentStack,
+  currentPhase,
+  turnEnding = false,
+  isMyTurn = false,
+  onPrevPhase,
+  onNextPhase,
+  onStartTurn,
 }: DuelFieldProps) {
   return (
     <div className="DuelField">
@@ -646,7 +678,27 @@ function DuelField({
         onViewOpponentBanished={onViewOpponentBanished}
         onViewOpponentStack={onViewOpponentStack}
       />
-      <div className="DuelField-centerLine" />
+      {/* Same 7-column grid as every zone row (.DuelField-row) — the
+          tracker itself sits at grid-column: 7 (see PhaseTracker.css),
+          the same column Banished Zone occupies in the player's own row
+          below, so it lines up directly above it without needing its
+          own separate coordinate system. Only rendered once currentPhase
+          is actually known (briefly null while the duel doc's first
+          snapshot is still in flight) — an empty row still reserves the
+          same vertical space either way, so nothing shifts once it does
+          appear. */}
+      <div className="DuelField-row DuelField-phaseTrackerRow">
+        {currentPhase && (
+          <PhaseTracker
+            currentPhase={currentPhase}
+            turnEnding={turnEnding}
+            isMyTurn={isMyTurn}
+            onPrevPhase={onPrevPhase ?? (() => {})}
+            onNextPhase={onNextPhase ?? (() => {})}
+            onStartTurn={onStartTurn ?? (() => {})}
+          />
+        )}
+      </div>
       <PlayerField
         mainDeck={playerMainDeck}
         extraDeck={playerExtraDeck}
@@ -658,6 +710,8 @@ function DuelField({
         onDrawCard={onDrawCard}
         onCardHover={onCardHover}
         onCardHoverEnd={onCardHoverEnd}
+        currentPhase={currentPhase}
+        isMyTurn={isMyTurn}
         onFieldAction={onFieldAction}
         onMainDeckAction={onMainDeckAction}
         onViewExtraDeck={onViewExtraDeck}
