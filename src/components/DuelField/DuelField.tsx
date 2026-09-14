@@ -2,6 +2,7 @@ import FieldZone, { type FieldZoneAction } from './FieldZone';
 import type { CardData } from '../../types/Card';
 import type { CardInstance, PlacedCard } from '../../types/CardInstance';
 import cardBackImg from '../../assets/card/CardBack.png';
+import { PLAYER_STACK_OFFSETS, OPPONENT_STACK_OFFSETS } from '../../duel/cardGeometry';
 import './DuelField.css';
 
 // Re-exported so existing `import { type PlacedCard } from
@@ -33,6 +34,25 @@ function isExtraDeckMonster(card: CardData): boolean {
     card.cardClass === 'Monster' &&
     ['Fusion', 'Ritual', 'Evolution'].includes(card.cardSubclass ?? '')
   );
+}
+
+// The pile count label used to sit at a fixed spot on the zone itself,
+// regardless of how many cards were in the pile — fine for a small
+// pile, but visibly off-center from the actual top card once a pile
+// has enough layers to noticeably stagger away from the zone's own
+// base position. This computes exactly how far the top card has
+// drifted, using the SAME per-layer step/cap math stackEntries (in
+// cardPositions.ts) uses to position the actual card objects — so the
+// label tracks the real top card exactly, not an approximation of it.
+function topCardOffset(
+  count: number,
+  flipped: boolean,
+  kind: 'grave' | 'banished' | 'mainDeck' | 'extraDeck',
+): { x: number; y: number } {
+  const offsets = (flipped ? OPPONENT_STACK_OFFSETS : PLAYER_STACK_OFFSETS)[kind];
+  const visibleLayers = Math.min(count, offsets.maxLayers + 1);
+  const topLayerIndex = Math.max(0, visibleLayers - 1);
+  return { x: topLayerIndex * offsets.stepX, y: topLayerIndex * offsets.stepY };
 }
 
 // Face-down cards (Set Spells/Traps, and — once Set Monster exists —
@@ -69,24 +89,6 @@ const MAIN_DECK_ACTIONS: FieldZoneAction[] = [
   { key: 'reset', label: 'Reset' },
 ];
 
-// Main Deck and Extra Deck sit at different distances from a centered
-// player viewpoint (Main Deck to the right, Extra Deck to the left of
-// the field's own center), so their stacks may need to look different
-// to simulate that — kept as separate, independently-tunable values
-// rather than one shared constant. X/Y are independent too, so a stack
-// can lean more steeply in one direction than the other. Starting
-// values are identical; adjust any of them once you see how the stacks
-// actually render.
-const MAIN_DECK_STACK_OFFSET_STEP_X = 0.25;
-const MAIN_DECK_STACK_OFFSET_STEP_Y = 0.25;
-const MAIN_DECK_STACK_MAX_LAYERS = 40;
-const EXTRA_DECK_STACK_OFFSET_STEP_X = -0.25;
-const EXTRA_DECK_STACK_OFFSET_STEP_Y = 0.25;
-const EXTRA_DECK_STACK_MAX_LAYERS = 10;
-const GRAVE_STACK_OFFSET_STEP_X = 0.25;
-const GRAVE_STACK_OFFSET_STEP_Y = 0.25;
-const GRAVE_STACK_MAX_LAYERS = 50;
-
 // Deliberately more visible than Grave/Banished's near-flat offset — a
 // Fusion stack is realistically only ever a handful of cards deep, so a
 // subtler offset (fine for piles that can grow into the dozens) would
@@ -94,9 +96,6 @@ const GRAVE_STACK_MAX_LAYERS = 50;
 const MONSTER_STACK_OFFSET_STEP_X = 1.5;
 const MONSTER_STACK_OFFSET_STEP_Y = 1.5;
 const MONSTER_STACK_MAX_LAYERS = 6;
-const BANISHED_STACK_OFFSET_STEP_X = 0.25;
-const BANISHED_STACK_OFFSET_STEP_Y = 0.25;
-const BANISHED_STACK_MAX_LAYERS = 50;
 
 // 'kind' identifies which entries should render real data (a placed
 // monster, a deck pile) once it's available, rather than a plain text
@@ -399,9 +398,13 @@ function PlayerField({
           );
         }
         if (zone.kind === 'grave') {
-          const graveVisibleCount = Math.min(grave.length, GRAVE_STACK_MAX_LAYERS + 1);
+          const graveVisibleCount = Math.min(
+            grave.length,
+            (flipped ? OPPONENT_STACK_OFFSETS : PLAYER_STACK_OFFSETS).grave.maxLayers + 1,
+          );
           const graveStackCards = grave.slice(grave.length - graveVisibleCount);
           const topCard = grave.length > 0 ? grave[grave.length - 1] : undefined;
+          const graveOffset = topCardOffset(grave.length, flipped, 'grave');
           return (
             <FieldZone
               key={i}
@@ -410,9 +413,8 @@ function PlayerField({
               instanceId={topCard?.instanceId}
               stackCards={graveStackCards}
               count={grave.length > 0 ? grave.length : undefined}
-              stackOffsetStepX={GRAVE_STACK_OFFSET_STEP_X}
-              stackOffsetStepY={GRAVE_STACK_OFFSET_STEP_Y}
-              stackMaxLayers={GRAVE_STACK_MAX_LAYERS}
+              pileCountOffsetX={graveOffset.x}
+              pileCountOffsetY={graveOffset.y}
               rotated180={flipped}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
@@ -430,9 +432,13 @@ function PlayerField({
           );
         }
         if (zone.kind === 'banished') {
-          const banishedVisibleCount = Math.min(banished.length, BANISHED_STACK_MAX_LAYERS + 1);
+          const banishedVisibleCount = Math.min(
+            banished.length,
+            (flipped ? OPPONENT_STACK_OFFSETS : PLAYER_STACK_OFFSETS).banished.maxLayers + 1,
+          );
           const banishedStackCards = banished.slice(banished.length - banishedVisibleCount);
           const topCard = banished.length > 0 ? banished[banished.length - 1] : undefined;
+          const banishedOffset = topCardOffset(banished.length, flipped, 'banished');
           return (
             <FieldZone
               key={i}
@@ -441,9 +447,8 @@ function PlayerField({
               instanceId={topCard?.instanceId}
               stackCards={banishedStackCards}
               count={banished.length > 0 ? banished.length : undefined}
-              stackOffsetStepX={BANISHED_STACK_OFFSET_STEP_X}
-              stackOffsetStepY={BANISHED_STACK_OFFSET_STEP_Y}
-              stackMaxLayers={BANISHED_STACK_MAX_LAYERS}
+              pileCountOffsetX={banishedOffset.x}
+              pileCountOffsetY={banishedOffset.y}
               rotated180={flipped}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
@@ -475,15 +480,15 @@ function PlayerField({
       <div className="DuelField-emptyZone" />
       {deckZones.map((zone, i) => {
         if (zone.kind === 'main' && resolvedMainDeckCount > 0) {
+          const mainDeckOffset = topCardOffset(resolvedMainDeckCount, flipped, 'mainDeck');
           return (
             <FieldZone
               key={i}
               label={zone.label}
               image={cardBackImg}
               count={resolvedMainDeckCount}
-              stackOffsetStepX={MAIN_DECK_STACK_OFFSET_STEP_X}
-              stackOffsetStepY={MAIN_DECK_STACK_OFFSET_STEP_Y}
-              stackMaxLayers={MAIN_DECK_STACK_MAX_LAYERS}
+              pileCountOffsetX={mainDeckOffset.x}
+              pileCountOffsetY={mainDeckOffset.y}
               onClick={flipped ? undefined : onDrawCard}
               menuActions={flipped ? [] : MAIN_DECK_ACTIONS}
               onMenuAction={flipped ? undefined : onMainDeckAction}
@@ -491,15 +496,15 @@ function PlayerField({
           );
         }
         if (zone.kind === 'extra' && resolvedExtraDeckCount > 0) {
+          const extraDeckOffset = topCardOffset(resolvedExtraDeckCount, flipped, 'extraDeck');
           return (
             <FieldZone
               key={i}
               label={zone.label}
               image={cardBackImg}
               count={resolvedExtraDeckCount}
-              stackOffsetStepX={EXTRA_DECK_STACK_OFFSET_STEP_X}
-              stackOffsetStepY={EXTRA_DECK_STACK_OFFSET_STEP_Y}
-              stackMaxLayers={EXTRA_DECK_STACK_MAX_LAYERS}
+              pileCountOffsetX={extraDeckOffset.x}
+              pileCountOffsetY={extraDeckOffset.y}
               menuActions={flipped ? [] : VIEW_ONLY_ACTIONS}
               onMenuAction={!flipped && onViewExtraDeck ? () => onViewExtraDeck() : undefined}
             />

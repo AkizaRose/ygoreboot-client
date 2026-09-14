@@ -73,6 +73,15 @@ interface FieldZoneProps {
   // .FieldZone-statsOverlay--top in FieldZone.css) — the card's own
   // rotation is CardLayer's concern entirely now, not this component's.
   rotated180?: boolean;
+  // How far the pile's actual top card has drifted from this zone's own
+  // base position, in pixels — see DuelField.tsx's own topCardOffset,
+  // which computes this using the exact same per-layer step/cap math
+  // that positions the real top card (in cardPositions.ts). Nudges the
+  // pile count label to track the top card as a pile grows, rather than
+  // staying fixed to the zone itself and drifting visibly off-center
+  // from a large pile's actual top card.
+  pileCountOffsetX?: number;
+  pileCountOffsetY?: number;
 }
 
 function FieldZone({
@@ -91,6 +100,8 @@ function FieldZone({
   battlePosition = 'attack',
   showStats = false,
   rotated180 = false,
+  pileCountOffsetX = 0,
+  pileCountOffsetY = 0,
 }: FieldZoneProps) {
   const [showMenu, setShowMenu] = useState(false);
   const hideTimeoutRef = useRef<number | undefined>(undefined);
@@ -188,7 +199,18 @@ function FieldZone({
           </span>
         </div>
       )}
-      {count != null && <span className="FieldZone-pileCount">{count}</span>}
+      {count != null && (
+        <span
+          className="FieldZone-pileCount"
+          style={
+            pileCountOffsetX || pileCountOffsetY
+              ? { transform: `translate(${pileCountOffsetX}px, ${pileCountOffsetY}px)` }
+              : undefined
+          }
+        >
+          {count}
+        </span>
+      )}
     </div>
   );
 }

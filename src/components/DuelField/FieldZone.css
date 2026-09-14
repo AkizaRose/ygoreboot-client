@@ -40,12 +40,13 @@
   text-align: center;
   font-family: 'ROGSanSerifStdB';
   color: white;
-  background:rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.4);
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.8) 15%, rgba(0, 0, 0, 0.8) 50%, rgba(0, 0, 0, 0.8) 85%, rgba(0, 0, 0, 0) 100%);
   font-size: 14px;
   line-height: 1;
   pointer-events: none;
   z-index: 1000;
-  padding: 1px;
+  padding: 1px 6px;
 }
 
 /* The opponent's card art is rendered upside-down from the player's own
@@ -63,7 +64,7 @@
    Attack Position, ATK while in Defense Position — deemphasized rather
    than removed, so both stay visible but the active one reads first. */
 .FieldZone-statsOverlay--dimmed {
-  color: #999;
+  color: #cccccc;
   font-size: 0.85em;
 }
 
@@ -122,17 +123,16 @@
 
 .FieldZone-pileCount {
   position: absolute;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.2);
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 0.8) 25%, rgba(0, 0, 0, 0.8) 50%, rgba(0, 0, 0, 0.8) 75%, rgba(0, 0, 0, 0.2) 100%);
+  padding: 0px 3px;
   color: #fff;
   font-size: 16px;
   font-family: "ROGSanSerifStdB";
-  padding: 1px 4px;
-  border-radius: 8px;
   line-height: 1.2;
   user-select: none;
   /* Same underlying issue as .FieldZone-statsOverlay above (see its own
      comment) — no explicit z-index at all here means it loses to any of
      CardLayer's cards outright, not just to ones with a higher number. */
   z-index: 1000;
-  padding: 4px;
 }
