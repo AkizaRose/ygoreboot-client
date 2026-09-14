@@ -13,7 +13,6 @@ import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
 import CardLayer from '../duel/CardLayer';
 import { computeCardPositions } from '../duel/cardPositions';
 import { BOARD_WIDTH, STAGE_HEIGHT } from '../duel/cardGeometry';
-import cardBackImg from '../assets/card/CardBack.png';
 import { getAvatarUrl } from '../components/Avatar/avatars';
 import {
   useMultiplayerDuel,
@@ -42,20 +41,6 @@ function findEmptyZoneSlot(zones: (PlacedCard | null)[]): number {
   return -1;
 }
 
-// Mirrors Hand.tsx's own card-cell sizing and overlap constants exactly
-// — those aren't exported (module-level, private to that file), same
-// reasoning as findEmptyZoneSlot above for duplicating rather than
-// importing. Kept identical on purpose: the opponent's hand should read
-// as the same physical size and follow the same "start overlapping
-// beyond N cards, capped at a fixed total width" behavior as the
-// player's own.
-const OPPONENT_HAND_CARD_WIDTH = 813 * 0.12;
-const OPPONENT_HAND_CARD_HEIGHT = 1185 * 0.12;
-const OPPONENT_HAND_GAP = 4;
-const OPPONENT_HAND_MAX_VISIBLE_CARDS = 6;
-const OPPONENT_HAND_MAX_WIDTH =
-  OPPONENT_HAND_MAX_VISIBLE_CARDS * OPPONENT_HAND_CARD_WIDTH +
-  (OPPONENT_HAND_MAX_VISIBLE_CARDS - 1) * OPPONENT_HAND_GAP;
 
 // A brief delay before showing a newly-hovered card (so quickly passing
 // the cursor over several cards doesn't flash through all of them), and
@@ -89,6 +74,8 @@ function buildPublicState(me: MyDuelState) {
     grave: me.grave,
     banished: me.banished,
     fieldZone: me.fieldZone,
+    lastHandDepartureIndex: me.lastHandDepartureIndex,
+    handShuffleVersion: me.handShuffleVersion,
   };
 }
 
@@ -261,6 +248,38 @@ function MultiplayerDuelFieldPage() {
     const next = updater(current);
     if (next === current) return;
 
+    // Detect a card leaving the hand as part of THIS update, regardless
+    // of which action caused it, and record which slot it was at. This
+    // is deliberately centralized here rather than in each individual
+    // handler — every action that touches hand goes through this one
+    // function, so nothing can forget to set this the way a per-handler
+    // approach could. Only ever looks at the FIRST departure found if
+    // somehow more than one card left in a single update (e.g. a
+    // multi-material Fusion Summon drawing more than one from hand) —
+    // a reasonable simplification given the common case is exactly one.
+    const departedFromHand = current.hand.find(
+      (c) => !next.hand.some((n) => n.instanceId === c.instanceId),
+    );
+    if (departedFromHand) {
+      next.lastHandDepartureIndex = current.hand.findIndex(
+        (c) => c.instanceId === departedFromHand.instanceId,
+      );
+    }
+
+    // A card being added to the hand, from ANY source (drawing,
+    // returning from the field, a Special Summon target coming back
+    // out, etc.) automatically reshuffles the whole hand — same
+    // centralized-in-applyMeUpdate approach as lastHandDepartureIndex
+    // just above, so this doesn't depend on every individual handler
+    // remembering to trigger it. handShuffleVersion incrementing is
+    // what CardLayer watches to know a shuffle just happened and play
+    // its own animation for it (see that file), separately from
+    // whatever arrival animation the newly-added card itself gets.
+    if (next.hand.length > current.hand.length) {
+      next.hand = shuffle(next.hand);
+      next.handShuffleVersion = current.handShuffleVersion + 1;
+    }
+
     // Synchronous, immediate — before either write below has even been
     // issued, let alone come back. This is what a second action
     // triggered right after this one actually builds on, rather than
@@ -301,6 +320,19 @@ function MultiplayerDuelFieldPage() {
     applyMeUpdate((current) => ({
       ...current,
       lifePoints: Math.max(0, current.lifePoints + delta),
+    }));
+
+  // A deliberate, player-triggered shuffle — separate from (but using
+  // the exact same handShuffleVersion mechanism as) the automatic
+  // reshuffle that already happens whenever a card is added to hand.
+  // No length check needed here, unlike applyMeUpdate's own automatic
+  // version — this always counts as a shuffle regardless of whether
+  // the hand's size happens to have changed.
+  const handleShuffleHand = () =>
+    applyMeUpdate((current) => ({
+      ...current,
+      hand: shuffle(current.hand),
+      handShuffleVersion: current.handShuffleVersion + 1,
     }));
 
   // --- Hand actions ---
@@ -1057,16 +1089,15 @@ function MultiplayerDuelFieldPage() {
   // this is always what rendering uses, never the raw `me`.
   const renderMe = renderMeState ?? me;
 
-  // Excludes only the opponent's hidden-HAND proxy entries — their
-  // coordinates are documented placeholders, not real geometry yet (the
-  // opponent's hand still renders via its own separate block below,
-  // unchanged, for this integration pass). Everything else, including
-  // the opponent's deck piles, has real board-space coordinates already
-  // (see cardPositions.ts's opponentDeckPileEntries), so those render
-  // normally here.
-  const cardPositionEntries = computeCardPositions(renderMe, opponent).filter(
-    (entry) => !entry.instanceId.startsWith('opponent-hand-'),
-  );
+  // The opponent's hand now has real geometry (getOpponentHandSlot, in
+  // cardGeometry.ts) and renders through CardLayer like every other
+  // card — no filtering needed anymore. It used to be excluded here and
+  // rendered via a separate, static block below instead, back when its
+  // coordinates were only placeholders — which is also why the
+  // hand-shuffle animation had no visible effect on the opponent's
+  // side: CardLayer's own animated elements existed but weren't the
+  // actual visible cards.
+  const cardPositionEntries = computeCardPositions(renderMe, opponent);
 
   // TEMPORARY DIAGNOSTIC — remove once the animation bug is confirmed
   // fixed. Whether me/opponent are literally the SAME object reference
@@ -1239,47 +1270,8 @@ function MultiplayerDuelFieldPage() {
                 chrome and Hand's own cells, without needing an explicit
                 z-index war with FieldZone-rotatedOverlay or anything
                 else in there. */}
-            <CardLayer entries={cardPositionEntries} opponent={opponent} />
+            <CardLayer entries={cardPositionEntries} me={renderMe} opponent={opponent} />
           </div>
-
-          {/* A child of fieldArea specifically (not the page root) so its
-              horizontal centering is relative to the actual field, not
-              the whole page including the Card Display side panel. */}
-          {(() => {
-            // Same overlap math as Hand.tsx: normal spacing up to
-            // OPPONENT_HAND_MAX_VISIBLE_CARDS, then spacing shrinks so
-            // the total width stays capped at OPPONENT_HAND_MAX_WIDTH
-            // however many cards there are, rather than growing without
-            // bound.
-            const n = opponent.handCount;
-            const normalAdvance = OPPONENT_HAND_CARD_WIDTH + OPPONENT_HAND_GAP;
-            const advance =
-              n <= 1 || n <= OPPONENT_HAND_MAX_VISIBLE_CARDS
-                ? normalAdvance
-                : (OPPONENT_HAND_MAX_WIDTH - OPPONENT_HAND_CARD_WIDTH) / (n - 1);
-            const handWidth = n === 0 ? 0 : (n - 1) * advance + OPPONENT_HAND_CARD_WIDTH;
-
-            return (
-              <div
-                className="MultiplayerDuelFieldPage-opponentHand"
-                style={{ width: handWidth, height: OPPONENT_HAND_CARD_HEIGHT }}
-              >
-                {Array.from({ length: n }).map((_, i) => (
-                  <img
-                    key={i}
-                    src={cardBackImg}
-                    alt=""
-                    className="MultiplayerDuelFieldPage-opponentHandCard"
-                    style={{
-                      width: OPPONENT_HAND_CARD_WIDTH,
-                      height: OPPONENT_HAND_CARD_HEIGHT,
-                      left: i * advance,
-                    }}
-                  />
-                ))}
-              </div>
-            );
-          })()}
         </div>
 
       </div>
@@ -1313,11 +1305,24 @@ function MultiplayerDuelFieldPage() {
           {currentUser?.displayName}
         </span>
         <PlayerAvatarBox />
-        <LifePointCounter
-          value={renderMe.lifePoints}
-          onAdd={(amount) => handleLifePointChange(amount)}
-          onSubtract={(amount) => handleLifePointChange(-amount)}
-        />
+        {/* A row, not stacked with the rest of this column — the button
+            sits to the LEFT of the LP counter specifically, at a fixed
+            spot relative to it, rather than being just another item in
+            the overall vertical stack above. */}
+        <div className="MultiplayerDuelFieldPage-lpRow">
+          <button
+            type="button"
+            className="MultiplayerDuelFieldPage-shuffleHandButton"
+            onClick={handleShuffleHand}
+          >
+            Shuffle Hand
+          </button>
+          <LifePointCounter
+            value={renderMe.lifePoints}
+            onAdd={(amount) => handleLifePointChange(amount)}
+            onSubtract={(amount) => handleLifePointChange(-amount)}
+          />
+        </div>
       </div>
 
       {pendingSummon && (

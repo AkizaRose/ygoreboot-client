@@ -41,6 +41,24 @@ interface PublicPlayerState {
   grave: CardInstance[];
   banished: CardInstance[];
   fieldZone: PlacedCard | null;
+  // Which hand slot the most recent card to leave the hand was at,
+  // right before it left — set centrally in MultiplayerDuelFieldPage's
+  // own applyMeUpdate, for ANY action that removes a card from hand
+  // (Summon, Activate, Set, discard, Banish, stacking back into a
+  // deck), not something each individual handler has to remember to
+  // set itself. This is the one piece of information about a specific
+  // departure that's safe to share publicly without revealing anything
+  // else about the hand's real contents or order — an index alone
+  // reveals nothing about which card it was. null before any card has
+  // ever left this hand.
+  lastHandDepartureIndex: number | null;
+  // Incremented every time this hand is shuffled (see
+  // MultiplayerDuelFieldPage's own applyMeUpdate and handleShuffleHand)
+  // — just a counter, not the shuffle result itself, so it reveals
+  // nothing about hand contents or order. What lets the OPPONENT's
+  // client know a shuffle just happened and play the animation for it,
+  // the same idea as lastHandDepartureIndex above.
+  handShuffleVersion: number;
 }
 
 // The half that must stay private — genuinely unreadable by the
@@ -74,6 +92,8 @@ export interface MyDuelState {
   hand: CardInstance[];
   mainDeck: CardInstance[];
   extraDeck: CardInstance[];
+  lastHandDepartureIndex: number | null;
+  handShuffleVersion: number;
 }
 
 export interface OpponentDuelState extends PublicPlayerState {
@@ -129,6 +149,8 @@ function buildInitialState(
       grave: [],
       banished: [],
       fieldZone: null,
+      lastHandDepartureIndex: null,
+      handShuffleVersion: 0,
     },
     privateState: { hand, mainDeck, extraDeck: extraInstances },
   };

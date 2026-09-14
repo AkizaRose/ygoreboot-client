@@ -81,39 +81,6 @@
   background: #16171dee;
 }
 
-/* Face-down count only — never the real cards. Hand itself assumes
-   real, interactive cards, so this is a small, purpose-built row rather
-   than a repurposed instance of it. Positioned along the top edge,
-   mirroring where the player's own Hand runs off the bottom edge.
-   Positioned relative to fieldArea specifically (see that class's own
-   position: relative), not the page root — that's what centers this
-   over the actual field rather than the whole page including the Card
-   Display side panel. */
-.MultiplayerDuelFieldPage-opponentHand {
-  position: absolute;
-  /* Smaller (or negative) values move this further UP, away from the
-     field below it; larger values move it further DOWN, into the field.
-     This is the one value to adjust to fine-tune the gap. */
-  top: -130px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 90;
-}
-
-/* Matches Hand.tsx's own card size exactly: native 813x1185 at the same
-   0.12 SCALE, so the opponent's (face-down) cards read as the same
-   physical size as the player's own (face-up) ones. Width/height/left
-   are set inline (computed from the current hand count, mirroring
-   Hand.css's own .Hand-cell), since they now depend on the same overlap
-   math the player's own hand uses, not a fixed size. */
-.MultiplayerDuelFieldPage-opponentHandCard {
-  position: absolute;
-  top: 0;
-  border-radius: 3px;
-  object-fit: cover;
-  display: block;
-}
-
 .MultiplayerDuelFieldPage-playerHud {
   position: absolute;
   bottom: 12px;
@@ -123,6 +90,32 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 10px;
+}
+
+/* Row, not stacked — this is what puts the shuffle button to the LEFT
+   of the LP counter specifically, at a fixed spot relative to it,
+   rather than as just another item in the overall vertical stack
+   .playerHud itself lays out. */
+.MultiplayerDuelFieldPage-lpRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.MultiplayerDuelFieldPage-shuffleHandButton {
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.MultiplayerDuelFieldPage-shuffleHandButton:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .MultiplayerDuelFieldPage-status {

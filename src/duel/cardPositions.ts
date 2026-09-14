@@ -5,6 +5,7 @@ import {
   getFieldZoneSlot,
   getDeckZoneSlot,
   getHandSlot,
+  getOpponentHandSlot,
   PLAYER_STACK_OFFSETS,
   OPPONENT_STACK_OFFSETS,
   FIELD_CARD_SCALE,
@@ -289,17 +290,20 @@ export function computeCardPositions(
       ...pileEntries(opponent.banished, true, 'banished', 270),
       ...opponentDeckPileEntries(opponent.mainDeckCount, 'mainDeck', 50),
       ...opponentDeckPileEntries(opponent.extraDeckCount, 'extraDeck', 50),
-      // The hand — see buildOpponentHiddenEntries' own documentation for
-      // what this can and can't correctly animate. Slot function here is
-      // a placeholder (a simple fanned row) rather than exact geometry,
-      // since MultiplayerDuelFieldPage's actual opponent hand positioning
-      // (built separately from DuelField's own zone grid) needs its own
-      // real coordinates threaded in here — noted rather than guessed
-      // at.
+      // The hand — now real geometry (getOpponentHandSlot), the same
+      // position getHiddenSource and CardLayer's own returning/shuffle
+      // logic already assume for it. This used to be a placeholder (a
+      // simple fanned row) because the opponent's hand was rendered by
+      // its own separate, static block in MultiplayerDuelFieldPage
+      // rather than through CardLayer at all — which is also exactly
+      // why the hand-shuffle animation never had any visible effect on
+      // the opponent's side: CardLayer's own animated elements existed,
+      // but the actually-visible cards were a completely different,
+      // non-animated set of <img> elements elsewhere on the page.
       ...buildOpponentHiddenEntries(
         opponent.handCount,
         'opponent-hand',
-        (i) => ({ x: i * 30, y: -150 }),
+        (index, count) => getOpponentHandSlot(count, index),
         180,
         HAND_CARD_SCALE,
         100,

@@ -5,7 +5,7 @@ import {
   useTransform,
 } from 'framer-motion';
 import type { CardPositionEntry } from './cardPositions';
-import type { OpponentDuelState } from '../components/Matchmaking/useMultiplayerDuel';
+import type { MyDuelState, OpponentDuelState } from '../components/Matchmaking/useMultiplayerDuel';
 import type { CardInstance } from '../types/CardInstance';
 import CardImage from '../components/CardView/CardImage';
 import cardBackImg from '../assets/card/CardBack.png';
@@ -13,12 +13,17 @@ import {
   CARD_NATIVE_WIDTH,
   CARD_NATIVE_HEIGHT,
   FIELD_CARD_SCALE,
+  HAND_CARD_SCALE,
+  BOARD_WIDTH,
+  OPPONENT_HAND_TOP,
   getDeckZoneSlot,
   getHandSlot,
+  getOpponentHandSlot,
 } from './cardGeometry';
 
 interface CardLayerProps {
   entries: CardPositionEntry[];
+  me?: MyDuelState | null;
   opponent?: OpponentDuelState | null;
 }
 
@@ -38,12 +43,26 @@ interface ReturningOpponentCard {
   zIndex: number;
 }
 
+// A card mid-shuffle: converges from its own old slot to the hand's
+// shared center point, then (after a brief hold, stacked with every
+// other card in the same shuffle) fans back out to its new slot.
+interface ShufflingCard {
+  id: string;
+  card: CardInstance['card'] | null;
+  from: CardVisualPosition;
+  via: CardVisualPosition;
+  to: CardVisualPosition;
+  zIndex: number;
+}
+
 interface HiddenSource extends CardVisualPosition {}
 
-// The visible opponent hand is intentionally kept as a separate, simple row
-// because its actual card identities are private. These coordinates mirror
-// the current opponent-hand styling in MultiplayerDuelFieldPage.css.
-const OPPONENT_HAND_TOP = -130;
+// Both hands are horizontally centered at BOARD_WIDTH/2 — getHandSlot's
+// own centering math (handLeft + handWidth/2) always resolves to exactly
+// that point, for either hand, regardless of how many cards are in it.
+// This is the x every card in a shuffle converges toward; only the y
+// differs (the player's own hand row vs OPPONENT_HAND_TOP).
+const HAND_CENTER_X = BOARD_WIDTH / 2 - (CARD_NATIVE_WIDTH * HAND_CARD_SCALE) / 2;
 
 function containsOpponentInstance(
   opponent: OpponentDuelState,
@@ -80,14 +99,23 @@ function getHiddenSource(
   if (entry.instanceId.startsWith('opponent-')) return null;
   if (containsOpponentInstance(previousOpponent, entry.instanceId)) return null;
 
-  // Hand -> public zone: the exact hand position is private, so use the last
-  // visible hand position as the best available visual source.
+  // Hand -> public zone: opponent.lastHandDepartureIndex is set by the
+  // DEPARTING player's own client (see MultiplayerDuelFieldPage's
+  // applyMeUpdate), recording which slot the card was actually at right
+  // before it left — this is what replaces the old fixed "assume it was
+  // the last slot" guess with the real position. Read from `opponent`
+  // (the current snapshot), not `previousOpponent` — the new value
+  // arrives as part of the SAME write that also drops handCount, so
+  // previousOpponent would only ever have last update's (or no) value.
+  // Falls back to the old guess only if the index is somehow
+  // unavailable (a duel that started before this field existed).
   if (opponent.handCount < previousOpponent.handCount) {
-    const sourceIndex = Math.max(0, previousOpponent.handCount - 1);
-    const sourceSlot = getHandSlot(previousOpponent.handCount, sourceIndex);
+    const sourceIndex =
+      opponent.lastHandDepartureIndex ?? Math.max(0, previousOpponent.handCount - 1);
+    const sourceSlot = getOpponentHandSlot(previousOpponent.handCount, sourceIndex);
     return {
       x: sourceSlot.x,
-      y: OPPONENT_HAND_TOP,
+      y: sourceSlot.y,
       scale: sourceSlot.width / CARD_NATIVE_WIDTH,
       rotation: 180,
       faceDown: true,
@@ -123,12 +151,19 @@ function AnimatedCard({
   entry,
   hiddenSource = null,
   startOverride = null,
+  viaOverride = null,
   onAnimationComplete,
   animationDuration = 0.3,
 }: {
   entry: CardPositionEntry;
   hiddenSource?: HiddenSource | null;
   startOverride?: CardVisualPosition | null;
+  // An intermediate waypoint between the start and the target — used for
+  // the hand-shuffle animation (converge to the hand's center, hold
+  // briefly, then fan back out), see ShufflingCard/handleShuffle below.
+  // null for every other animation, which just goes straight from start
+  // to target as before.
+  viaOverride?: CardVisualPosition | null;
   onAnimationComplete?: () => void;
   animationDuration?: number;
 }) {
@@ -177,22 +212,50 @@ function AnimatedCard({
       }
     : false;
 
-  return (
-    <motion.div
-      initial={initialAnimation}
-      animate={{
+  // With a via waypoint: a 3-keyframe sequence per property (reach via,
+  // hold at via, then reach the real target) instead of animating
+  // straight to the target in one step. The hold is a genuine pause, not
+  // an approximation — repeating the same value for two consecutive
+  // keyframes means no movement happens between them, which is exactly
+  // what "briefly stacked at the center before fanning back out" needs.
+  const animateTarget = viaOverride
+    ? {
+        x: [viaOverride.x, viaOverride.x, entry.x],
+        y: [viaOverride.y, viaOverride.y, entry.y],
+        width: [
+          CARD_NATIVE_WIDTH * viaOverride.scale,
+          CARD_NATIVE_WIDTH * viaOverride.scale,
+          displayWidth,
+        ],
+        height: [
+          CARD_NATIVE_HEIGHT * viaOverride.scale,
+          CARD_NATIVE_HEIGHT * viaOverride.scale,
+          displayHeight,
+        ],
+        rotate: [viaOverride.rotation, viaOverride.rotation, entry.rotation],
+      }
+    : {
         x: entry.x,
         y: entry.y,
         width: displayWidth,
         height: displayHeight,
         rotate: entry.rotation,
-      }}
+      };
+  // times is only meaningful alongside an actual keyframe array — for the
+  // plain (non-via) case above, framer-motion ignores it entirely, since
+  // there's only one value to reach, not a sequence to schedule.
+  const keyframeTimes = viaOverride ? [0.4, 0.6, 1] : undefined;
+
+  return (
+    <motion.div
+      initial={initialAnimation}
+      animate={animateTarget}
       transition={{
-        x: { duration: animationDuration, ease: 'easeInOut' },
-        y: { duration: animationDuration, ease: 'easeInOut' },
-        width: { duration: animationDuration, ease: 'easeInOut' },
-        height: { duration: animationDuration, ease: 'easeInOut' },
-        rotate: { duration: animationDuration, ease: 'easeInOut' },
+        x: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
+        y: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
+        width: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
+        height: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
+        rotate: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
       }}
       onAnimationComplete={onAnimationComplete}
       style={{
@@ -284,12 +347,21 @@ function AnimatedCard({
   );
 }
 
-function CardLayer({ entries, opponent = null }: CardLayerProps) {
+function CardLayer({ entries, me = null, opponent = null }: CardLayerProps) {
   const previousOpponentRef = useRef<OpponentDuelState | null>(null);
   const previousEntriesRef = useRef<CardPositionEntry[]>([]);
   const [returningCards, setReturningCards] = useState<ReturningOpponentCard[]>([]);
   const previousOpponent = previousOpponentRef.current;
   const previousEntries = previousEntriesRef.current;
+
+  // Tracks the last-seen handShuffleVersion for each side, so a shuffle
+  // is only ever detected once per actual increment — not on every
+  // render, and not (for example) on the very first render, where
+  // "previous" is still undefined and there's nothing to compare
+  // against yet.
+  const previousMeShuffleVersionRef = useRef<number | null>(null);
+  const previousOpponentShuffleVersionRef = useRef<number | null>(null);
+  const [shufflingCards, setShufflingCards] = useState<ShufflingCard[]>([]);
 
   useEffect(() => {
     if (previousOpponent && opponent && opponent.handCount > previousOpponent.handCount) {
@@ -321,7 +393,7 @@ function CardLayer({ entries, opponent = null }: CardLayerProps) {
             const fromEntry = previousEntries.find((entry) => entry.instanceId === id);
             if (!fromEntry) return null;
 
-            const targetSlot = getHandSlot(
+            const targetSlot = getOpponentHandSlot(
               handCount,
               Math.min(handCount - 1, firstNewHandIndex + offset),
             );
@@ -335,7 +407,7 @@ function CardLayer({ entries, opponent = null }: CardLayerProps) {
             };
             const to: CardVisualPosition = {
               x: targetSlot.x,
-              y: OPPONENT_HAND_TOP,
+              y: targetSlot.y,
               scale: targetSlot.width / CARD_NATIVE_WIDTH,
               rotation: 180,
               faceDown: true,
@@ -361,9 +433,134 @@ function CardLayer({ entries, opponent = null }: CardLayerProps) {
     previousEntriesRef.current = entries;
   }, [entries, opponent, previousEntries, previousOpponent]);
 
+  // Detects a hand shuffle (either side) by comparing handShuffleVersion
+  // across renders, and builds one ShufflingCard per card currently in
+  // that hand — each one converges from wherever it's rendered right
+  // now to the hand's shared center, then fans back out to its new slot
+  // (see AnimatedCard's own viaOverride handling for how that sequence
+  // actually plays). Runs after the entries/previousEntries tracking
+  // above, since it needs this render's own previousEntries snapshot —
+  // the positions each card is animating FROM.
+  useEffect(() => {
+    const newShufflingCards: ShufflingCard[] = [];
+
+    if (me && previousMeShuffleVersionRef.current !== null) {
+      if (me.handShuffleVersion > previousMeShuffleVersionRef.current) {
+        const rowY = me.hand.length > 0 ? getHandSlot(me.hand.length, 0).y : 0;
+        me.hand.forEach((instance, index) => {
+          const fromEntry =
+            previousEntries.find((e) => e.instanceId === instance.instanceId) ??
+            entries.find((e) => e.instanceId === instance.instanceId);
+          if (!fromEntry) return;
+          const targetSlot = getHandSlot(me.hand.length, index);
+          newShufflingCards.push({
+            id: instance.instanceId,
+            card: instance.card,
+            from: {
+              x: fromEntry.x,
+              y: fromEntry.y,
+              scale: fromEntry.scale,
+              rotation: fromEntry.rotation,
+              faceDown: fromEntry.faceDown,
+            },
+            via: { x: HAND_CENTER_X, y: rowY, scale: HAND_CARD_SCALE, rotation: 0, faceDown: false },
+            to: {
+              x: targetSlot.x,
+              y: targetSlot.y,
+              scale: targetSlot.width / CARD_NATIVE_WIDTH,
+              rotation: 0,
+              faceDown: false,
+            },
+            zIndex: 340 + index,
+          });
+        });
+      }
+    }
+
+    if (opponent && previousOpponentShuffleVersionRef.current !== null) {
+      if (opponent.handShuffleVersion > previousOpponentShuffleVersionRef.current) {
+        // The opponent's hand is rendered as position-only proxies (see
+        // cardPositions.ts's own documentation on this) — there's no
+        // real card identity to track moving from one slot to another,
+        // since the real cards are never sent to this client at all.
+        // What CAN still be shown is the shuffle happening: every
+        // current proxy slot converges to the center and fans back out
+        // to that exact same slot, which is honest about what's
+        // actually known (a shuffle occurred) without pretending to
+        // show real cards changing places.
+        for (let index = 0; index < opponent.handCount; index++) {
+          const id = `opponent-hand-${index}`;
+          const fromEntry =
+            previousEntries.find((e) => e.instanceId === id) ??
+            entries.find((e) => e.instanceId === id);
+          const targetSlot = getOpponentHandSlot(opponent.handCount, index);
+          const from: CardVisualPosition = fromEntry
+            ? {
+                x: fromEntry.x,
+                y: fromEntry.y,
+                scale: fromEntry.scale,
+                rotation: fromEntry.rotation,
+                faceDown: fromEntry.faceDown,
+              }
+            : {
+                x: targetSlot.x,
+                y: targetSlot.y,
+                scale: targetSlot.width / CARD_NATIVE_WIDTH,
+                rotation: 180,
+                faceDown: true,
+              };
+          newShufflingCards.push({
+            id,
+            card: null,
+            from,
+            via: {
+              x: HAND_CENTER_X,
+              y: OPPONENT_HAND_TOP,
+              scale: HAND_CARD_SCALE,
+              rotation: 180,
+              faceDown: true,
+            },
+            to: {
+              x: targetSlot.x,
+              y: targetSlot.y,
+              scale: targetSlot.width / CARD_NATIVE_WIDTH,
+              rotation: 180,
+              faceDown: true,
+            },
+            zIndex: 340 + index,
+          });
+        }
+      }
+    }
+
+    if (newShufflingCards.length > 0) {
+      const ids = new Set(newShufflingCards.map((c) => c.id));
+      setShufflingCards((current) => [
+        ...current.filter((c) => !ids.has(c.id)),
+        ...newShufflingCards,
+      ]);
+    }
+
+    previousMeShuffleVersionRef.current = me?.handShuffleVersion ?? null;
+    previousOpponentShuffleVersionRef.current = opponent?.handShuffleVersion ?? null;
+    // previousEntries/entries are intentionally read above but not
+    // listed here — they're already dependencies of the OTHER effect in
+    // this component, which always runs first and keeps
+    // previousEntriesRef current before this one reads it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.handShuffleVersion, opponent?.handShuffleVersion]);
+
+  // Cards actively mid-shuffle are rendered via their OWN AnimatedCard
+  // instance below (shufflingCards.map) instead of through the normal
+  // entries.map pass — this filters them out of that normal pass so
+  // there isn't a duplicate, un-animated element sitting underneath the
+  // animated one at the same position.
+  const shufflingIds = new Set(shufflingCards.map((c) => c.id));
+  const visibleEntries = entries.filter((entry) => !shufflingIds.has(entry.instanceId));
+
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-      {entries.map((entry) => (
+      {visibleEntries.map((entry) => (
         <AnimatedCard
           key={entry.instanceId}
           entry={entry}
@@ -391,6 +588,32 @@ function CardLayer({ entries, opponent = null }: CardLayerProps) {
             animationDuration={0.45}
             onAnimationComplete={() => {
               setReturningCards((current) => current.filter((item) => item.id !== card.id));
+            }}
+          />
+        );
+      })}
+
+      {shufflingCards.map((card) => {
+        const shuffleEntry: CardPositionEntry = {
+          instanceId: card.id,
+          card: card.card,
+          x: card.to.x,
+          y: card.to.y,
+          rotation: card.to.rotation,
+          scale: card.to.scale,
+          faceDown: card.to.faceDown,
+          zIndex: card.zIndex,
+        };
+
+        return (
+          <AnimatedCard
+            key={`shuffling-${card.id}`}
+            entry={shuffleEntry}
+            startOverride={card.from}
+            viaOverride={card.via}
+            animationDuration={0.6}
+            onAnimationComplete={() => {
+              setShufflingCards((current) => current.filter((item) => item.id !== card.id));
             }}
           />
         );

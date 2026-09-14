@@ -228,6 +228,15 @@ const HAND_TOP_MARGIN = 8;
 // — not Hand's own local origin — since Hand and DuelField now need to
 // agree on one shared (0,0) for a card animating between them to work
 // at all.
+
+// The opponent's hand sits above the board, mirroring the player's own
+// hand below it. Moved here (rather than staying a local constant
+// inside CardLayer.tsx) so getOpponentHandSlot below, and anything else
+// that needs the opponent's hand's real position, can share the exact
+// same value rather than each defining their own copy that could drift
+// apart.
+export const OPPONENT_HAND_TOP = -40;
+
 export function getHandSlot(handCount: number, index: number): ZoneSlot {
   const maxVisible = 6;
   const gap = 4;
@@ -246,4 +255,15 @@ export function getHandSlot(handCount: number, index: number): ZoneSlot {
     height: HAND_CELL_HEIGHT,
     rotated180: false, // only the player's own hand is ever rendered face-up/readable like this
   };
+}
+
+// The x/width math is identical to getHandSlot's own — same card size,
+// same max-visible-then-shrink overlap rule, same BOARD_WIDTH-centered
+// row — the opponent's hand only differs in where it sits (above the
+// board, not below) and that it reads upside-down from the player's own
+// viewpoint. A thin wrapper rather than each caller repeating "call
+// getHandSlot for x, then override y and rotated180" separately.
+export function getOpponentHandSlot(handCount: number, index: number): ZoneSlot {
+  const slot = getHandSlot(handCount, index);
+  return { ...slot, y: OPPONENT_HAND_TOP, rotated180: true };
 }
