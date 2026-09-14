@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   motion,
   useMotionValue,
@@ -154,6 +154,7 @@ function AnimatedCard({
   viaOverride = null,
   onAnimationComplete,
   animationDuration = 0.3,
+  coordinateOffset = null,
 }: {
   entry: CardPositionEntry;
   hiddenSource?: HiddenSource | null;
@@ -166,6 +167,7 @@ function AnimatedCard({
   viaOverride?: CardVisualPosition | null;
   onAnimationComplete?: () => void;
   animationDuration?: number;
+  coordinateOffset?: { x: number; y: number } | null;
 }) {
   const targetRotationY = entry.faceDown ? 180 : 0;
   // Reflects whichever source's ACTUAL faceDown value applies — not just
@@ -200,12 +202,14 @@ function AnimatedCard({
 
   const displayWidth = CARD_NATIVE_WIDTH * entry.scale;
   const displayHeight = CARD_NATIVE_HEIGHT * entry.scale;
+  const offsetX = coordinateOffset?.x ?? 0;
+  const offsetY = coordinateOffset?.y ?? 0;
 
   const initialPosition = startOverride ?? hiddenSource;
   const initialAnimation = initialPosition
     ? {
-        x: initialPosition.x,
-        y: initialPosition.y,
+        x: initialPosition.x + offsetX,
+        y: initialPosition.y + offsetY,
         width: CARD_NATIVE_WIDTH * initialPosition.scale,
         height: CARD_NATIVE_HEIGHT * initialPosition.scale,
         rotate: initialPosition.rotation,
@@ -220,8 +224,8 @@ function AnimatedCard({
   // what "briefly stacked at the center before fanning back out" needs.
   const animateTarget = viaOverride
     ? {
-        x: [viaOverride.x, viaOverride.x, entry.x],
-        y: [viaOverride.y, viaOverride.y, entry.y],
+        x: [viaOverride.x + offsetX, viaOverride.x + offsetX, entry.x + offsetX],
+        y: [viaOverride.y + offsetY, viaOverride.y + offsetY, entry.y + offsetY],
         width: [
           CARD_NATIVE_WIDTH * viaOverride.scale,
           CARD_NATIVE_WIDTH * viaOverride.scale,
@@ -235,8 +239,8 @@ function AnimatedCard({
         rotate: [viaOverride.rotation, viaOverride.rotation, entry.rotation],
       }
     : {
-        x: entry.x,
-        y: entry.y,
+        x: entry.x + offsetX,
+        y: entry.y + offsetY,
         width: displayWidth,
         height: displayHeight,
         rotate: entry.rotation,
@@ -348,11 +352,42 @@ function AnimatedCard({
 }
 
 function CardLayer({ entries, me = null, opponent = null }: CardLayerProps) {
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  const [stageOffset, setStageOffset] = useState<{ x: number; y: number } | null>(null);
   const previousOpponentRef = useRef<OpponentDuelState | null>(null);
   const previousEntriesRef = useRef<CardPositionEntry[]>([]);
   const [returningCards, setReturningCards] = useState<ReturningOpponentCard[]>([]);
   const previousOpponent = previousOpponentRef.current;
   const previousEntries = previousEntriesRef.current;
+
+  // CardLayer normally lives inside boardStage and therefore uses board-space
+  // coordinates. The opponent hand is deliberately rendered in a viewport
+  // layer so the page's bottom-edge clipping cannot accidentally clip the
+  // visible part of a hand card. Convert board-space coordinates into viewport
+  // coordinates by tracking boardStage's actual viewport origin.
+  useLayoutEffect(() => {
+    const layer = layerRef.current;
+    const stage = layer?.parentElement;
+    if (!stage) return;
+
+    const updateOffset = () => {
+      const rect = stage.getBoundingClientRect();
+      setStageOffset({ x: rect.left, y: rect.top });
+    };
+
+    updateOffset();
+    window.addEventListener('resize', updateOffset);
+    window.addEventListener('scroll', updateOffset, true);
+
+    const observer = new ResizeObserver(updateOffset);
+    observer.observe(stage);
+
+    return () => {
+      window.removeEventListener('resize', updateOffset);
+      window.removeEventListener('scroll', updateOffset, true);
+      observer.disconnect();
+    };
+  }, []);
 
   // Tracks the last-seen handShuffleVersion for each side, so a shuffle
   // is only ever detected once per actual increment — not on every
@@ -556,10 +591,79 @@ function CardLayer({ entries, me = null, opponent = null }: CardLayerProps) {
   // there isn't a duplicate, un-animated element sitting underneath the
   // animated one at the same position.
   const shufflingIds = new Set(shufflingCards.map((c) => c.id));
-  const visibleEntries = entries.filter((entry) => !shufflingIds.has(entry.instanceId));
+  const opponentHandIds = new Set(
+    entries
+      .filter((entry) => entry.instanceId.startsWith('opponent-hand-'))
+      .map((entry) => entry.instanceId),
+  );
+  const visibleEntries = entries.filter(
+    (entry) => !shufflingIds.has(entry.instanceId) && (!stageOffset || !opponentHandIds.has(entry.instanceId)),
+  );
+  const opponentHandEntries = stageOffset
+    ? entries.filter((entry) => !shufflingIds.has(entry.instanceId) && opponentHandIds.has(entry.instanceId))
+    : [];
+  const opponentShufflingCards = stageOffset
+    ? shufflingCards.filter((card) => card.id.startsWith('opponent-hand-'))
+    : [];
+  const boardShufflingCards = shufflingCards.filter(
+    (card) => !card.id.startsWith('opponent-hand-'),
+  );
+
+  const renderReturningCard = (card: ReturningOpponentCard, fixed: boolean) => {
+    const returningEntry: CardPositionEntry = {
+      instanceId: card.id,
+      card: card.card,
+      x: card.to.x,
+      y: card.to.y,
+      rotation: card.to.rotation,
+      scale: card.to.scale,
+      faceDown: true,
+      zIndex: card.zIndex,
+    };
+
+    return (
+      <AnimatedCard
+        key={`returning-${card.id}`}
+        entry={returningEntry}
+        startOverride={card.from}
+        coordinateOffset={fixed ? stageOffset : null}
+        animationDuration={0.45}
+        onAnimationComplete={() => {
+          setReturningCards((current) => current.filter((item) => item.id !== card.id));
+        }}
+      />
+    );
+  };
+
+  const renderShufflingCard = (card: ShufflingCard, fixed: boolean) => {
+    const shuffleEntry: CardPositionEntry = {
+      instanceId: card.id,
+      card: card.card,
+      x: card.to.x,
+      y: card.to.y,
+      rotation: card.to.rotation,
+      scale: card.to.scale,
+      faceDown: card.to.faceDown,
+      zIndex: card.zIndex,
+    };
+
+    return (
+      <AnimatedCard
+        key={`shuffling-${card.id}`}
+        entry={shuffleEntry}
+        startOverride={card.from}
+        viaOverride={card.via}
+        coordinateOffset={fixed ? stageOffset : null}
+        animationDuration={0.6}
+        onAnimationComplete={() => {
+          setShufflingCards((current) => current.filter((item) => item.id !== card.id));
+        }}
+      />
+    );
+  };
 
   return (
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+    <div ref={layerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
       {visibleEntries.map((entry) => (
         <AnimatedCard
           key={entry.instanceId}
@@ -568,56 +672,43 @@ function CardLayer({ entries, me = null, opponent = null }: CardLayerProps) {
         />
       ))}
 
-      {returningCards.map((card) => {
-        const returningEntry: CardPositionEntry = {
-          instanceId: card.id,
-          card: card.card,
-          x: card.to.x,
-          y: card.to.y,
-          rotation: card.to.rotation,
-          scale: card.to.scale,
-          faceDown: true,
-          zIndex: card.zIndex,
-        };
+      {returningCards.length > 0 && (
+        <>
+          {!stageOffset && returningCards.map((card) => renderReturningCard(card, false))}
+          {stageOffset && (
+            <div className="MultiplayerDuelFieldPage-opponentHandLayer">
+              {returningCards.map((card) => renderReturningCard(card, true))}
+            </div>
+          )}
+        </>
+      )}
 
-        return (
-          <AnimatedCard
-            key={`returning-${card.id}`}
-            entry={returningEntry}
-            startOverride={card.from}
-            animationDuration={0.45}
-            onAnimationComplete={() => {
-              setReturningCards((current) => current.filter((item) => item.id !== card.id));
-            }}
-          />
-        );
-      })}
+      {boardShufflingCards.map((card) => renderShufflingCard(card, false))}
 
-      {shufflingCards.map((card) => {
-        const shuffleEntry: CardPositionEntry = {
-          instanceId: card.id,
-          card: card.card,
-          x: card.to.x,
-          y: card.to.y,
-          rotation: card.to.rotation,
-          scale: card.to.scale,
-          faceDown: card.to.faceDown,
-          zIndex: card.zIndex,
-        };
+      {stageOffset && opponentShufflingCards.length > 0 && (
+        <div className="MultiplayerDuelFieldPage-opponentHandLayer">
+          {opponentHandEntries.map((entry) => (
+            <AnimatedCard
+              key={entry.instanceId}
+              entry={entry}
+              coordinateOffset={stageOffset}
+            />
+          ))}
+          {opponentShufflingCards.map((card) => renderShufflingCard(card, true))}
+        </div>
+      )}
 
-        return (
-          <AnimatedCard
-            key={`shuffling-${card.id}`}
-            entry={shuffleEntry}
-            startOverride={card.from}
-            viaOverride={card.via}
-            animationDuration={0.6}
-            onAnimationComplete={() => {
-              setShufflingCards((current) => current.filter((item) => item.id !== card.id));
-            }}
-          />
-        );
-      })}
+      {stageOffset && opponentShufflingCards.length === 0 && opponentHandEntries.length > 0 && (
+        <div className="MultiplayerDuelFieldPage-opponentHandLayer">
+          {opponentHandEntries.map((entry) => (
+            <AnimatedCard
+              key={entry.instanceId}
+              entry={entry}
+              coordinateOffset={stageOffset}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -241,7 +241,10 @@ function MultiplayerDuelFieldPage() {
   // have been removed from the app entirely for now — see FieldZone.tsx
   // and Hand.tsx for where that used to live — so there's nothing left
   // here to synchronize local, per-client animation state for.
-  const applyMeUpdate = async (updater: (current: MyDuelState) => MyDuelState) => {
+  const applyMeUpdate = async (
+    updater: (current: MyDuelState) => MyDuelState,
+    options: { shuffleHand?: boolean } = {},
+  ) => {
     if (!duelId || !currentUser || !state.role) return;
     const current = latestMeRef.current ?? me;
     if (!current) return;
@@ -266,16 +269,12 @@ function MultiplayerDuelFieldPage() {
       );
     }
 
-    // A card being added to the hand, from ANY source (drawing,
-    // returning from the field, a Special Summon target coming back
-    // out, etc.) automatically reshuffles the whole hand — same
-    // centralized-in-applyMeUpdate approach as lastHandDepartureIndex
-    // just above, so this doesn't depend on every individual handler
-    // remembering to trigger it. handShuffleVersion incrementing is
-    // what CardLayer watches to know a shuffle just happened and play
-    // its own animation for it (see that file), separately from
-    // whatever arrival animation the newly-added card itself gets.
-    if (next.hand.length > current.hand.length) {
+    // A card being added to the hand normally triggers the same automatic
+    // reshuffle that this project has used since hand-shuffle animation was
+    // introduced. Specific actions can opt out — drawing from the Main Deck
+    // does this because a normal draw should simply enter the hand without
+    // rearranging every other card around it.
+    if (options.shuffleHand !== false && next.hand.length > current.hand.length) {
       next.hand = shuffle(next.hand);
       next.handShuffleVersion = current.handShuffleVersion + 1;
     }
@@ -314,7 +313,7 @@ function MultiplayerDuelFieldPage() {
       if (current.mainDeck.length === 0) return current;
       const [drawnCard, ...restDeck] = current.mainDeck;
       return { ...current, hand: [...current.hand, drawnCard], mainDeck: restDeck };
-    });
+    }, { shuffleHand: false });
 
   const handleLifePointChange = (delta: number) =>
     applyMeUpdate((current) => ({
@@ -322,9 +321,9 @@ function MultiplayerDuelFieldPage() {
       lifePoints: Math.max(0, current.lifePoints + delta),
     }));
 
-  // A deliberate, player-triggered shuffle — separate from (but using
-  // the exact same handShuffleVersion mechanism as) the automatic
-  // reshuffle that already happens whenever a card is added to hand.
+  // A deliberate, player-triggered shuffle — separate from the automatic
+  // reshuffle that can happen when a card is added to the hand, but using
+  // the exact same handShuffleVersion mechanism for the animation.
   // No length check needed here, unlike applyMeUpdate's own automatic
   // version — this always counts as a shuffle regardless of whether
   // the hand's size happens to have changed.

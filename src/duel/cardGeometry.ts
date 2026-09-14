@@ -235,7 +235,7 @@ const HAND_TOP_MARGIN = 8;
 // that needs the opponent's hand's real position, can share the exact
 // same value rather than each defining their own copy that could drift
 // apart.
-export const OPPONENT_HAND_TOP = -40;
+export const OPPONENT_HAND_TOP = -130;
 
 export function getHandSlot(handCount: number, index: number): ZoneSlot {
   const maxVisible = 6;

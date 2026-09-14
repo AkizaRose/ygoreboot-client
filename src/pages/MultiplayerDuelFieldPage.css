@@ -171,3 +171,14 @@
   cursor: default;
   opacity: 0.5;
 }
+/* The opponent's hand is rendered in a viewport-level layer rather than
+   inside the boardStage's clipping context. This keeps the viewport's top
+   edge as the only relevant clip boundary when OPPONENT_HAND_TOP is moved
+   upward, so the visible lower portion of the cards is preserved. */
+.MultiplayerDuelFieldPage-opponentHandLayer {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 90;
+}
