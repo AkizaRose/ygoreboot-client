@@ -5,7 +5,12 @@ import {
   useTransform,
 } from 'framer-motion';
 import type { CardPositionEntry } from './cardPositions';
-import type { MyDuelState, OpponentDuelState } from '../components/Matchmaking/useMultiplayerDuel';
+import type {
+  MyDuelState,
+  OpponentDuelState,
+  PlayerRole,
+} from '../components/Matchmaking/useMultiplayerDuel';
+import { encodeHandSelection, decodeHandSelection } from '../components/Matchmaking/useMultiplayerDuel';
 import type { CardInstance } from '../types/CardInstance';
 import CardImage from '../components/CardView/CardImage';
 import cardBackImg from '../assets/card/CardBack.png';
@@ -25,6 +30,20 @@ interface CardLayerProps {
   entries: CardPositionEntry[];
   me?: MyDuelState | null;
   opponent?: OpponentDuelState | null;
+  // This client's own role — needed to tell whether a decoded hand
+  // selection (see decodeHandSelection) refers to this player's own
+  // hand or the opponent's, which determines how it's matched against
+  // rendered entries (see getSelectionColor below).
+  myRole?: PlayerRole | null;
+  mySelection?: string | null;
+  opponentSelection?: string | null;
+  // Only ever actually invoked for the opponent's hand proxies — every
+  // other selectable card is clicked through its own FieldZone instead
+  // (see DuelField.tsx), since those already coexist correctly with
+  // hover-menus and other zone interactions. The opponent's hand has no
+  // FieldZone underneath it to hook into at all, so it's the one place
+  // this gets wired up directly here.
+  onSelectCard?: (target: string) => void;
 }
 
 interface CardVisualPosition {
@@ -56,6 +75,46 @@ interface ShufflingCard {
 }
 
 interface HiddenSource extends CardVisualPosition {}
+
+// Resolves whether a given rendered entry matches either player's
+// current selection, and if so, whose. A plain selection value is a
+// real field-card instanceId — direct comparison. An encoded hand
+// selection ("hand:<owner>:<index>", see decodeHandSelection) needs
+// different handling depending on whose hand it refers to: if it's
+// THIS client's own hand, the selection is positional (the other
+// player has no way to reference a real instanceId for a hand card
+// they can't see), so it's matched by looking up me.hand[index] and
+// comparing THAT card's real instanceId — but if it's the OPPONENT's
+// hand, the entry being rendered already IS the position-only proxy
+// (opponent-hand-N), so the encoded index is compared directly against
+// that same naming instead.
+function getSelectionColor(
+  entryInstanceId: string,
+  mySelection: string | null,
+  opponentSelection: string | null,
+  me: MyDuelState | null,
+  myRole: PlayerRole | null,
+  opponentRole: PlayerRole | null,
+): 'mine' | 'opponent' | null {
+  const matches = (selection: string | null): boolean => {
+    if (!selection) return false;
+    const decoded = decodeHandSelection(selection);
+    if (decoded) {
+      if (decoded.owner === myRole) {
+        return me?.hand[decoded.index]?.instanceId === entryInstanceId;
+      }
+      if (decoded.owner === opponentRole) {
+        return entryInstanceId === `opponent-hand-${decoded.index}`;
+      }
+      return false;
+    }
+    return entryInstanceId === selection;
+  };
+
+  if (matches(mySelection)) return 'mine';
+  if (matches(opponentSelection)) return 'opponent';
+  return null;
+}
 
 // Both hands are horizontally centered at BOARD_WIDTH/2 — getHandSlot's
 // own centering math (handLeft + handWidth/2) always resolves to exactly
@@ -155,6 +214,8 @@ function AnimatedCard({
   onAnimationComplete,
   animationDuration = 0.3,
   coordinateOffset = null,
+  selectionColor = null,
+  onClick,
 }: {
   entry: CardPositionEntry;
   hiddenSource?: HiddenSource | null;
@@ -168,6 +229,15 @@ function AnimatedCard({
   onAnimationComplete?: () => void;
   animationDuration?: number;
   coordinateOffset?: { x: number; y: number } | null;
+  // 'mine' (red) or 'opponent' (blue) — see getSelectionColor. Purely
+  // visual; rendered with pointer-events:none regardless of onClick
+  // below, so the outline itself never blocks a click reaching whatever
+  // it's layered on top of.
+  selectionColor?: 'mine' | 'opponent' | null;
+  // Only ever passed for the opponent's hand proxies (see CardLayer's
+  // own render loop) — everywhere else, selecting a card is handled by
+  // that card's own FieldZone instead, not here.
+  onClick?: () => void;
 }) {
   const targetRotationY = entry.faceDown ? 180 : 0;
   // Reflects whichever source's ACTUAL faceDown value applies — not just
@@ -280,11 +350,20 @@ function AnimatedCard({
         rotate: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
       }}
       onAnimationComplete={onAnimationComplete}
+      onClick={onClick}
       style={{
         position: 'absolute',
         left: 0,
         top: 0,
         zIndex: entry.zIndex,
+        // Only clickable at all when onClick was actually passed
+        // (opponent hand proxies) — every other card stays
+        // pointer-events:none here, same as before this feature
+        // existed, so it never blocks hover reaching the FieldZone
+        // underneath it. That zone's own onClick is what handles
+        // selecting for every card except this one case.
+        pointerEvents: onClick ? 'auto' : 'none',
+        cursor: onClick ? 'pointer' : undefined,
       }}
     >
       <div
@@ -365,11 +444,41 @@ function AnimatedCard({
           </motion.div>
         </motion.div>
       </div>
+      {/* Deliberately a sibling of the perspective wrapper above, not a
+          child of it — this sits outside the 3D rotateY transform
+          entirely, so the outline itself never flips/mirrors along with
+          the card's own face-up/face-down animation; it always reads as
+          a flat rectangle traced just inside the card's own edge.
+          pointer-events:none unconditionally — purely decorative, never
+          a click target itself, and never blocks the click target this
+          card might itself be (see onClick above) or whatever's
+          underneath it. */}
+      {selectionColor && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 3,
+            pointerEvents: 'none',
+            boxShadow: `inset 0 0 0 3px ${selectionColor === 'mine' ? '#e53935' : '#1e88e5'}`,
+            borderRadius: 4,
+          }}
+        />
+      )}
     </motion.div>
   );
 }
 
-function CardLayer({ entries, me = null, opponent = null }: CardLayerProps) {
+function CardLayer({
+  entries,
+  me = null,
+  opponent = null,
+  myRole = null,
+  mySelection = null,
+  opponentSelection = null,
+  onSelectCard,
+}: CardLayerProps) {
+  const opponentRole: PlayerRole | null =
+    myRole === 'player1' ? 'player2' : myRole === 'player2' ? 'player1' : null;
   const layerRef = useRef<HTMLDivElement | null>(null);
   const [stageOffset, setStageOffset] = useState<{ x: number; y: number } | null>(null);
   const previousOpponentRef = useRef<OpponentDuelState | null>(null);
@@ -653,6 +762,34 @@ function CardLayer({ entries, me = null, opponent = null }: CardLayerProps) {
     );
   };
 
+  // Mirrors the main visibleEntries loop's own selectionColor/onClick
+  // logic exactly (see that loop below) — factored out since it's now
+  // needed in two separate opponentHandLayer render blocks above, not
+  // just the one place it used to matter.
+  const renderOpponentHandEntry = (entry: CardPositionEntry) => (
+    <AnimatedCard
+      key={entry.instanceId}
+      entry={entry}
+      coordinateOffset={stageOffset}
+      selectionColor={getSelectionColor(
+        entry.instanceId,
+        mySelection,
+        opponentSelection,
+        me,
+        myRole,
+        opponentRole,
+      )}
+      onClick={
+        entry.instanceId.startsWith('opponent-hand-') && onSelectCard && opponentRole
+          ? () => {
+              const index = Number(entry.instanceId.slice('opponent-hand-'.length));
+              onSelectCard(encodeHandSelection(opponentRole, index));
+            }
+          : undefined
+      }
+    />
+  );
+
   const renderShufflingCard = (card: ShufflingCard, fixed: boolean) => {
     const shuffleEntry: CardPositionEntry = {
       instanceId: card.id,
@@ -687,6 +824,22 @@ function CardLayer({ entries, me = null, opponent = null }: CardLayerProps) {
           key={entry.instanceId}
           entry={entry}
           hiddenSource={getHiddenSource(entry, previousOpponent, opponent)}
+          selectionColor={getSelectionColor(
+            entry.instanceId,
+            mySelection,
+            opponentSelection,
+            me,
+            myRole,
+            opponentRole,
+          )}
+          onClick={
+            entry.instanceId.startsWith('opponent-hand-') && onSelectCard && opponentRole
+              ? () => {
+                  const index = Number(entry.instanceId.slice('opponent-hand-'.length));
+                  onSelectCard(encodeHandSelection(opponentRole, index));
+                }
+              : undefined
+          }
         />
       ))}
 
@@ -705,26 +858,14 @@ function CardLayer({ entries, me = null, opponent = null }: CardLayerProps) {
 
       {stageOffset && opponentShufflingCards.length > 0 && (
         <div className="MultiplayerDuelFieldPage-opponentHandLayer">
-          {opponentHandEntries.map((entry) => (
-            <AnimatedCard
-              key={entry.instanceId}
-              entry={entry}
-              coordinateOffset={stageOffset}
-            />
-          ))}
+          {opponentHandEntries.map((entry) => renderOpponentHandEntry(entry))}
           {opponentShufflingCards.map((card) => renderShufflingCard(card, true))}
         </div>
       )}
 
       {stageOffset && opponentShufflingCards.length === 0 && opponentHandEntries.length > 0 && (
         <div className="MultiplayerDuelFieldPage-opponentHandLayer">
-          {opponentHandEntries.map((entry) => (
-            <AnimatedCard
-              key={entry.instanceId}
-              entry={entry}
-              coordinateOffset={stageOffset}
-            />
-          ))}
+          {opponentHandEntries.map((entry) => renderOpponentHandEntry(entry))}
         </div>
       )}
     </div>

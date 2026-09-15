@@ -31,11 +31,35 @@ const EXTRA_DECK_MONSTER_FIELD_ACTIONS: FieldZoneAction[] = [
   { key: 'banish', label: 'Banish' },
 ];
 
+const MOVE_ACTION: FieldZoneAction = { key: 'move', label: 'Move' };
+
 function isExtraDeckMonster(card: CardData): boolean {
   return (
     card.cardClass === 'Monster' &&
     ['Fusion', 'Ritual', 'Evolution'].includes(card.cardSubclass ?? '')
   );
+}
+
+// includeMove defaults to true (Monster Zone, Spell/Trap Zone) —
+// explicitly passed false for the Field Zone call site only, per Move
+// being available for every zone type except Field Spells.
+function getPlacedCardActions(
+  card: CardData | undefined,
+  faceDown: boolean,
+  includeMove: boolean = true,
+): FieldZoneAction[] {
+  const base =
+    card && isExtraDeckMonster(card)
+      ? EXTRA_DECK_MONSTER_FIELD_ACTIONS
+      : STANDARD_FIELD_CARD_ACTIONS;
+  const withMove = includeMove ? [...base, MOVE_ACTION] : base;
+  if (faceDown) {
+    return [{ key: 'activate', label: 'Activate' }, ...withMove];
+  }
+  if (card && card.cardClass !== 'Monster') {
+    return [{ key: 'set', label: 'Set' }, ...withMove];
+  }
+  return withMove;
 }
 
 // The pile count label used to sit at a fixed spot on the zone itself,
@@ -55,26 +79,6 @@ function topCardOffset(
   const visibleLayers = Math.min(count, offsets.maxLayers + 1);
   const topLayerIndex = Math.max(0, visibleLayers - 1);
   return { x: topLayerIndex * offsets.stepX, y: topLayerIndex * offsets.stepY };
-}
-
-// Face-down cards (Set Spells/Traps, and — once Set Monster exists —
-// face-down monsters too) get an extra "Activate" option at the front,
-// flipping the card face-up in place rather than moving it anywhere.
-// Symmetrically, a face-up Spell/Trap/Field Spell gets a "Set" option
-// that flips it back face-down — but never Monster Zone cards, since
-// there's no Set Monster yet.
-function getPlacedCardActions(card: CardData | undefined, faceDown: boolean): FieldZoneAction[] {
-  const base =
-    card && isExtraDeckMonster(card)
-      ? EXTRA_DECK_MONSTER_FIELD_ACTIONS
-      : STANDARD_FIELD_CARD_ACTIONS;
-  if (faceDown) {
-    return [{ key: 'activate', label: 'Activate' }, ...base];
-  }
-  if (card && card.cardClass !== 'Monster') {
-    return [{ key: 'set', label: 'Set' }, ...base];
-  }
-  return base;
 }
 
 // Main Deck and Extra Deck share "View", but only Main Deck gets Shuffle
@@ -213,6 +217,34 @@ interface PlayerFieldProps {
   // Attack menu option below to the turn player's own Battle Phase.
   currentPhase?: TurnPhase | null;
   isMyTurn?: boolean;
+  // Opens StatAdjustDialog for the given Monster Zone slot index — only
+  // ever wired up for the player's own (non-flipped) side, same as
+  // onFieldAction.
+  onStatsAdjust?: (index: number) => void;
+  // Purely visual "select this card" — unlike onStatsAdjust/
+  // onFieldAction above, this is wired up on BOTH sides (see
+  // DuelField's own two PlayerField calls), since a card on EITHER
+  // player's field can be selected. Passed the instanceId of whichever
+  // card was clicked.
+  onSelectCard?: (instanceId: string) => void;
+  // "Move" mode — only ever meaningful for the player's own (non-flipped)
+  // side, same as onStatsAdjust/onFieldAction. True while a card is
+  // waiting to be relocated (see MultiplayerDuelFieldPage's own
+  // pendingMove); suppresses the normal hover menu the same way Fusion/
+  // Evolution material selection already does, and switches an empty
+  // Monster/Spell-Trap Zone's click into "move here" instead of nothing.
+  isSelectingMoveDestination?: boolean;
+  onMoveTarget?: (zoneType: 'monster' | 'spellTrap', index: number) => void;
+  // The cross-field counterpart — meaningful on the OPPONENT's
+  // (flipped) side specifically, unlike isSelectingMoveDestination/
+  // onMoveTarget above which are the player's own side only. True only
+  // while the card being moved is itself a Monster Zone card (Spell/
+  // Trap cards never target the opponent's field at all), switching an
+  // empty MONSTER Zone slot on the opponent's own side into a valid
+  // "move here" target — their Spell/Trap Zone is never a valid
+  // destination for this, per the feature as requested.
+  isSelectingMoveToOpponentZone?: boolean;
+  onMoveToOpponentTarget?: (index: number) => void;
 }
 
 function PlayerField({
@@ -244,6 +276,12 @@ function PlayerField({
   onSelectEvolutionMaterial,
   currentPhase,
   isMyTurn = false,
+  onStatsAdjust,
+  onSelectCard,
+  isSelectingMoveDestination = false,
+  onMoveTarget,
+  isSelectingMoveToOpponentZone = false,
+  onMoveToOpponentTarget,
 }: PlayerFieldProps) {
   const fieldZones = flipped ? [...FIELD_ZONES].reverse() : FIELD_ZONES;
   const deckZones = flipped ? [...DECK_ZONES].reverse() : DECK_ZONES;
@@ -283,11 +321,18 @@ function PlayerField({
               rotated180={flipped}
               onCardHover={flipped && fieldZone?.faceDown ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
-              menuActions={flipped ? [] : getPlacedCardActions(fieldZone?.card, fieldZone?.faceDown ?? false)}
+              menuActions={
+                flipped
+                  ? []
+                  : getPlacedCardActions(fieldZone?.card, fieldZone?.faceDown ?? false, false)
+              }
               onMenuAction={
                 fieldZone && onFieldAction
                   ? (actionKey) => onFieldAction('field', 0, actionKey)
                   : undefined
+              }
+              onClick={
+                fieldZone && onSelectCard ? () => onSelectCard(fieldZone.instanceId) : undefined
               }
             />
           );
@@ -359,7 +404,13 @@ function PlayerField({
           // (never both pending at once), but combining the check here
           // means this zone doesn't care which one it is, only whether
           // some selection is in progress at all.
-          const isSelectingMaterial = isSelectingFusionMaterial || isSelectingEvolutionMaterial;
+          // Every special-selection mode suppresses the normal hover
+          // menu the same way — they're mutually exclusive in practice
+          // (never more than one pending at once), but combining the
+          // check here means this zone doesn't care which one it is,
+          // only whether some selection is in progress at all.
+          const isInSelectionMode =
+            isSelectingFusionMaterial || isSelectingEvolutionMaterial || isSelectingMoveDestination;
 
           return (
             <FieldZone
@@ -380,7 +431,7 @@ function PlayerField({
               menuActions={
                 flipped
                   ? viewStackAction
-                  : isSelectingMaterial
+                  : isInSelectionMode
                     ? []
                     : [
                         ...attackAction,
@@ -396,7 +447,7 @@ function PlayerField({
                         if (actionKey === 'view') onViewOpponentStack(slotIndex);
                       }
                     : undefined
-                  : placed && onFieldAction && !isSelectingMaterial
+                  : placed && onFieldAction && !isInSelectionMode
                     ? (actionKey) => onFieldAction('monster', slotIndex, actionKey)
                     : undefined
               }
@@ -405,11 +456,24 @@ function PlayerField({
                   ? () => onToggleMaterialSelection(slotIndex)
                   : isSelectingEvolutionMaterial && placed && onSelectEvolutionMaterial
                     ? () => onSelectEvolutionMaterial(slotIndex)
-                    : undefined
+                    : isSelectingMoveDestination && !placed && onMoveTarget
+                      ? () => onMoveTarget('monster', slotIndex)
+                      : isSelectingMoveToOpponentZone && !placed && onMoveToOpponentTarget
+                        ? () => onMoveToOpponentTarget(slotIndex)
+                        : placed && onSelectCard
+                          ? () => onSelectCard(placed.instanceId)
+                          : undefined
               }
               selected={isSelectingFusionMaterial && selectedMaterialIndices.includes(slotIndex)}
               showRotatedOverlay
               showStats
+              atkOverride={placed?.atkOverride}
+              defOverride={placed?.defOverride}
+              onStatsClick={
+                !flipped && placed && !isInSelectionMode && onStatsAdjust
+                  ? () => onStatsAdjust(slotIndex)
+                  : undefined
+              }
             />
           );
         }
@@ -444,6 +508,7 @@ function PlayerField({
                     ? () => onViewGrave()
                     : undefined
               }
+              onClick={topCard && onSelectCard ? () => onSelectCard(topCard.instanceId) : undefined}
             />
           );
         }
@@ -478,6 +543,7 @@ function PlayerField({
                     ? () => onViewBanished()
                     : undefined
               }
+              onClick={topCard && onSelectCard ? () => onSelectCard(topCard.instanceId) : undefined}
             />
           );
         }
@@ -541,11 +607,22 @@ function PlayerField({
               rotated180={flipped}
               onCardHover={flipped && placed?.faceDown ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
-              menuActions={flipped ? [] : getPlacedCardActions(placed?.card, placed?.faceDown ?? false)}
+              menuActions={
+                flipped || isSelectingMoveDestination
+                  ? []
+                  : getPlacedCardActions(placed?.card, placed?.faceDown ?? false)
+              }
               onMenuAction={
-                !flipped && placed && onFieldAction
+                !flipped && placed && onFieldAction && !isSelectingMoveDestination
                   ? (actionKey) => onFieldAction('spellTrap', slotIndex, actionKey)
                   : undefined
+              }
+              onClick={
+                isSelectingMoveDestination && !placed && onMoveTarget
+                  ? () => onMoveTarget('spellTrap', slotIndex)
+                  : placed && onSelectCard
+                    ? () => onSelectCard(placed.instanceId)
+                    : undefined
               }
             />
           );
@@ -621,6 +698,18 @@ interface DuelFieldProps {
   onPrevPhase?: () => void;
   onNextPhase?: () => void;
   onStartTurn?: () => void;
+  // Only ever meaningful for the player's own side — see
+  // PlayerFieldProps' own copy of this same prop.
+  onStatsAdjust?: (index: number) => void;
+  // Meaningful for BOTH sides — see PlayerFieldProps' own copy.
+  onSelectCard?: (instanceId: string) => void;
+  // Only ever meaningful for the player's own side — see
+  // PlayerFieldProps' own copy of these two.
+  isSelectingMoveDestination?: boolean;
+  onMoveTarget?: (zoneType: 'monster' | 'spellTrap', index: number) => void;
+  // Meaningful on the OPPONENT's side — see PlayerFieldProps' own copy.
+  isSelectingMoveToOpponentZone?: boolean;
+  onMoveToOpponentTarget?: (index: number) => void;
 }
 
 function DuelField({
@@ -660,6 +749,12 @@ function DuelField({
   onPrevPhase,
   onNextPhase,
   onStartTurn,
+  onStatsAdjust,
+  onSelectCard,
+  isSelectingMoveDestination = false,
+  onMoveTarget,
+  isSelectingMoveToOpponentZone = false,
+  onMoveToOpponentTarget,
 }: DuelFieldProps) {
   return (
     <div className="DuelField">
@@ -677,6 +772,9 @@ function DuelField({
         onViewOpponentGrave={onViewOpponentGrave}
         onViewOpponentBanished={onViewOpponentBanished}
         onViewOpponentStack={onViewOpponentStack}
+        onSelectCard={onSelectCard}
+        isSelectingMoveToOpponentZone={isSelectingMoveToOpponentZone}
+        onMoveToOpponentTarget={onMoveToOpponentTarget}
       />
       {/* Same 7-column grid as every zone row (.DuelField-row) — the
           tracker itself sits at grid-column: 7 (see PhaseTracker.css),
@@ -712,6 +810,10 @@ function DuelField({
         onCardHoverEnd={onCardHoverEnd}
         currentPhase={currentPhase}
         isMyTurn={isMyTurn}
+        onStatsAdjust={onStatsAdjust}
+        onSelectCard={onSelectCard}
+        isSelectingMoveDestination={isSelectingMoveDestination}
+        onMoveTarget={onMoveTarget}
         onFieldAction={onFieldAction}
         onMainDeckAction={onMainDeckAction}
         onViewExtraDeck={onViewExtraDeck}

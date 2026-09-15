@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../auth/AuthContext';
 import DuelField from '../components/DuelField/DuelField';
@@ -10,6 +10,7 @@ import CardDisplay from '../components/CardDisplay/CardDisplay';
 import LifePointCounter from '../components/DuelField/LifePointCounter';
 import PlayerAvatarBox from '../components/Avatar/PlayerAvatarBox';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
+import StatAdjustDialog from '../components/DuelField/StatAdjustDialog';
 import CardLayer from '../duel/CardLayer';
 import { computeCardPositions } from '../duel/cardPositions';
 import { BOARD_WIDTH, STAGE_HEIGHT } from '../duel/cardGeometry';
@@ -17,6 +18,8 @@ import { getAvatarUrl } from '../components/Avatar/avatars';
 import {
   useMultiplayerDuel,
   TURN_PHASES,
+  encodeHandSelection,
+  decodeHandSelection,
   type PlayerRole,
   type OpponentInfo,
   type MyDuelState,
@@ -98,6 +101,10 @@ function MultiplayerDuelFieldPage() {
     turnEnding,
     turnNumber,
     isMyTurn,
+    mySelection,
+    opponentSelection,
+    pendingControlTransfers,
+    pendingCardReturns,
   } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
@@ -178,6 +185,28 @@ function MultiplayerDuelFieldPage() {
     const timeoutId = window.setTimeout(() => setShowFirstPlayerBanner(false), 2500);
     return () => window.clearTimeout(timeoutId);
   }, [turnPlayer]);
+
+  // Draws exactly one card at the start of the turn player's own turn —
+  // including turn 1 for whoever goes first, not just turns claimed via
+  // "Start Turn". Keyed on turnNumber (via this ref) rather than firing
+  // whenever currentPhase === 'draw', so navigating back to Draw Phase
+  // later in the same turn doesn't draw again — this only ever fires
+  // once per genuinely NEW turnNumber this client has seen. Gated on
+  // !showFirstPlayerBanner so even turn 1's own draw happens once the
+  // field is actually visible and CardLayer is mounted to animate it,
+  // rather than invisibly while the announcement banner is still up.
+  const lastAutoDrawnTurnRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isMyTurn || showFirstPlayerBanner) return;
+    if (lastAutoDrawnTurnRef.current === turnNumber) return;
+    lastAutoDrawnTurnRef.current = turnNumber;
+    handleDrawCard();
+    // handleDrawCard is intentionally not a dependency — it's redefined
+    // every render (not memoized), and the ref-based guard above already
+    // makes this effect idempotent per turnNumber regardless of exactly
+    // when within that render cycle it fires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMyTurn, turnNumber, showFirstPlayerBanner]);
   // TEMPORARY DIAGNOSTIC ref — see its use further down, near
   // cardPositionEntries. Remove alongside that code once the animation
   // bug is confirmed fixed.
@@ -231,6 +260,21 @@ function MultiplayerDuelFieldPage() {
   // flow — no position-choice counterpart needed the way Fusion has one.
   const [pendingEvolutionSummon, setPendingEvolutionSummon] = useState<{
     extraDeckInstance: CardInstance;
+  } | null>(null);
+
+  // Which of the player's own Monster Zone slots (0-2) currently has
+  // StatAdjustDialog open, if any — never the opponent's, since
+  // onStatsAdjust is only ever wired up for the player's own side (see
+  // DuelField.tsx).
+  const [pendingStatAdjustIndex, setPendingStatAdjustIndex] = useState<number | null>(null);
+
+  // The origin of a card currently waiting to be relocated — set by
+  // "Move" in the hover menu (see handleFieldAction's own 'move' case),
+  // cleared once a valid destination is clicked (handleMoveTarget) or
+  // the player cancels (handleMoveCancel).
+  const [pendingMove, setPendingMove] = useState<{
+    zoneType: 'monster' | 'spellTrap';
+    index: number;
   } | null>(null);
 
   const handleCardHover = useCallback((card: CardData) => {
@@ -328,7 +372,16 @@ function MultiplayerDuelFieldPage() {
     });
     await setDoc(
       doc(db, 'duels', duelId),
-      { [state.role]: buildPublicState(next) },
+      {
+        [state.role]: buildPublicState(next),
+        // Any real action clears BOTH players' selections — selecting a
+        // card is deliberately its own separate write (handleSelectCard
+        // below) that never goes through applyMeUpdate at all, which is
+        // the actual mechanism that keeps selecting itself exempt from
+        // this clearing behavior, not a special case here.
+        player1Selection: null,
+        player2Selection: null,
+      },
       { merge: true },
     );
   };
@@ -361,6 +414,16 @@ function MultiplayerDuelFieldPage() {
 
   // --- Turn / Phase actions ---
 
+  // Battle Phase and Main 2 don't exist for whoever goes first, on
+  // their very first turn only. turnNumber === 1 alone is enough to
+  // identify that turn specifically — it only ever increments via
+  // handleStartTurn below, so the SECOND player's own first turn is
+  // already turnNumber 2, never 1. Same 'draw'/'main1'/'end' order as
+  // the full list, just with the two skipped phases actually removed
+  // rather than merely hidden, so index-based navigation below still
+  // works the same way against whichever list applies.
+  const FIRST_TURN_PHASES: TurnPhase[] = ['draw', 'main1', 'end'];
+
   // Writes to the shared, top-level turn/phase fields — unlike
   // applyMeUpdate, this isn't "my own" state to own exclusively: which
   // client is ever allowed to call this for a given transition is
@@ -376,9 +439,35 @@ function MultiplayerDuelFieldPage() {
     }>,
   ) => {
     if (!duelId) return;
-    setDoc(doc(db, 'duels', duelId), patch, { merge: true }).catch((err) => {
+    setDoc(
+      doc(db, 'duels', duelId),
+      { ...patch, player1Selection: null, player2Selection: null },
+      { merge: true },
+    ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to update turn state:', err);
     });
+  };
+
+  // --- Card selection (purely visual — no gameplay effect of its own) ---
+
+  // Deliberately its own setDoc, never routed through applyMeUpdate or
+  // applyTurnUpdate — both of those clear BOTH players' selections as
+  // part of every write they make (see their own comments), and
+  // selecting a card needs to be exempt from that: it only ever touches
+  // the CLICKING player's own field, leaving whatever the opponent
+  // currently has selected completely untouched. Toggles off if the
+  // same target is clicked again — a deliberate, if unstated, piece of
+  // reasonable UX (click to select, click again to deselect) alongside
+  // "only one card at a time," which the single field itself already
+  // guarantees (a new selection simply overwrites the old one).
+  const handleSelectCard = (target: string) => {
+    if (!duelId || !state.role) return;
+    const next = mySelection === target ? null : target;
+    setDoc(doc(db, 'duels', duelId), { [`${state.role}Selection`]: next }, { merge: true }).catch(
+      (err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to update selection:', err);
+      },
+    );
   };
 
   // Turn-player-only, same guard duplicated in PhaseTracker itself (which
@@ -386,16 +475,18 @@ function MultiplayerDuelFieldPage() {
   // controls what's clickABLE, not what's possible to call directly.
   const handlePrevPhase = () => {
     if (!isMyTurn || turnEnding || !currentPhase) return;
-    const index = TURN_PHASES.indexOf(currentPhase);
+    const phases = turnNumber === 1 ? FIRST_TURN_PHASES : TURN_PHASES;
+    const index = phases.indexOf(currentPhase);
     if (index <= 0) return;
-    applyTurnUpdate({ currentPhase: TURN_PHASES[index - 1] });
+    applyTurnUpdate({ currentPhase: phases[index - 1] });
   };
 
   const handleNextPhase = () => {
     if (!isMyTurn || turnEnding || !currentPhase) return;
-    const index = TURN_PHASES.indexOf(currentPhase);
-    if (index < TURN_PHASES.length - 1) {
-      applyTurnUpdate({ currentPhase: TURN_PHASES[index + 1] });
+    const phases = turnNumber === 1 ? FIRST_TURN_PHASES : TURN_PHASES;
+    const index = phases.indexOf(currentPhase);
+    if (index < phases.length - 1) {
+      applyTurnUpdate({ currentPhase: phases[index + 1] });
     } else {
       // Already at End Phase — there's no sixth phase to advance to, so
       // this signals ending the turn instead, handed off via turnEnding
@@ -529,7 +620,17 @@ function MultiplayerDuelFieldPage() {
         const material = current.monsterZones[idx];
         if (!material) continue;
         materialCards.push(...(material.stackedBelow ?? []));
-        materialCards.push({ instanceId: material.instanceId, card: material.card });
+        // Conditionally spread owner in, rather than always including the
+        // key — `owner: material.owner` would write an EXPLICIT
+        // `owner: undefined` for the ordinary case of a material that's
+        // never changed control, and Firestore's SDK rejects any write
+        // containing an explicit undefined value outright (not a silent
+        // no-op — the whole write fails).
+        materialCards.push({
+          instanceId: material.instanceId,
+          card: material.card,
+          ...(material.owner ? { owner: material.owner } : {}),
+        });
       }
 
       const nextZones = [...current.monsterZones];
@@ -579,7 +680,11 @@ function MultiplayerDuelFieldPage() {
         position,
         stackedBelow: [
           ...(material.stackedBelow ?? []),
-          { instanceId: material.instanceId, card: material.card },
+          {
+            instanceId: material.instanceId,
+            card: material.card,
+            ...(material.owner ? { owner: material.owner } : {}),
+          },
         ],
       };
 
@@ -588,6 +693,41 @@ function MultiplayerDuelFieldPage() {
         monsterZones: nextZones,
         extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
       };
+    });
+  };
+
+  // --- Stat adjustment ---
+
+  const handleStatsAdjust = (index: number) => setPendingStatAdjustIndex(index);
+
+  const handleStatAdjustCancel = () => setPendingStatAdjustIndex(null);
+
+  const handleStatAdjustConfirm = (atk: number, def: number) => {
+    const index = pendingStatAdjustIndex;
+    setPendingStatAdjustIndex(null);
+    if (index === null) return;
+    applyMeUpdate((current) => {
+      const slot = current.monsterZones[index];
+      if (!slot) return current;
+      const nextZones = [...current.monsterZones];
+      nextZones[index] = { ...slot, atkOverride: atk, defOverride: def };
+      return { ...current, monsterZones: nextZones };
+    });
+  };
+
+  // Resets to base AND closes the dialog, in one step — no separate
+  // confirmation, matching how Cancel also closes immediately rather
+  // than asking "are you sure."
+  const handleStatAdjustReset = () => {
+    const index = pendingStatAdjustIndex;
+    setPendingStatAdjustIndex(null);
+    if (index === null) return;
+    applyMeUpdate((current) => {
+      const slot = current.monsterZones[index];
+      if (!slot) return current;
+      const nextZones = [...current.monsterZones];
+      nextZones[index] = { ...slot, atkOverride: null, defOverride: null };
+      return { ...current, monsterZones: nextZones };
     });
   };
 
@@ -754,6 +894,17 @@ function MultiplayerDuelFieldPage() {
       return;
     }
 
+    if (actionKey === 'move') {
+      // Never offered for Field Zone (see getPlacedCardActions' own
+      // includeMove parameter), so this should be unreachable with
+      // zoneType 'field' in practice — the check narrows the type
+      // regardless, since pendingMove itself only ever describes a
+      // Monster or Spell/Trap Zone slot.
+      if (zoneType === 'field') return;
+      setPendingMove({ zoneType, index });
+      return;
+    }
+
     if (
       actionKey !== 'toHand' &&
       actionKey !== 'toExtra' &&
@@ -765,6 +916,19 @@ function MultiplayerDuelFieldPage() {
       notYetImplemented(`field action: ${actionKey}`);
       return;
     }
+
+    // Captured from inside the updater below (which runs synchronously,
+    // well before applyMeUpdate's own writes are awaited) — every card
+    // from this single action that needs to return to the opponent
+    // rather than into my own collections: the top card itself, and/or
+    // any individually-owned buried materials (see CardInstance's own
+    // `owner` field). Always a single opponent regardless of how many
+    // items end up here, since there are only two players in a duel.
+    let returnItems: {
+      destination: 'hand' | 'grave' | 'banished' | 'mainDeckTop' | 'mainDeckBottom' | 'extraDeck';
+      card: CardInstance;
+    }[] = [];
+    let returnToRole: PlayerRole | null = null;
 
     applyMeUpdate((current) => {
       const placed =
@@ -788,13 +952,54 @@ function MultiplayerDuelFieldPage() {
         next.fieldZone = null;
       }
 
-      // Buried cards always go to Grave, regardless of the top card's
-      // own destination.
+      // Buried materials go to Grave regardless of the top card's own
+      // destination — but each one individually to its OWN true owner's
+      // Grave, not automatically the controller's. A single stack can
+      // easily mix materials originally owned by either player.
       if (placed.stackedBelow && placed.stackedBelow.length > 0) {
-        next.grave = [...next.grave, ...placed.stackedBelow];
+        const myMaterials: CardInstance[] = [];
+        for (const material of placed.stackedBelow) {
+          if (material.owner && material.owner !== state.role) {
+            returnItems.push({ destination: 'grave', card: material });
+            returnToRole = material.owner;
+          } else {
+            myMaterials.push(material);
+          }
+        }
+        if (myMaterials.length > 0) {
+          next.grave = [...next.grave, ...myMaterials];
+        }
       }
 
-      const asCardInstance: CardInstance = { instanceId: placed.instanceId, card: placed.card };
+      const asCardInstance: CardInstance = {
+        instanceId: placed.instanceId,
+        card: placed.card,
+        ...(placed.owner ? { owner: placed.owner } : {}),
+      };
+
+      // Unset owner, or an owner matching me, both mean I'm the true
+      // owner — the ordinary case for a card that's never changed
+      // control, handled exactly as before. Only a DIFFERENT owner
+      // means this card needs to go back to them instead of into my
+      // own collections.
+      if (placed.owner && placed.owner !== state.role) {
+        const destination: 'hand' | 'grave' | 'banished' | 'mainDeckTop' | 'mainDeckBottom' | 'extraDeck' =
+          actionKey === 'toHand'
+            ? 'hand'
+            : actionKey === 'toExtra'
+              ? 'extraDeck'
+              : actionKey === 'toGrave'
+                ? 'grave'
+                : actionKey === 'banish'
+                  ? 'banished'
+                  : actionKey === 'stackTop'
+                    ? 'mainDeckTop'
+                    : 'mainDeckBottom';
+        returnItems.push({ destination, card: asCardInstance });
+        returnToRole = placed.owner;
+        return next;
+      }
+
       switch (actionKey) {
         case 'toHand':
           next.hand = [...next.hand, asCardInstance];
@@ -817,7 +1022,220 @@ function MultiplayerDuelFieldPage() {
       }
       return next;
     });
+
+    if (returnItems.length > 0 && returnToRole && duelId) {
+      setDoc(
+        doc(db, 'duels', duelId),
+        {
+          // arrayUnion, not a plain field write — same reasoning as
+          // pendingControlTransfers' own fix: a plain merge write here
+          // would overwrite (and lose) any OTHER return batch still
+          // waiting to be picked up, rather than adding alongside it.
+          pendingCardReturns: arrayUnion({ toRole: returnToRole, items: returnItems }),
+        },
+        { merge: true },
+      ).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to hand off card return:', err);
+      });
+    }
   };
+
+  // --- Move (relocate a card to a different, empty zone on the same field) ---
+
+  const handleMoveCancel = () => setPendingMove(null);
+
+  const handleMoveTarget = (destZoneType: 'monster' | 'spellTrap', destIndex: number) => {
+    if (!pendingMove) return;
+    // Clicking the origin's own slot again — a no-op "move," not
+    // actually a cancel, but treated the same way (just close move
+    // mode) since there's nothing meaningful to relocate.
+    if (pendingMove.zoneType === destZoneType && pendingMove.index === destIndex) {
+      setPendingMove(null);
+      return;
+    }
+    const { zoneType: originZoneType, index: originIndex } = pendingMove;
+    setPendingMove(null);
+    applyMeUpdate((current) => {
+      const originZones = originZoneType === 'monster' ? current.monsterZones : current.spellTrapZones;
+      const destZones = destZoneType === 'monster' ? current.monsterZones : current.spellTrapZones;
+      const card = originZones[originIndex];
+      // Guards against the origin having emptied out from under this
+      // (e.g. sent to Grave by some other means) or the destination
+      // having filled up since it was clicked — neither should happen
+      // given the menu/click gating in DuelField.tsx, but this is the
+      // authoritative check that actually matters.
+      if (!card || destZones[destIndex]) return current;
+
+      const nextMonsterZones = [...current.monsterZones];
+      const nextSpellTrapZones = [...current.spellTrapZones];
+      if (originZoneType === 'monster') nextMonsterZones[originIndex] = null;
+      else nextSpellTrapZones[originIndex] = null;
+      if (destZoneType === 'monster') nextMonsterZones[destIndex] = card;
+      else nextSpellTrapZones[destIndex] = card;
+
+      return { ...current, monsterZones: nextMonsterZones, spellTrapZones: nextSpellTrapZones };
+    });
+  };
+
+  // Cross-field counterpart to handleMoveTarget above — only ever
+  // reachable when pendingMove.zoneType is 'monster' (see DuelField.tsx,
+  // which only offers this destination in that case). A client can only
+  // ever write its OWN public state slice, never the opponent's
+  // directly, so this can't just move the card the way handleMoveTarget
+  // does — it removes the card from my own monsterZones as usual, but
+  // leaves the actual placement for the RECEIVING player's own client to
+  // do, via the pendingControlTransfers handoff (see the effect watching
+  // it further down, and DuelDoc's own comment on this field).
+  const handleMoveToOpponentTarget = (destIndex: number) => {
+    if (!pendingMove || pendingMove.zoneType !== 'monster' || !duelId || !state.role) return;
+    const { index: originIndex } = pendingMove;
+    const card = renderMe.monsterZones[originIndex];
+    if (!card) {
+      setPendingMove(null);
+      return;
+    }
+    const toRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
+    // Preserves an existing owner if this card has already changed
+    // control before — ownership is set once and never changes again
+    // after that, however many more times control itself does. Only
+    // ever defaults to MY OWN role here, since that's only reached when
+    // card.owner was unset, meaning I was both the controller and the
+    // (implicit) owner up to this point.
+    const cardWithOwner: PlacedCard = { ...card, owner: card.owner ?? state.role };
+    setPendingMove(null);
+    applyMeUpdate((current) => {
+      const slot = current.monsterZones[originIndex];
+      if (!slot) return current;
+      const next = [...current.monsterZones];
+      next[originIndex] = null;
+      return { ...current, monsterZones: next };
+    });
+    setDoc(
+      doc(db, 'duels', duelId),
+      {
+        // arrayUnion, not a plain field write — this is what actually
+        // fixes the "monster disappears" bug: a plain merge write would
+        // overwrite (and lose) any OTHER transfer still waiting to be
+        // picked up by its own recipient, rather than adding alongside
+        // it. See DuelDoc's own comment on pendingControlTransfers for
+        // the full reasoning.
+        pendingControlTransfers: arrayUnion({ toRole, toIndex: destIndex, card: cardWithOwner }),
+      },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to hand off control transfer:', err);
+    });
+  };
+
+  // Completes every control transfer targeting THIS client (toRole ===
+  // my own role) — not just the most recent one, since
+  // pendingControlTransfers is now an array and can genuinely hold
+  // several at once (see DuelDoc's own comment on why). The moving
+  // player's own client sees the same array but isn't the one meant to
+  // act on entries targeting someone else. processedTransfersRef is a
+  // Set now, not a single key, for the same reason — guards against
+  // double-processing any individual entry: removing it from the array
+  // is itself an async write, so this effect could otherwise fire again
+  // on some unrelated re-render before that removal has round-tripped
+  // back through the snapshot listener.
+  const processedTransfersRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!duelId || !state.role) return;
+    const myTransfers = pendingControlTransfers.filter((t) => t.toRole === state.role);
+    const newTransfers = myTransfers.filter(
+      (t) => !processedTransfersRef.current.has(`${t.toRole}:${t.toIndex}:${t.card.instanceId}`),
+    );
+    if (newTransfers.length === 0) return;
+    for (const t of newTransfers) {
+      processedTransfersRef.current.add(`${t.toRole}:${t.toIndex}:${t.card.instanceId}`);
+    }
+
+    // Every transfer accumulates onto the SAME next object — one atomic
+    // update covering however many arrived together, not a separate
+    // write per transfer.
+    applyMeUpdate((current) => {
+      let next: MyDuelState = { ...current };
+      for (const { toIndex, card } of newTransfers) {
+        if (next.monsterZones[toIndex]) continue;
+        const zones = [...next.monsterZones];
+        zones[toIndex] = card;
+        next = { ...next, monsterZones: zones };
+      }
+      return next;
+    });
+    setDoc(
+      doc(db, 'duels', duelId),
+      { pendingControlTransfers: arrayRemove(...newTransfers) },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to clear control transfer:', err);
+    });
+    // applyMeUpdate is intentionally not a dependency — same reasoning
+    // as the auto-draw effect above: it's redefined every render, and
+    // processedTransfersRef's own guard is what actually makes this
+    // effect idempotent, not the dependency array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingControlTransfers, duelId, state.role]);
+
+  // Completes every card-return batch targeting THIS client (toRole ===
+  // my own role) — not just the most recent one, since pendingCardReturns
+  // is now an array and can genuinely hold several batches at once (see
+  // DuelDoc's own comment on why). Same structure as the
+  // pendingControlTransfers effect just above, just dispatching each
+  // batch's own items to whichever MyDuelState collection their
+  // destination names instead of always monsterZones.
+  const processedReturnsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!duelId || !state.role) return;
+    const keyFor = (batch: (typeof pendingCardReturns)[number]) =>
+      `${batch.toRole}:${batch.items.map((item) => `${item.destination}:${item.card.instanceId}`).join(',')}`;
+    const myReturns = pendingCardReturns.filter((r) => r.toRole === state.role);
+    const newReturns = myReturns.filter((r) => !processedReturnsRef.current.has(keyFor(r)));
+    if (newReturns.length === 0) return;
+    for (const r of newReturns) {
+      processedReturnsRef.current.add(keyFor(r));
+    }
+
+    // Every item, from every new batch, accumulates onto the SAME next
+    // object — one atomic update covering however many batches arrived
+    // together, not a separate write per batch.
+    applyMeUpdate((current) => {
+      let next: MyDuelState = { ...current };
+      for (const { items } of newReturns) {
+        for (const { destination, card } of items) {
+          switch (destination) {
+            case 'hand':
+              next = { ...next, hand: [...next.hand, card] };
+              break;
+            case 'grave':
+              next = { ...next, grave: [...next.grave, card] };
+              break;
+            case 'banished':
+              next = { ...next, banished: [...next.banished, card] };
+              break;
+            case 'mainDeckTop':
+              next = { ...next, mainDeck: [card, ...next.mainDeck] };
+              break;
+            case 'mainDeckBottom':
+              next = { ...next, mainDeck: [...next.mainDeck, card] };
+              break;
+            case 'extraDeck':
+              next = { ...next, extraDeck: [card, ...next.extraDeck] };
+              break;
+          }
+        }
+      }
+      return next;
+    });
+    setDoc(
+      doc(db, 'duels', duelId),
+      { pendingCardReturns: arrayRemove(...newReturns) },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to clear card return:', err);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCardReturns, duelId, state.role]);
 
   // --- Main Deck pile actions (View/Shuffle/Mill/Banish Top/Reset menu) ---
 
@@ -1355,6 +1773,12 @@ function MultiplayerDuelFieldPage() {
               onPrevPhase={handlePrevPhase}
               onNextPhase={handleNextPhase}
               onStartTurn={handleStartTurn}
+              onStatsAdjust={handleStatsAdjust}
+              isSelectingMoveDestination={pendingMove !== null}
+              onMoveTarget={handleMoveTarget}
+              isSelectingMoveToOpponentZone={pendingMove?.zoneType === 'monster'}
+              onMoveToOpponentTarget={handleMoveToOpponentTarget}
+              onSelectCard={handleSelectCard}
             />
 
             <Hand
@@ -1376,7 +1800,15 @@ function MultiplayerDuelFieldPage() {
                 chrome and Hand's own cells, without needing an explicit
                 z-index war with FieldZone-rotatedOverlay or anything
                 else in there. */}
-            <CardLayer entries={cardPositionEntries} me={renderMe} opponent={opponent} />
+            <CardLayer
+              entries={cardPositionEntries}
+              me={renderMe}
+              opponent={opponent}
+              myRole={state.role ?? null}
+              mySelection={mySelection}
+              opponentSelection={opponentSelection}
+              onSelectCard={handleSelectCard}
+            />
           </div>
         </div>
 
@@ -1395,8 +1827,20 @@ function MultiplayerDuelFieldPage() {
             globally available — this page already imports that
             component elsewhere) rather than a separately-styled
             approximation, so this is genuinely the same size/appearance,
-            not just a close match. */}
-        <div className="PlayerAvatarBox">
+            not just a close match. The blue turn-color border is the
+            opponent-side counterpart to PlayerAvatarBox's own --myTurn
+            variant — applied directly here rather than through that
+            component, since this is the one place the opponent's own
+            avatar renders (see PlayerAvatarBox.tsx's own comment on
+            why it only ever needs the "mine" variant itself). */}
+        <div
+          className={[
+            'PlayerAvatarBox',
+            !isMyTurn && 'PlayerAvatarBox--opponentTurn',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
           <img src={getAvatarUrl(opponent.avatarId)} alt="" className="PlayerAvatarBox-image" />
         </div>
         <span className="MultiplayerDuelFieldPage-hudUsername">{opponent.username}</span>
@@ -1410,7 +1854,7 @@ function MultiplayerDuelFieldPage() {
         <span className="MultiplayerDuelFieldPage-hudUsername">
           {currentUser?.displayName}
         </span>
-        <PlayerAvatarBox />
+        <PlayerAvatarBox isMyTurn={isMyTurn} />
         {/* A row, not stacked with the rest of this column — the button
             sits to the LEFT of the LP counter specifically, at a fixed
             spot relative to it, rather than being just another item in
@@ -1445,6 +1889,37 @@ function MultiplayerDuelFieldPage() {
         />
       )}
 
+      {pendingStatAdjustIndex !== null &&
+        (() => {
+          const slot = renderMe.monsterZones[pendingStatAdjustIndex];
+          // Guards against a slot that's emptied out from under the
+          // dialog somehow (e.g. the monster left the field via another
+          // means while this was open) — closes rather than rendering
+          // against a card that no longer exists.
+          if (!slot) return null;
+          // card.atk/card.def are strings in this codebase's own data
+          // (e.g. "2500") — parsed here rather than passed through
+          // as-is, since StatAdjustDialog's own props are real numbers
+          // throughout. Falls back to 0 for a missing OR non-numeric
+          // base stat, same reasoning as FieldZone's own comparison
+          // logic for the color coding.
+          const parsedBaseAtk = Number(slot.card.atk);
+          const parsedBaseDef = Number(slot.card.def);
+          const baseAtk = Number.isNaN(parsedBaseAtk) ? 0 : parsedBaseAtk;
+          const baseDef = Number.isNaN(parsedBaseDef) ? 0 : parsedBaseDef;
+          return (
+            <StatAdjustDialog
+              baseAtk={baseAtk}
+              baseDef={baseDef}
+              currentAtk={slot.atkOverride ?? baseAtk}
+              currentDef={slot.defOverride ?? baseDef}
+              onConfirm={handleStatAdjustConfirm}
+              onCancel={handleStatAdjustCancel}
+              onReset={handleStatAdjustReset}
+            />
+          );
+        })()}
+
       {pendingFusionSummon && (
         <div className="MultiplayerDuelFieldPage-materialSelectionBanner">
           <span>
@@ -1468,6 +1943,19 @@ function MultiplayerDuelFieldPage() {
         <div className="MultiplayerDuelFieldPage-materialSelectionBanner">
           <span>Select a monster to Evolve from</span>
           <button type="button" onClick={handleEvolutionSummonCancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {pendingMove && (
+        <div className="MultiplayerDuelFieldPage-materialSelectionBanner">
+          <span>
+            {pendingMove?.zoneType === 'monster'
+              ? "Select an empty Monster or Spell/Trap Zone (yours), or an empty Monster Zone (your opponent's), to move this card to"
+              : 'Select an empty zone to move this card to'}
+          </span>
+          <button type="button" onClick={handleMoveCancel}>
             Cancel
           </button>
         </div>

@@ -68,6 +68,39 @@
   font-size: 0.85em;
 }
 
+/* Only present when onStatsClick was actually passed (the player's own
+   Monster Zones — see DuelField.tsx) — the opponent's stats overlay
+   stays exactly as inert as before, pointer-events:none included. */
+.FieldZone-statsOverlay--clickable {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Manually adjusted above/below the card's own base stat (see
+   StatAdjustDialog) — blue for increased, red for decreased. A stat
+   that hasn't been touched keeps its normal white (or, if also
+   --dimmed, grey) color entirely unchanged from before this existed. */
+.FieldZone-statsOverlay--increased {
+  color: #4a90e2;
+}
+
+.FieldZone-statsOverlay--decreased {
+  color: #e05252;
+}
+
+/* The inactive stat's own darker equivalent — these are compound
+   selectors (both classes together), which is what gives them higher
+   specificity than the plain --dimmed rule above, so the darker color
+   wins over --dimmed's own grey without needing to touch that rule's
+   font-size (still inherited from it) at all. */
+.FieldZone-statsOverlay--increased.FieldZone-statsOverlay--dimmed {
+  color: #2a5a8a;
+}
+
+.FieldZone-statsOverlay--decreased.FieldZone-statsOverlay--dimmed {
+  color: #8a2a2a;
+}
+
 .FieldZone-rotatedOverlay {
   position: absolute;
   top: 0;

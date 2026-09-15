@@ -113,6 +113,94 @@ interface DuelDoc {
   currentPhase?: TurnPhase;
   turnEnding?: boolean;
   turnNumber?: number;
+  // Purely visual "I'm pointing at this card" indicator — see
+  // MultiplayerDuelFieldPage's own handleSelectCard/clearSelections.
+  // Each player has exactly one selection slot, set independently of
+  // the other's (selecting never touches the opponent's own field
+  // here) — a plain instanceId for a real field card, or
+  // "hand:<owner>:<index>" for a card in someone's HAND specifically
+  // (see encodeHandSelection below), since a hand card has no
+  // cross-client instanceId the selecting player could reference at
+  // all — only its owner and position are ever knowable to anyone else.
+  player1Selection?: string | null;
+  player2Selection?: string | null;
+  // Every monster currently in transit to the OPPONENT's Monster Zone
+  // (see MultiplayerDuelFieldPage's own handleMoveToOpponentTarget) — a
+  // handoff, same idea as turnEnding/Start Turn above: a client can only
+  // ever write its OWN public state slice, never the other player's
+  // directly, so the moving player's own client removes the card from
+  // their own monsterZones and appends an entry here instead (via
+  // arrayUnion — see MultiplayerDuelFieldPage's own use of it); the
+  // RECEIVING player's own client is what actually adds it to their own
+  // monsterZones and removes this specific entry again (via
+  // arrayRemove), via its own write.
+  //
+  // An ARRAY, not a single object — a plain setDoc/merge write to one
+  // object field is NOT safe here: two transfers arriving close
+  // together (the same player moving a second monster before the first
+  // has been picked up, or both players moving a monster to each other
+  // around the same time) would have the second overwrite the first
+  // before the receiving client ever saw it, silently losing a card
+  // that had already been removed from its sender's field — gone
+  // entirely, on neither side. arrayUnion/arrayRemove are atomic,
+  // read-free operations specifically for this: multiple concurrent
+  // appends to the same array field are all preserved, never lost to
+  // each other, unlike a plain merge write of the whole field.
+  pendingControlTransfers: {
+    toRole: PlayerRole;
+    toIndex: number;
+    card: PlacedCard;
+  }[];
+  // Same array-not-single-object reasoning as pendingControlTransfers
+  // above, for the same reason — see that field's own comment. A card
+  // (or several — see below) leaving the field entirely (Grave,
+  // Banished, hand, either deck) whose true owner differs from whoever
+  // currently controls it (see CardInstance's own `owner` field) — same
+  // handoff idea, but for private zones (hand, Main/Extra Deck) as well
+  // as public ones, and for destinations that are appended lists rather
+  // than an indexed slot, hence the different shape. The controlling
+  // player's own client removes the card(s) from their field as normal
+  // but can't add them to their own hand/Grave/deck in this case (that
+  // would hand true ownership to the wrong player) — it appends an
+  // entry here instead. The OWNER's own client is what actually places
+  // each one into its own destination and removes this entry again —
+  // see MultiplayerDuelFieldPage's own handleFieldAction (the write
+  // side) and the effect that completes it.
+  //
+  // `items` rather than a single card+destination per array entry: a
+  // stack's buried Fusion materials can be individually owned by either
+  // player (see CardInstance's own `owner` field), so one leave-zone
+  // action can require returning several differently-owned cards at
+  // once — the top card plus zero or more materials. All of them still
+  // share the SAME toRole regardless, since with only two players,
+  // every item needing this handoff at all necessarily belongs to the
+  // one opponent — so one leave-zone action is still exactly one array
+  // entry, just with potentially several items inside it, processed and
+  // removed as a single atomic batch.
+  pendingCardReturns: {
+    toRole: PlayerRole;
+    items: {
+      destination: 'hand' | 'grave' | 'banished' | 'mainDeckTop' | 'mainDeckBottom' | 'extraDeck';
+      card: CardInstance;
+    }[];
+  }[];
+}
+
+// A hand card (unlike a field card) has no instanceId the OTHER player
+// could ever reference — its real identity is private. Encodes "this
+// player's hand, this position" instead, which is the one thing about
+// a hand card that's safe and meaningful to share; decodeHandSelection
+// is the inverse, used when checking whether a given rendered hand
+// proxy matches a stored selection.
+export function encodeHandSelection(owner: PlayerRole, index: number): string {
+  return `hand:${owner}:${index}`;
+}
+
+export function decodeHandSelection(value: string | null): { owner: PlayerRole; index: number } | null {
+  if (!value) return null;
+  const match = /^hand:(player1|player2):(\d+)$/.exec(value);
+  if (!match) return null;
+  return { owner: match[1] as PlayerRole, index: Number(match[2]) };
 }
 
 export interface MyDuelState {
@@ -154,6 +242,30 @@ interface UseMultiplayerDuelResult {
   turnEnding: boolean;
   turnNumber: number;
   isMyTurn: boolean;
+  // Resolved from player1Selection/player2Selection based on this
+  // client's own role, so nothing downstream has to re-derive "which of
+  // the two raw fields is mine" itself. null means nothing selected.
+  mySelection: string | null;
+  opponentSelection: string | null;
+  // Raw, unresolved (not "mine"/"opponent") — the caller checks each
+  // entry's own toRole, since either client might be the recipient of
+  // any given entry depending on who initiated that move. Every entry
+  // currently in flight, not just the most recent one — see
+  // DuelDoc's own comment on why this is an array.
+  pendingControlTransfers: {
+    toRole: PlayerRole;
+    toIndex: number;
+    card: PlacedCard;
+  }[];
+  // Same raw/unresolved, array-not-single-object convention as
+  // pendingControlTransfers above.
+  pendingCardReturns: {
+    toRole: PlayerRole;
+    items: {
+      destination: 'hand' | 'grave' | 'banished' | 'mainDeckTop' | 'mainDeckBottom' | 'extraDeck';
+      card: CardInstance;
+    }[];
+  }[];
 }
 
 function buildInitialState(
@@ -370,6 +482,12 @@ export function useMultiplayerDuel(
   const turnNumber = duelDoc?.turnNumber ?? 1;
   const isMyTurn = turnPlayer !== null && turnPlayer === role;
 
+  const opponentRoleForSelection: PlayerRole | null =
+    role === 'player1' ? 'player2' : role === 'player2' ? 'player1' : null;
+  const mySelection = (role && duelDoc?.[`${role}Selection`]) ?? null;
+  const opponentSelection =
+    (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}Selection`]) ?? null;
+
   return {
     loading: !me || !opponent,
     error,
@@ -380,5 +498,9 @@ export function useMultiplayerDuel(
     turnEnding,
     turnNumber,
     isMyTurn,
+    mySelection,
+    opponentSelection,
+    pendingControlTransfers: duelDoc?.pendingControlTransfers ?? [],
+    pendingCardReturns: duelDoc?.pendingCardReturns ?? [],
   };
 }

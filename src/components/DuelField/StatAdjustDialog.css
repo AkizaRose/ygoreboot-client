@@ -1,0 +1,63 @@
+.StatAdjustDialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.StatAdjustDialog-box {
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: var(--text);
+}
+
+.StatAdjustDialog-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.StatAdjustDialog-field label {
+  width: 32px;
+  font-size: 14px;
+}
+
+.StatAdjustDialog-field input {
+  width: 80px;
+  font-size: 14px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #0d0e12;
+  color: var(--text);
+}
+
+.StatAdjustDialog-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.StatAdjustDialog-actions button {
+  font-size: 13px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.StatAdjustDialog-actions button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}

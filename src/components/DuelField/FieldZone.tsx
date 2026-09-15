@@ -64,6 +64,17 @@ interface FieldZoneProps {
   // however CardLayer happens to be rendering/rotating the card itself
   // right now.
   battlePosition?: 'attack' | 'defense';
+  // Manually adjusted stats (see StatAdjustDialog) — null/undefined
+  // means "use card.atk/card.def as-is." Only ever meaningful alongside
+  // battlePosition above, for the same face-up Monster Zone cards.
+  atkOverride?: number | null;
+  defOverride?: number | null;
+  // Opens StatAdjustDialog — only ever wired up for the player's OWN
+  // Monster Zones (see DuelField.tsx), never the opponent's. Presence
+  // alone is what makes the stats overlay itself clickable at all (see
+  // its pointer-events handling below); omitted entirely rather than
+  // passed-but-disabled for the opponent's side.
+  onStatsClick?: () => void;
   // Only Monster Zones render ATK/DEF. Grave, Banished, Field, and
   // Spell/Trap Zones can also receive a Monster card for their top-card
   // display, but must never show the Monster Zone stats overlay.
@@ -98,6 +109,9 @@ function FieldZone({
   onMenuAction,
   showRotatedOverlay = false,
   battlePosition = 'attack',
+  atkOverride = null,
+  defOverride = null,
+  onStatsClick,
   showStats = false,
   rotated180 = false,
   pileCountOffsetX = 0,
@@ -188,17 +202,89 @@ function FieldZone({
           the rotated overlay above, the stats overlay and pile count
           below, and the plain text label when this zone is empty. */}
       {!hasContent && <span className="FieldZone-label">{label}</span>}
-      {showStats && card && !faceDown && card.cardClass === 'Monster' && (card.atk || card.def) && (
-        <div className={['FieldZone-statsOverlay', rotated180 && 'FieldZone-statsOverlay--top'].filter(Boolean).join(' ')}>
-          <span className={battlePosition === 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined}>
-            {card.atk ?? '?'}
-          </span>
-          /
-          <span className={battlePosition !== 'defense' ? 'FieldZone-statsOverlay--dimmed' : undefined}>
-            {card.def ?? '?'}
-          </span>
-        </div>
-      )}
+      {showStats &&
+        card &&
+        !faceDown &&
+        card.cardClass === 'Monster' &&
+        (card.atk || card.def) &&
+        (() => {
+          // card.atk/card.def are strings in this codebase's own data
+          // (e.g. "2500", occasionally something non-numeric for a
+          // variable-stat card) — kept as-is here for DISPLAY, so a
+          // card with a genuinely non-numeric base stat still shows
+          // whatever that string actually is rather than "NaN". A
+          // separate, parsed numeric value is used only for the
+          // increased/decreased COMPARISON below, since atkOverride
+          // (once set, from StatAdjustDialog) is always a real number.
+          const baseAtk = card.atk;
+          const baseDef = card.def;
+          const effectiveAtk = atkOverride ?? baseAtk;
+          const effectiveDef = defOverride ?? baseDef;
+          const baseAtkNum = baseAtk !== undefined ? Number(baseAtk) : NaN;
+          const baseDefNum = baseDef !== undefined ? Number(baseDef) : NaN;
+          // Only meaningful when there's actually an override to compare
+          // AND the base parses to a real number — a card with a
+          // non-numeric base stat falls through to no adjustment
+          // styling at all, rather than a nonsensical comparison.
+          const atkAdjustClass =
+            atkOverride != null && !Number.isNaN(baseAtkNum) && atkOverride !== baseAtkNum
+              ? atkOverride > baseAtkNum
+                ? 'FieldZone-statsOverlay--increased'
+                : 'FieldZone-statsOverlay--decreased'
+              : undefined;
+          const defAdjustClass =
+            defOverride != null && !Number.isNaN(baseDefNum) && defOverride !== baseDefNum
+              ? defOverride > baseDefNum
+                ? 'FieldZone-statsOverlay--increased'
+                : 'FieldZone-statsOverlay--decreased'
+              : undefined;
+          return (
+            <div
+              className={[
+                'FieldZone-statsOverlay',
+                rotated180 && 'FieldZone-statsOverlay--top',
+                onStatsClick && 'FieldZone-statsOverlay--clickable',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={
+                onStatsClick
+                  ? (event) => {
+                      // Stops this from also reaching the zone's own
+                      // onClick (e.g. Fusion/Evolution material
+                      // selection) — the overlay is a distinct,
+                      // dedicated click target, not a proxy for the
+                      // zone's own click behavior.
+                      event.stopPropagation();
+                      onStatsClick();
+                    }
+                  : undefined
+              }
+            >
+              <span
+                className={[
+                  battlePosition === 'defense' && 'FieldZone-statsOverlay--dimmed',
+                  atkAdjustClass,
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                {effectiveAtk ?? '?'}
+              </span>
+              /
+              <span
+                className={[
+                  battlePosition !== 'defense' && 'FieldZone-statsOverlay--dimmed',
+                  defAdjustClass,
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                {effectiveDef ?? '?'}
+              </span>
+            </div>
+          );
+        })()}
       {count != null && (
         <span
           className="FieldZone-pileCount"
