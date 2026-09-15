@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import {
   motion,
   useMotionValue,
@@ -11,7 +11,7 @@ import type {
   PlayerRole,
 } from '../components/Matchmaking/useMultiplayerDuel';
 import { encodeHandSelection, decodeHandSelection } from '../components/Matchmaking/useMultiplayerDuel';
-import type { CardInstance } from '../types/CardInstance';
+import type { CardInstance, PlacedCard } from '../types/CardInstance';
 import CardImage from '../components/CardView/CardImage';
 import cardBackImg from '../assets/card/CardBack.png';
 import {
@@ -22,9 +22,28 @@ import {
   BOARD_WIDTH,
   OPPONENT_HAND_TOP,
   getDeckZoneSlot,
+  getFieldZoneSlot,
   getHandSlot,
   getOpponentHandSlot,
 } from './cardGeometry';
+
+interface ControlTransferRecord {
+  toRole: PlayerRole;
+  toIndex: number;
+  card: PlacedCard;
+  from: CardVisualPosition;
+}
+
+interface CardReturnItem {
+  destination: 'hand' | 'grave' | 'banished' | 'mainDeckTop' | 'mainDeckBottom' | 'extraDeck';
+  card: CardInstance;
+  from: CardVisualPosition;
+}
+
+interface CardReturnBatch {
+  toRole: PlayerRole;
+  items: CardReturnItem[];
+}
 
 interface CardLayerProps {
   entries: CardPositionEntry[];
@@ -44,6 +63,26 @@ interface CardLayerProps {
   // FieldZone underneath it to hook into at all, so it's the one place
   // this gets wired up directly here.
   onSelectCard?: (target: string) => void;
+  // Raw arrays from the duel doc (see useMultiplayerDuel's own
+  // DuelDoc.pendingControlTransfers/pendingCardReturns) — CardLayer
+  // watches these for entries it hasn't animated yet, to play a card
+  // traveling from its own embedded `from` position (captured by
+  // whichever client initiated the action, before anything was
+  // actually removed — see DuelDoc's own comment on why this can't
+  // just be looked up in previousEntries instead) to its new
+  // destination, rather than the card just silently appearing there
+  // once the underlying data updates. Defaults to empty, not undefined,
+  // so the detection effect below never needs an extra null check.
+  //
+  // This is the REMOTE path — the same animation can also be triggered
+  // LOCALLY and immediately, before this prop ever updates, via the
+  // imperative handle (see CardLayerHandle below and the ref this
+  // component is wrapped in) — the two share the exact same
+  // build-an-InTransitCard logic and the exact same processed-key Sets,
+  // so whichever path notices an entry first is the one that actually
+  // queues it; the other is a no-op once it catches up.
+  pendingControlTransfers?: ControlTransferRecord[];
+  pendingCardReturns?: CardReturnBatch[];
 }
 
 interface CardVisualPosition {
@@ -60,6 +99,27 @@ interface ReturningOpponentCard {
   from: CardVisualPosition;
   to: CardVisualPosition;
   zIndex: number;
+}
+
+// A card traveling between the two players' own areas entirely — either
+// changing control (to a Monster Zone on the OTHER player's field) or
+// returning to its true owner (Grave, Banished, hand, or either deck —
+// see PlacedCard/CardInstance's own `owner` field). Unlike every other
+// animation in this file, both endpoints can be on either side of the
+// board, in either coordinate space.
+interface InTransitCard {
+  id: string;
+  card: CardInstance['card'];
+  from: CardVisualPosition;
+  to: CardVisualPosition;
+  zIndex: number;
+  // True only when the destination is the OPPONENT's hand specifically
+  // — the one destination that needs the viewport-fixed
+  // opponentHandLayer treatment (see stageOffset's own comment above).
+  // Every other destination (a field zone, Grave, Banished, either
+  // deck, or the player's OWN hand) stays in normal board-space
+  // coordinates.
+  fixed: boolean;
 }
 
 // A card mid-shuffle: converges from its own old slot to the hand's
@@ -468,15 +528,39 @@ function AnimatedCard({
   );
 }
 
-function CardLayer({
-  entries,
-  me = null,
-  opponent = null,
-  myRole = null,
-  mySelection = null,
-  opponentSelection = null,
-  onSelectCard,
-}: CardLayerProps) {
+// Exposed so the initiating client can trigger its OWN animation
+// immediately, synchronously, at the moment it starts a control
+// transfer or card return — rather than only ever finding out via
+// pendingControlTransfers/pendingCardReturns updating, which requires a
+// full round trip to Firestore and back. The sending client's own
+// local, optimistic state update (applyMeUpdate's own
+// requestAnimationFrame) removes the card from its rendered entries
+// almost immediately — well before that round trip completes — so
+// without this, the sending client's own screen would show the card
+// simply vanish, then reappear mid-animation once the remote data
+// finally caught up. Both this path and the prop-driven one below share
+// the exact same processed-key Sets, so whichever notices an entry
+// first is the one that actually queues it — the other is a no-op by
+// the time it catches up.
+export interface CardLayerHandle {
+  queueControlTransfer: (transfer: ControlTransferRecord) => void;
+  queueCardReturn: (batch: CardReturnBatch) => void;
+}
+
+const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer(
+  {
+    entries,
+    me = null,
+    opponent = null,
+    myRole = null,
+    mySelection = null,
+    opponentSelection = null,
+    onSelectCard,
+    pendingControlTransfers = [],
+    pendingCardReturns = [],
+  },
+  ref,
+) {
   const opponentRole: PlayerRole | null =
     myRole === 'player1' ? 'player2' : myRole === 'player2' ? 'player1' : null;
   const layerRef = useRef<HTMLDivElement | null>(null);
@@ -524,6 +608,7 @@ function CardLayer({
   const previousMeShuffleVersionRef = useRef<number | null>(null);
   const previousOpponentShuffleVersionRef = useRef<number | null>(null);
   const [shufflingCards, setShufflingCards] = useState<ShufflingCard[]>([]);
+  const [inTransitCards, setInTransitCards] = useState<InTransitCard[]>([]);
 
   useEffect(() => {
     if (previousOpponent && opponent && opponent.handCount > previousOpponent.handCount) {
@@ -712,19 +797,251 @@ function CardLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.handShuffleVersion, opponent?.handShuffleVersion]);
 
+  // Cards changing control (moving to the OTHER player's Monster Zone)
+  // or returning to their true owner (Grave, Banished, hand, either
+  // deck) — see DuelDoc's own comments on pendingControlTransfers/
+  // pendingCardReturns for the data side of this. Tracked with their
+  // own Sets (not a single ref) since, like the shuffle/returning-card
+  // detection above, several can genuinely be in flight — or waiting to
+  // be noticed — at once. A given entry is only ever queued for
+  // animation once; MultiplayerDuelFieldPage's own processed-refs
+  // govern the DATA side of idempotency (actually moving the card) —
+  // this is purely about not queuing the same visual twice, whichever
+  // of the two paths below (prop-driven effect, or the imperative
+  // handle) notices it first.
+  const processedControlTransfersRef = useRef<Set<string>>(new Set());
+  const processedCardReturnsRef = useRef<Set<string>>(new Set());
+
+  const controlTransferKey = (transfer: ControlTransferRecord) =>
+    `transfer:${transfer.toRole}:${transfer.toIndex}:${transfer.card.instanceId}`;
+  const cardReturnItemKey = (batch: CardReturnBatch, item: CardReturnItem) =>
+    `return:${batch.toRole}:${item.destination}:${item.card.instanceId}`;
+
+  const buildControlTransferCard = (transfer: ControlTransferRecord): InTransitCard => {
+    const flipped = transfer.toRole !== myRole;
+    const destSlot = getFieldZoneSlot(flipped, 'monster', transfer.toIndex);
+    const destIsDefense = transfer.card.position === 'defense';
+    // Matches monsterZoneEntries' own formula in cardPositions.ts
+    // exactly — this was previously just `flipped ? 180 : 0`, which
+    // silently dropped the Defense Position term entirely. A Defense
+    // Position monster would animate at the wrong (Attack Position)
+    // rotation for the whole transfer, then visibly snap to the
+    // correct one the instant the real entry took over.
+    const destRotation = (destIsDefense ? -90 : 0) + (flipped ? 180 : 0);
+    // Same small manual correction monsterZoneEntries applies, for the
+    // same reason (Defense Position renders 1px off otherwise).
+    const destPosition = destIsDefense
+      ? { x: destSlot.x + 0.5, y: destSlot.y + 0.5 }
+      : { x: destSlot.x, y: destSlot.y };
+    return {
+      id: `transfer-${transfer.card.instanceId}`,
+      card: transfer.card.card,
+      // Embedded directly in the transfer record itself (see DuelDoc's
+      // own comment on why) rather than looked up in previousEntries —
+      // a lookup here would frequently fail on the SENDING client's own
+      // side specifically, since its local, optimistic state update
+      // (applyMeUpdate's own requestAnimationFrame) removes the card
+      // from its own rendered entries almost immediately, often before
+      // this very record has even round-tripped back from Firestore.
+      from: transfer.from,
+      // A control transfer never flips the card — whatever it was
+      // (face-up/down) on the sender's field, it arrives the same way.
+      to: {
+        x: destPosition.x,
+        y: destPosition.y,
+        scale: FIELD_CARD_SCALE,
+        rotation: destRotation,
+        faceDown: transfer.card.faceDown,
+      },
+      zIndex: 360,
+      fixed: false,
+    };
+  };
+
+  const buildCardReturnCard = (batch: CardReturnBatch, item: CardReturnItem): InTransitCard => {
+    const flipped = batch.toRole !== myRole;
+    let to: CardVisualPosition;
+    let fixed = false;
+
+    switch (item.destination) {
+      case 'hand': {
+        // Only an approximation of where the card will actually land
+        // (the real slot depends on the hand's exact contents once
+        // it's actually arrived, which this client may not have yet)
+        // — deliberately so: the hand-shuffle animation that fires the
+        // moment the card actually joins the hand (see
+        // MultiplayerDuelFieldPage's own auto-shuffle-on-add) settles
+        // every card into its real, final slot immediately after, so
+        // this only needs to get the card traveling in roughly the
+        // right direction, not land pixel-perfect.
+        if (flipped) {
+          const approxCount = (opponent?.handCount ?? 0) + 1;
+          const slot = getOpponentHandSlot(approxCount, approxCount - 1);
+          to = {
+            x: slot.x,
+            y: slot.y,
+            scale: slot.width / CARD_NATIVE_WIDTH,
+            rotation: 180,
+            faceDown: true,
+          };
+          fixed = true;
+        } else {
+          const approxCount = (me?.hand.length ?? 0) + 1;
+          const slot = getHandSlot(approxCount, approxCount - 1);
+          to = {
+            x: slot.x,
+            y: slot.y,
+            scale: slot.width / CARD_NATIVE_WIDTH,
+            rotation: 0,
+            faceDown: false,
+          };
+        }
+        break;
+      }
+      case 'grave':
+      case 'banished': {
+        const slot = getFieldZoneSlot(flipped, item.destination);
+        to = {
+          x: slot.x,
+          y: slot.y,
+          scale: FIELD_CARD_SCALE,
+          rotation: flipped ? 180 : 0,
+          // Grave and Banished are always shown face-up, regardless of
+          // whose they are — see pileEntries' own convention in
+          // cardPositions.ts.
+          faceDown: false,
+        };
+        break;
+      }
+      case 'mainDeckTop':
+      case 'mainDeckBottom': {
+        const slot = getDeckZoneSlot(flipped, 'main');
+        to = {
+          x: slot.x,
+          y: slot.y,
+          scale: FIELD_CARD_SCALE,
+          rotation: flipped ? 180 : 0,
+          faceDown: true,
+        };
+        break;
+      }
+      case 'extraDeck': {
+        const slot = getDeckZoneSlot(flipped, 'extra');
+        to = {
+          x: slot.x,
+          y: slot.y,
+          scale: FIELD_CARD_SCALE,
+          rotation: flipped ? 180 : 0,
+          faceDown: true,
+        };
+        break;
+      }
+    }
+
+    return {
+      id: `return-${item.card.instanceId}`,
+      card: item.card.card,
+      // Embedded directly in the return record itself, same reasoning
+      // as buildControlTransferCard's own `from` above.
+      from: item.from,
+      to,
+      zIndex: 360,
+      fixed,
+    };
+  };
+
+  // The LOCAL, immediate path — called directly by the initiating
+  // client at the moment it starts a transfer/return, before
+  // pendingControlTransfers/pendingCardReturns has had any chance to
+  // update. Shares the exact same processed-key Sets as the prop-driven
+  // effect below, so if the remote data catches up and the effect tries
+  // to queue the same entry again, it's already marked processed and
+  // becomes a no-op.
+  useImperativeHandle(
+    ref,
+    () => ({
+      queueControlTransfer: (transfer) => {
+        const key = controlTransferKey(transfer);
+        if (processedControlTransfersRef.current.has(key)) return;
+        processedControlTransfersRef.current.add(key);
+        setInTransitCards((current) => [...current, buildControlTransferCard(transfer)]);
+      },
+      queueCardReturn: (batch) => {
+        const newCards = batch.items
+          .filter((item) => !processedCardReturnsRef.current.has(cardReturnItemKey(batch, item)))
+          .map((item) => {
+            processedCardReturnsRef.current.add(cardReturnItemKey(batch, item));
+            return buildCardReturnCard(batch, item);
+          });
+        if (newCards.length > 0) {
+          setInTransitCards((current) => [...current, ...newCards]);
+        }
+      },
+    }),
+    [myRole, me, opponent],
+  );
+
+  // The REMOTE, prop-driven path — for whichever client DIDN'T initiate
+  // the action (the local path above is what covers the initiator
+  // itself), and as a fallback for the initiator too, in case its own
+  // imperative call above somehow didn't fire.
+  useEffect(() => {
+    if (!myRole || !opponentRole) return;
+    const newCards: InTransitCard[] = [];
+
+    for (const transfer of pendingControlTransfers) {
+      const key = controlTransferKey(transfer);
+      if (processedControlTransfersRef.current.has(key)) continue;
+      processedControlTransfersRef.current.add(key);
+      newCards.push(buildControlTransferCard(transfer));
+    }
+
+    for (const batch of pendingCardReturns) {
+      for (const item of batch.items) {
+        const key = cardReturnItemKey(batch, item);
+        if (processedCardReturnsRef.current.has(key)) continue;
+        processedCardReturnsRef.current.add(key);
+        newCards.push(buildCardReturnCard(batch, item));
+      }
+    }
+
+    if (newCards.length > 0) {
+      setInTransitCards((current) => [...current, ...newCards]);
+    }
+    // previousEntries is read above but intentionally not listed — same
+    // reasoning as the shuffle-detection effect just above: the OTHER
+    // effect in this component always runs first each render and keeps
+    // previousEntriesRef current before this one reads it. me/opponent
+    // are read only for an approximate hand count, not worth
+    // re-triggering this whole effect over.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingControlTransfers, pendingCardReturns, myRole, opponentRole]);
+
   // Cards actively mid-shuffle are rendered via their OWN AnimatedCard
   // instance below (shufflingCards.map) instead of through the normal
   // entries.map pass — this filters them out of that normal pass so
   // there isn't a duplicate, un-animated element sitting underneath the
   // animated one at the same position.
   const shufflingIds = new Set(shufflingCards.map((c) => c.id));
+  // Strips the "transfer-"/"return-" prefix to get back the real
+  // instanceId each in-transit card corresponds to — needed so the
+  // normal render pass can exclude it. Once the card actually arrives
+  // in its destination's real state (monsterZones/hand/grave/etc.), it
+  // starts appearing in `entries` too; without this, both the real
+  // entry and the still-animating in-transit card would render at once.
+  const inTransitIds = new Set(
+    inTransitCards.map((c) => c.id.replace(/^(transfer|return)-/, '')),
+  );
   const opponentHandIds = new Set(
     entries
       .filter((entry) => entry.instanceId.startsWith('opponent-hand-'))
       .map((entry) => entry.instanceId),
   );
   const visibleEntries = entries.filter(
-    (entry) => !shufflingIds.has(entry.instanceId) && (!stageOffset || !opponentHandIds.has(entry.instanceId)),
+    (entry) =>
+      !shufflingIds.has(entry.instanceId) &&
+      !inTransitIds.has(entry.instanceId) &&
+      (!stageOffset || !opponentHandIds.has(entry.instanceId)),
   );
   const opponentHandEntries = stageOffset
     ? entries.filter((entry) => !shufflingIds.has(entry.instanceId) && opponentHandIds.has(entry.instanceId))
@@ -736,27 +1053,27 @@ function CardLayer({
     (card) => !card.id.startsWith('opponent-hand-'),
   );
 
-  const renderReturningCard = (card: ReturningOpponentCard, fixed: boolean) => {
-    const returningEntry: CardPositionEntry = {
+  const renderInTransitCard = (card: InTransitCard) => {
+    const inTransitEntry: CardPositionEntry = {
       instanceId: card.id,
       card: card.card,
       x: card.to.x,
       y: card.to.y,
       rotation: card.to.rotation,
       scale: card.to.scale,
-      faceDown: true,
+      faceDown: card.to.faceDown,
       zIndex: card.zIndex,
     };
 
     return (
       <AnimatedCard
-        key={`returning-${card.id}`}
-        entry={returningEntry}
+        key={card.id}
+        entry={inTransitEntry}
         startOverride={card.from}
-        coordinateOffset={fixed ? stageOffset : null}
-        animationDuration={0.45}
+        coordinateOffset={card.fixed ? stageOffset : null}
+        animationDuration={0.5}
         onAnimationComplete={() => {
-          setReturningCards((current) => current.filter((item) => item.id !== card.id));
+          setInTransitCards((current) => current.filter((item) => item.id !== card.id));
         }}
       />
     );
@@ -854,6 +1171,14 @@ function CardLayer({
         </>
       )}
 
+      {inTransitCards.filter((card) => !card.fixed).map((card) => renderInTransitCard(card))}
+
+      {stageOffset && inTransitCards.some((card) => card.fixed) && (
+        <div className="MultiplayerDuelFieldPage-opponentHandLayer">
+          {inTransitCards.filter((card) => card.fixed).map((card) => renderInTransitCard(card))}
+        </div>
+      )}
+
       {boardShufflingCards.map((card) => renderShufflingCard(card, false))}
 
       {stageOffset && opponentShufflingCards.length > 0 && (
@@ -870,6 +1195,6 @@ function CardLayer({
       )}
     </div>
   );
-}
+});
 
 export default CardLayer;

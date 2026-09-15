@@ -150,6 +150,20 @@ interface DuelDoc {
     toRole: PlayerRole;
     toIndex: number;
     card: PlacedCard;
+    // Captured by the SENDING client, from its own rendered card
+    // positions, at the moment the transfer is initiated — before the
+    // card is actually removed from anywhere. Embedding this directly,
+    // rather than having either client look up the card's last known
+    // position after the fact (in previousEntries or similar), is what
+    // makes the resulting animation's starting point correct regardless
+    // of timing: the SENDING client's own local, optimistic state update
+    // (see applyMeUpdate's own requestAnimationFrame) removes the card
+    // from its rendered entries almost immediately — often well before
+    // this very record has even finished writing to Firestore, let
+    // alone round-tripped back — so any lookup performed after the fact
+    // on the sending client's own side would frequently find nothing at
+    // all.
+    from: SharedCardVisualPosition;
   }[];
   // Same array-not-single-object reasoning as pendingControlTransfers
   // above, for the same reason — see that field's own comment. A card
@@ -182,8 +196,30 @@ interface DuelDoc {
     items: {
       destination: 'hand' | 'grave' | 'banished' | 'mainDeckTop' | 'mainDeckBottom' | 'extraDeck';
       card: CardInstance;
+      // Same reasoning as pendingControlTransfers' own `from` field
+      // above — captured per item, since a batch can contain several
+      // differently-positioned cards (the top card plus buried
+      // materials, each with their own slightly offset stack position).
+      from: SharedCardVisualPosition;
     }[];
   }[];
+}
+
+// The exact visual position a card was rendered at, at a specific
+// moment — used only for embedding a known-good animation starting
+// point directly into pendingControlTransfers/pendingCardReturns above,
+// not for any ongoing rendering state. Deliberately a plain, minimal
+// shape (not imported from CardLayer.tsx, a much higher-level UI
+// module this file shouldn't depend on) — CardLayer's own
+// CardVisualPosition is structurally identical, so passing one where
+// the other's expected works without either file needing to share an
+// actual type.
+export interface SharedCardVisualPosition {
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  faceDown: boolean;
 }
 
 // A hand card (unlike a field card) has no instanceId the OTHER player
@@ -256,6 +292,7 @@ interface UseMultiplayerDuelResult {
     toRole: PlayerRole;
     toIndex: number;
     card: PlacedCard;
+    from: SharedCardVisualPosition;
   }[];
   // Same raw/unresolved, array-not-single-object convention as
   // pendingControlTransfers above.
@@ -264,6 +301,7 @@ interface UseMultiplayerDuelResult {
     items: {
       destination: 'hand' | 'grave' | 'banished' | 'mainDeckTop' | 'mainDeckBottom' | 'extraDeck';
       card: CardInstance;
+      from: SharedCardVisualPosition;
     }[];
   }[];
 }

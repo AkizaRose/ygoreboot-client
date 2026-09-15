@@ -11,7 +11,7 @@ import LifePointCounter from '../components/DuelField/LifePointCounter';
 import PlayerAvatarBox from '../components/Avatar/PlayerAvatarBox';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
 import StatAdjustDialog from '../components/DuelField/StatAdjustDialog';
-import CardLayer from '../duel/CardLayer';
+import CardLayer, { type CardLayerHandle } from '../duel/CardLayer';
 import { computeCardPositions } from '../duel/cardPositions';
 import { BOARD_WIDTH, STAGE_HEIGHT } from '../duel/cardGeometry';
 import { getAvatarUrl } from '../components/Avatar/avatars';
@@ -24,6 +24,7 @@ import {
   type OpponentInfo,
   type MyDuelState,
   type TurnPhase,
+  type SharedCardVisualPosition,
 } from '../components/Matchmaking/useMultiplayerDuel';
 import type { CardData } from '../types/Card';
 import type { CardInstance, PlacedCard } from '../types/CardInstance';
@@ -108,6 +109,12 @@ function MultiplayerDuelFieldPage() {
   } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
+  // Lets a control-transfer/card-return be animated immediately, locally,
+  // the moment it's initiated — rather than only ever discovered via
+  // pendingControlTransfers/pendingCardReturns updating, which requires
+  // a full round trip to Firestore and back. See CardLayerHandle's own
+  // comment for the full reasoning.
+  const cardLayerRef = useRef<CardLayerHandle>(null);
   // Shown once, briefly, before the actual field ever renders — see the
   // render guard further down. Starts true on every mount rather than
   // being tied to turnNumber === 1 specifically, since a fresh page load
@@ -312,7 +319,29 @@ function MultiplayerDuelFieldPage() {
   // here to synchronize local, per-client animation state for.
   const applyMeUpdate = async (
     updater: (current: MyDuelState) => MyDuelState,
-    options: { shuffleHand?: boolean } = {},
+    options: {
+      shuffleHand?: boolean;
+      // Merged into the SAME setDoc call as the public state write
+      // below, not a separate one — this is what lets a caller combine
+      // this update with a shared, top-level field write (e.g.
+      // pendingControlTransfers/pendingCardReturns) as a single atomic
+      // commit. Two separate setDoc calls for what's conceptually one
+      // action (e.g. "remove this card from my field AND signal the
+      // other player to receive it") aren't guaranteed to arrive
+      // together or in either particular order — a receiving client
+      // could observe the removal before ever seeing the signal it
+      // depends on, a real gap where the card exists nowhere at all,
+      // not just a rendering glitch.
+      //
+      // Accepts a function, not just a static value, for callers that
+      // don't know what (if anything) needs including until AFTER the
+      // updater itself has run — e.g. the generic leave-zone handler,
+      // which only learns whether a card needs to return to its true
+      // owner by reading its `owner` field from inside the updater.
+      // Called after the updater, so any closure-captured values it
+      // reads are already populated by then.
+      extraFields?: Record<string, unknown> | (() => Record<string, unknown> | undefined);
+    } = {},
   ) => {
     if (!duelId || !currentUser || !state.role) return;
     const current = latestMeRef.current ?? me;
@@ -381,6 +410,9 @@ function MultiplayerDuelFieldPage() {
         // this clearing behavior, not a special case here.
         player1Selection: null,
         player2Selection: null,
+        ...(typeof options.extraFields === 'function'
+          ? options.extraFields()
+          : options.extraFields),
       },
       { merge: true },
     );
@@ -927,6 +959,7 @@ function MultiplayerDuelFieldPage() {
     let returnItems: {
       destination: 'hand' | 'grave' | 'banished' | 'mainDeckTop' | 'mainDeckBottom' | 'extraDeck';
       card: CardInstance;
+      from: SharedCardVisualPosition;
     }[] = [];
     let returnToRole: PlayerRole | null = null;
 
@@ -960,8 +993,34 @@ function MultiplayerDuelFieldPage() {
         const myMaterials: CardInstance[] = [];
         for (const material of placed.stackedBelow) {
           if (material.owner && material.owner !== state.role) {
-            returnItems.push({ destination: 'grave', card: material });
-            returnToRole = material.owner;
+            // Buried materials get their own rendered entry too (see
+            // cardPositions.ts's own stackEntries, which gives every
+            // card in a stack its own slightly-offset position, not
+            // just the top one) — so this lookup finds a real, distinct
+            // entry per material, not a fallback to the top card's own.
+            const materialEntry = cardPositionEntries.find(
+              (e) => e.instanceId === material.instanceId,
+            );
+            if (materialEntry) {
+              returnItems.push({
+                destination: 'grave',
+                card: material,
+                from: {
+                  x: materialEntry.x,
+                  y: materialEntry.y,
+                  scale: materialEntry.scale,
+                  rotation: materialEntry.rotation,
+                  faceDown: materialEntry.faceDown,
+                },
+              });
+              returnToRole = material.owner;
+            } else {
+              // No known rendered position for this material — nothing
+              // honest to animate from, so it's returned without one
+              // (CardLayer just lets it appear once the real entry
+              // does, same as any card with no prior position at all).
+              myMaterials.push(material);
+            }
           } else {
             myMaterials.push(material);
           }
@@ -995,8 +1054,21 @@ function MultiplayerDuelFieldPage() {
                   : actionKey === 'stackTop'
                     ? 'mainDeckTop'
                     : 'mainDeckBottom';
-        returnItems.push({ destination, card: asCardInstance });
-        returnToRole = placed.owner;
+        const topEntry = cardPositionEntries.find((e) => e.instanceId === placed.instanceId);
+        if (topEntry) {
+          returnItems.push({
+            destination,
+            card: asCardInstance,
+            from: {
+              x: topEntry.x,
+              y: topEntry.y,
+              scale: topEntry.scale,
+              rotation: topEntry.rotation,
+              faceDown: topEntry.faceDown,
+            },
+          });
+          returnToRole = placed.owner;
+        }
         return next;
       }
 
@@ -1021,23 +1093,32 @@ function MultiplayerDuelFieldPage() {
           break;
       }
       return next;
-    });
-
-    if (returnItems.length > 0 && returnToRole && duelId) {
-      setDoc(
-        doc(db, 'duels', duelId),
-        {
+    }, {
+      extraFields: () => {
+        if (returnItems.length === 0 || !returnToRole) return undefined;
+        const batch = { toRole: returnToRole, items: returnItems };
+        // Queued locally, immediately — same reasoning as
+        // handleMoveToOpponentTarget's own queueControlTransfer call.
+        // This is the earliest point returnItems/returnToRole are
+        // actually known (only populated once the updater above has
+        // run), but it's still synchronous — applyMeUpdate calls this
+        // function before any of its own writes are awaited.
+        cardLayerRef.current?.queueCardReturn(batch);
+        return {
           // arrayUnion, not a plain field write — same reasoning as
           // pendingControlTransfers' own fix: a plain merge write here
           // would overwrite (and lose) any OTHER return batch still
           // waiting to be picked up, rather than adding alongside it.
-          pendingCardReturns: arrayUnion({ toRole: returnToRole, items: returnItems }),
-        },
-        { merge: true },
-      ).catch((err) => {
-        console.error('[MultiplayerDuelFieldPage] Failed to hand off card return:', err);
-      });
-    }
+          // Combined into the SAME write as the removal above (via
+          // extraFields), not a separate setDoc call — same race this
+          // closes as pendingControlTransfers' own fix: a receiving
+          // client could otherwise see the card gone from the
+          // controller's field before ever seeing this signal telling
+          // them where it actually went.
+          pendingCardReturns: arrayUnion(batch),
+        };
+      },
+    });
   };
 
   // --- Move (relocate a card to a different, empty zone on the same field) ---
@@ -1094,6 +1175,21 @@ function MultiplayerDuelFieldPage() {
       setPendingMove(null);
       return;
     }
+    // Captured NOW, before anything is removed anywhere — see
+    // DuelDoc's own comment on pendingControlTransfers' `from` field
+    // for why this can't just be looked up later instead.
+    const sourceEntry = cardPositionEntries.find((e) => e.instanceId === card.instanceId);
+    if (!sourceEntry) {
+      setPendingMove(null);
+      return;
+    }
+    const from: SharedCardVisualPosition = {
+      x: sourceEntry.x,
+      y: sourceEntry.y,
+      scale: sourceEntry.scale,
+      rotation: sourceEntry.rotation,
+      faceDown: sourceEntry.faceDown,
+    };
     const toRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
     // Preserves an existing owner if this card has already changed
     // control before — ownership is set once and never changes again
@@ -1102,29 +1198,41 @@ function MultiplayerDuelFieldPage() {
     // card.owner was unset, meaning I was both the controller and the
     // (implicit) owner up to this point.
     const cardWithOwner: PlacedCard = { ...card, owner: card.owner ?? state.role };
+    const transferRecord = { toRole, toIndex: destIndex, card: cardWithOwner, from };
     setPendingMove(null);
-    applyMeUpdate((current) => {
-      const slot = current.monsterZones[originIndex];
-      if (!slot) return current;
-      const next = [...current.monsterZones];
-      next[originIndex] = null;
-      return { ...current, monsterZones: next };
-    });
-    setDoc(
-      doc(db, 'duels', duelId),
-      {
-        // arrayUnion, not a plain field write — this is what actually
-        // fixes the "monster disappears" bug: a plain merge write would
-        // overwrite (and lose) any OTHER transfer still waiting to be
-        // picked up by its own recipient, rather than adding alongside
-        // it. See DuelDoc's own comment on pendingControlTransfers for
-        // the full reasoning.
-        pendingControlTransfers: arrayUnion({ toRole, toIndex: destIndex, card: cardWithOwner }),
+    // Queued locally, immediately — this is what lets the SENDING
+    // client see its own animation start the instant it clicks, rather
+    // than only once pendingControlTransfers has round-tripped back
+    // from Firestore. See CardLayerHandle's own comment for why this
+    // matters: the local, optimistic state update below (via
+    // applyMeUpdate) removes the card from view almost immediately,
+    // well before that round trip would otherwise complete.
+    cardLayerRef.current?.queueControlTransfer(transferRecord);
+    applyMeUpdate(
+      (current) => {
+        const slot = current.monsterZones[originIndex];
+        if (!slot) return current;
+        const next = [...current.monsterZones];
+        next[originIndex] = null;
+        return { ...current, monsterZones: next };
       },
-      { merge: true },
-    ).catch((err) => {
-      console.error('[MultiplayerDuelFieldPage] Failed to hand off control transfer:', err);
-    });
+      {
+        extraFields: {
+          // arrayUnion, not a plain field write — this is what actually
+          // fixes the "monster disappears" bug: a plain merge write
+          // would overwrite (and lose) any OTHER transfer still waiting
+          // to be picked up by its own recipient, rather than adding
+          // alongside it. See DuelDoc's own comment on
+          // pendingControlTransfers for the full reasoning. Combined
+          // into the SAME write as the removal above (via extraFields),
+          // not a separate setDoc call, which is what closes the race
+          // where a receiving client could see the card gone from its
+          // origin before ever seeing this signal telling them where it
+          // went — a real gap where the card existed nowhere at all.
+          pendingControlTransfers: arrayUnion(transferRecord),
+        },
+      },
+    );
   };
 
   // Completes every control transfer targeting THIS client (toRole ===
@@ -1801,6 +1909,7 @@ function MultiplayerDuelFieldPage() {
                 z-index war with FieldZone-rotatedOverlay or anything
                 else in there. */}
             <CardLayer
+              ref={cardLayerRef}
               entries={cardPositionEntries}
               me={renderMe}
               opponent={opponent}
@@ -1808,6 +1917,8 @@ function MultiplayerDuelFieldPage() {
               mySelection={mySelection}
               opponentSelection={opponentSelection}
               onSelectCard={handleSelectCard}
+              pendingControlTransfers={pendingControlTransfers}
+              pendingCardReturns={pendingCardReturns}
             />
           </div>
         </div>
