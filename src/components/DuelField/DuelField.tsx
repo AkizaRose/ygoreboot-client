@@ -81,11 +81,12 @@ function topCardOffset(
   return { x: topLayerIndex * offsets.stepX, y: topLayerIndex * offsets.stepY };
 }
 
-// Main Deck and Extra Deck share "View", but only Main Deck gets Shuffle
-// — Extra Deck's order is meaningful (matches the Deck Builder) and
-// isn't meant to be randomized. Grave/Banished also stay view-only.
+// Main Deck keeps its own hover menu (View plus Shuffle/Mill/Banish
+// Top/Reset) — Extra Deck's order is meaningful (matches the Deck
+// Builder) and isn't meant to be randomized, so it, along with
+// Grave/Banished, is viewed by clicking the zone directly instead of
+// through a menu at all (see those zones' own onClick below).
 const VIEW_ACTION: FieldZoneAction = { key: 'view', label: 'View' };
-const VIEW_ONLY_ACTIONS: FieldZoneAction[] = [VIEW_ACTION];
 
 const MAIN_DECK_ACTIONS: FieldZoneAction[] = [
   VIEW_ACTION,
@@ -498,8 +499,7 @@ function PlayerField({
               rotated180={flipped}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
-              menuActions={VIEW_ONLY_ACTIONS}
-              onMenuAction={
+              onClick={
                 flipped
                   ? onViewOpponentGrave
                     ? () => onViewOpponentGrave()
@@ -508,7 +508,6 @@ function PlayerField({
                     ? () => onViewGrave()
                     : undefined
               }
-              onClick={topCard && onSelectCard ? () => onSelectCard(topCard.instanceId) : undefined}
             />
           );
         }
@@ -533,8 +532,7 @@ function PlayerField({
               rotated180={flipped}
               onCardHover={onCardHover}
               onCardHoverEnd={onCardHoverEnd}
-              menuActions={VIEW_ONLY_ACTIONS}
-              onMenuAction={
+              onClick={
                 flipped
                   ? onViewOpponentBanished
                     ? () => onViewOpponentBanished()
@@ -543,7 +541,6 @@ function PlayerField({
                     ? () => onViewBanished()
                     : undefined
               }
-              onClick={topCard && onSelectCard ? () => onSelectCard(topCard.instanceId) : undefined}
             />
           );
         }
@@ -587,8 +584,7 @@ function PlayerField({
               count={resolvedExtraDeckCount}
               pileCountOffsetX={extraDeckOffset.x}
               pileCountOffsetY={extraDeckOffset.y}
-              menuActions={flipped ? [] : VIEW_ONLY_ACTIONS}
-              onMenuAction={!flipped && onViewExtraDeck ? () => onViewExtraDeck() : undefined}
+              onClick={!flipped && onViewExtraDeck ? () => onViewExtraDeck() : undefined}
             />
           );
         }

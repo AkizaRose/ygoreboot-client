@@ -165,8 +165,19 @@ function deckPileEntries(
 ): CardPositionEntry[] {
   if (cards.length === 0) return [];
   const slot = getDeckZoneSlot(flipped, kind === 'mainDeck' ? 'main' : 'extra');
+  // stackEntries' own zIndex formula gives the LAST element of whatever
+  // array it's given the highest zIndex (rendered frontmost) — correct
+  // for Grave/Banished, which only ever append, so their last element
+  // is always the most recently added card. mainDeck and extraDeck are
+  // different: both PREPEND their most recently added card instead
+  // (stackTop's own `[asCardInstance, ...next.mainDeck]`, toExtra's own
+  // `[asCardInstance, ...next.extraDeck]`) — so for these two
+  // specifically, index 0 is the logical "top"/most recent card, and
+  // reversing here is what maps that to the LAST position stackEntries
+  // sees, giving it the highest zIndex it deserves instead of being
+  // rendered buried at the back of the pile.
   return stackEntries(
-    cards,
+    [...cards].reverse(),
     slot,
     (flipped ? OPPONENT_STACK_OFFSETS : PLAYER_STACK_OFFSETS)[kind],
     flipped ? 180 : 0,
