@@ -28,6 +28,7 @@ import {
 } from './cardGeometry';
 
 interface ControlTransferRecord {
+  id: string;
   toRole: PlayerRole;
   toIndex: number;
   card: PlacedCard;
@@ -41,6 +42,7 @@ interface CardReturnItem {
 }
 
 interface CardReturnBatch {
+  id: string;
   toRole: PlayerRole;
   items: CardReturnItem[];
 }
@@ -812,10 +814,9 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
   const processedControlTransfersRef = useRef<Set<string>>(new Set());
   const processedCardReturnsRef = useRef<Set<string>>(new Set());
 
-  const controlTransferKey = (transfer: ControlTransferRecord) =>
-    `transfer:${transfer.toRole}:${transfer.toIndex}:${transfer.card.instanceId}`;
+  const controlTransferKey = (transfer: ControlTransferRecord) => transfer.id;
   const cardReturnItemKey = (batch: CardReturnBatch, item: CardReturnItem) =>
-    `return:${batch.toRole}:${item.destination}:${item.card.instanceId}`;
+    `${batch.id}:${item.destination}:${item.card.instanceId}`;
 
   const buildControlTransferCard = (transfer: ControlTransferRecord): InTransitCard => {
     const flipped = transfer.toRole !== myRole;

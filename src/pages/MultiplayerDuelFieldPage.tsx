@@ -1096,7 +1096,14 @@ function MultiplayerDuelFieldPage() {
     }, {
       extraFields: () => {
         if (returnItems.length === 0 || !returnToRole) return undefined;
-        const batch = { toRole: returnToRole, items: returnItems };
+        const batch = {
+          // Same reasoning as handleMoveToOpponentTarget's own transfer
+          // id — a genuinely unique value per batch, not derived from
+          // anything that could repeat across a card's later returns.
+          id: crypto.randomUUID(),
+          toRole: returnToRole,
+          items: returnItems,
+        };
         // Queued locally, immediately — same reasoning as
         // handleMoveToOpponentTarget's own queueControlTransfer call.
         // This is the earliest point returnItems/returnToRole are
@@ -1198,7 +1205,19 @@ function MultiplayerDuelFieldPage() {
     // card.owner was unset, meaning I was both the controller and the
     // (implicit) owner up to this point.
     const cardWithOwner: PlacedCard = { ...card, owner: card.owner ?? state.role };
-    const transferRecord = { toRole, toIndex: destIndex, card: cardWithOwner, from };
+    const transferRecord = {
+      // A genuinely unique id per transfer — see DuelDoc's own comment
+      // on pendingControlTransfers for why toRole/toIndex/instanceId
+      // alone aren't safe to key on: this same card revisiting the same
+      // slot on a later transfer would otherwise reuse an identical
+      // key, and the processed-Sets that guard against double-handling
+      // persist for the whole duel.
+      id: crypto.randomUUID(),
+      toRole,
+      toIndex: destIndex,
+      card: cardWithOwner,
+      from,
+    };
     setPendingMove(null);
     // Queued locally, immediately — this is what lets the SENDING
     // client see its own animation start the instant it clicks, rather
@@ -1250,12 +1269,10 @@ function MultiplayerDuelFieldPage() {
   useEffect(() => {
     if (!duelId || !state.role) return;
     const myTransfers = pendingControlTransfers.filter((t) => t.toRole === state.role);
-    const newTransfers = myTransfers.filter(
-      (t) => !processedTransfersRef.current.has(`${t.toRole}:${t.toIndex}:${t.card.instanceId}`),
-    );
+    const newTransfers = myTransfers.filter((t) => !processedTransfersRef.current.has(t.id));
     if (newTransfers.length === 0) return;
     for (const t of newTransfers) {
-      processedTransfersRef.current.add(`${t.toRole}:${t.toIndex}:${t.card.instanceId}`);
+      processedTransfersRef.current.add(t.id);
     }
 
     // Every transfer accumulates onto the SAME next object — one atomic
@@ -1295,13 +1312,11 @@ function MultiplayerDuelFieldPage() {
   const processedReturnsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!duelId || !state.role) return;
-    const keyFor = (batch: (typeof pendingCardReturns)[number]) =>
-      `${batch.toRole}:${batch.items.map((item) => `${item.destination}:${item.card.instanceId}`).join(',')}`;
     const myReturns = pendingCardReturns.filter((r) => r.toRole === state.role);
-    const newReturns = myReturns.filter((r) => !processedReturnsRef.current.has(keyFor(r)));
+    const newReturns = myReturns.filter((r) => !processedReturnsRef.current.has(r.id));
     if (newReturns.length === 0) return;
     for (const r of newReturns) {
-      processedReturnsRef.current.add(keyFor(r));
+      processedReturnsRef.current.add(r.id);
     }
 
     // Every item, from every new batch, accumulates onto the SAME next
