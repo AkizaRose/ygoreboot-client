@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import CardImage from '../CardView/CardImage';
 import type { CardData } from '../../types/Card';
 import type { CardInstance } from '../../types/CardInstance';
@@ -197,41 +198,74 @@ function DeckViewer({
         })}
       </div>
 
-      {showMenu &&
-        createPortal(
-          <div
-            className="DeckViewer-contextMenu"
-            style={{
-              position: 'fixed',
-              left: menuPosition.left,
-              top: menuPosition.top,
-              transform: 'translate(-50%, calc(-100% - 4px))',
-            }}
-            onMouseEnter={() => {
-              cancelHide();
-            }}
-            onMouseLeave={() => {
-              if (hoveredInstanceId !== null) {
-                scheduleHide(hoveredInstanceId);
-              }
-            }}
-          >
-            {hoveredActions.map((action) => (
-              <button
-                key={action.key}
-                type="button"
-                className="DeckViewer-contextMenuButton"
-                onClick={() =>
-                  hoveredInstanceId !== null &&
-                  handleAction(hoveredInstanceId, action.key)
+      {createPortal(
+        <AnimatePresence>
+          {showMenu && (
+            <motion.div
+              key="deck-viewer-context-menu"
+              style={{
+                position: 'fixed',
+                left: menuPosition.left,
+                top: menuPosition.top,
+                transform: 'translate(-50%, calc(-100% - 4px))',
+                // Lives here, not in .DeckViewer-contextMenu's own CSS
+                // (where it used to be, back when that class was on
+                // this same, positioned element) — z-index has no
+                // effect at all on the INNER element below, which has
+                // no `position` of its own (defaults to static), only
+                // on an element that's actually positioned, which this
+                // one is.
+                zIndex: 9999,
+              }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              onMouseEnter={() => {
+                cancelHide();
+              }}
+              onMouseLeave={() => {
+                if (hoveredInstanceId !== null) {
+                  scheduleHide(hoveredInstanceId);
                 }
+              }}
+            >
+              {/* Same reasoning as Hand.tsx's own nested motion.div: the
+                  slide lives here, as a plain pixel offset, rather than
+                  on the outer element above alongside its own
+                  percentage-based translateY(calc(-100% - 4px)) —
+                  keeping the two on separate elements means neither
+                  has to account for the other. This nested exit
+                  animation still plays correctly even though
+                  AnimatePresence only directly tracks the OUTER element
+                  — exit propagates to descendant motion components
+                  automatically. */}
+              <motion.div
+                className="DeckViewer-contextMenu"
+                initial={{ y: 8 }}
+                animate={{ y: 0 }}
+                exit={{ y: 8 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
               >
-                {action.label}
-              </button>
-            ))}
-          </div>,
-          document.body,
-        )}
+                {hoveredActions.map((action) => (
+                  <button
+                    key={action.key}
+                    type="button"
+                    className="DeckViewer-contextMenuButton"
+                    onClick={() =>
+                      hoveredInstanceId !== null &&
+                      handleAction(hoveredInstanceId, action.key)
+                    }
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   );
 }

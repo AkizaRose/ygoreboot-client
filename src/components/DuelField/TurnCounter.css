@@ -1,0 +1,36 @@
+/* Same column PhaseTracker itself sits in (see PhaseTracker.css's own
+   comment) — this renders one row up, inside the opponent's own field
+   row (DuelField.tsx's fieldRow), directly above it. */
+.TurnCounter {
+  grid-column: 7;
+  justify-self: center;
+  align-self: center;
+  z-index: 10;
+}
+
+/* Identical styling to PhaseTracker's own label — see PhaseTracker.css —
+   deliberately kept as a byte-for-byte match rather than a shared class,
+   so either can change independently later without the other silently
+   drifting along with it. */
+.TurnCounter {
+  min-width: 80px;
+  text-align: center;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 13px;
+  padding: 3px 3px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Same red-for-mine/blue-for-opponent convention as PhaseTracker-label —
+   applied based on THIS client's own isMyTurn, so each player
+   independently sees red exactly when it's their own turn. */
+.TurnCounter--mine {
+  background: #7a1f1fee;
+}
+
+.TurnCounter--opponent {
+  background: #1f3f7aee;
+}

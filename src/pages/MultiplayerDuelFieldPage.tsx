@@ -106,6 +106,7 @@ function MultiplayerDuelFieldPage() {
     opponentSelection,
     pendingControlTransfers,
     pendingCardReturns,
+    pendingPileRequests,
   } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
@@ -115,6 +116,12 @@ function MultiplayerDuelFieldPage() {
   // a full round trip to Firestore and back. See CardLayerHandle's own
   // comment for the full reasoning.
   const cardLayerRef = useRef<CardLayerHandle>(null);
+  // Which of the player's OWN hand cards, if any, the cursor is
+  // currently over — detected by Hand.tsx (see its own
+  // onHoveredInstanceChange), consumed by CardLayer purely for the
+  // visual hover-lift effect (see that component's own comment on why
+  // the detection and the display live in two different places).
+  const [hoveredHandInstanceId, setHoveredHandInstanceId] = useState<string | null>(null);
   // Shown once, briefly, before the actual field ever renders — see the
   // render guard further down. Starts true on every mount rather than
   // being tied to turnNumber === 1 specifically, since a fresh page load
@@ -239,10 +246,13 @@ function MultiplayerDuelFieldPage() {
   // (hand) and Special Summon (Extra Deck/Grave/Banished) are otherwise
   // identical from this point on: same dialog, same "place at the first
   // empty Monster Zone slot" logic, just removing the card from a
-  // different pile.
+  // different pile. 'opponentGrave'/'opponentBanished' are different in
+  // one respect — completeSummon branches early for these two, since
+  // the card isn't in MY OWN state at all, so there's no pile to remove
+  // it from locally; see completeSummon's own comment.
   const [pendingSummon, setPendingSummon] = useState<{
     instanceId: string;
-    source: 'hand' | 'main' | 'extra' | 'grave' | 'banished';
+    source: 'hand' | 'main' | 'extra' | 'grave' | 'banished' | 'opponentGrave' | 'opponentBanished';
   } | null>(null);
 
   // Fusion Summon material-selection step: multi-select, ordered by
@@ -267,6 +277,24 @@ function MultiplayerDuelFieldPage() {
   // flow — no position-choice counterpart needed the way Fusion has one.
   const [pendingEvolutionSummon, setPendingEvolutionSummon] = useState<{
     extraDeckInstance: CardInstance;
+  } | null>(null);
+
+  // Ritual Summon — multi-select like Fusion (a separate Confirm step,
+  // then a Battle Position choice), but materials can be tributed from
+  // BOTH Monster Zones and hand at once, hence two index lists rather
+  // than Fusion's one. Same two-step shape as Fusion's own pair of
+  // states above, for the same reason: selecting materials doesn't
+  // place anything yet, only choosing a position (completeRitualSummon)
+  // actually does.
+  const [pendingRitualSummon, setPendingRitualSummon] = useState<{
+    extraDeckInstance: CardInstance;
+    selectedZoneIndices: number[];
+    selectedHandIndices: number[];
+  } | null>(null);
+  const [pendingRitualPositionChoice, setPendingRitualPositionChoice] = useState<{
+    extraDeckInstance: CardInstance;
+    selectedZoneIndices: number[];
+    selectedHandIndices: number[];
   } | null>(null);
 
   // Which of the player's own Monster Zone slots (0-2) currently has
@@ -556,6 +584,34 @@ function MultiplayerDuelFieldPage() {
     const pending = pendingSummon;
     setPendingSummon(null);
     if (!pending) return;
+
+    if (pending.source === 'opponentGrave' || pending.source === 'opponentBanished') {
+      if (!duelId || !state.role) return;
+      const opponentRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
+      // No local state to touch at all here — the card lives entirely
+      // in the OPPONENT's own public state, which only their own client
+      // can ever write to. This just asks them to act on it; see
+      // pendingPileRequests' own comment for the full reasoning, and
+      // the receiving effect below for the target-side half of this.
+      setDoc(
+        doc(db, 'duels', duelId),
+        {
+          pendingPileRequests: arrayUnion({
+            id: crypto.randomUUID(),
+            targetRole: opponentRole,
+            instanceId: pending.instanceId,
+            pile: pending.source === 'opponentGrave' ? 'grave' : 'banished',
+            action: 'specialSummon',
+            position,
+          }),
+        },
+        { merge: true },
+      ).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to request Special Summon:', err);
+      });
+      return;
+    }
+
     // TEMPORARY DIAGNOSTIC — remove once the animation bug is confirmed
     // fixed. Confirms/denies whether summoning (hand/deck/grave/banished
     // -> field) is what's actually correlated with the "missing card"
@@ -723,6 +779,129 @@ function MultiplayerDuelFieldPage() {
       return {
         ...current,
         monsterZones: nextZones,
+        extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
+      };
+    });
+  };
+
+  // --- Ritual Summon ---
+  // Multi-select from both Monster Zones and hand at once (see
+  // pendingRitualSummon's own comment for why two index lists), same
+  // Confirm-then-Battle-Position two-step shape as Fusion. The one
+  // genuine difference from Fusion, beyond the two material sources:
+  // every tributed material — zone or hand alike — goes to the Grave
+  // outright, never buried beneath the summoned monster (see
+  // completeRitualSummon below).
+
+  const handleRitualZoneMaterialToggle = (index: number) => {
+    setPendingRitualSummon((prev) => {
+      if (!prev) return prev;
+      const alreadySelected = prev.selectedZoneIndices.includes(index);
+      return {
+        ...prev,
+        selectedZoneIndices: alreadySelected
+          ? prev.selectedZoneIndices.filter((i) => i !== index)
+          : [...prev.selectedZoneIndices, index],
+      };
+    });
+  };
+
+  const handleRitualHandMaterialToggle = (index: number) => {
+    setPendingRitualSummon((prev) => {
+      if (!prev) return prev;
+      const alreadySelected = prev.selectedHandIndices.includes(index);
+      return {
+        ...prev,
+        selectedHandIndices: alreadySelected
+          ? prev.selectedHandIndices.filter((i) => i !== index)
+          : [...prev.selectedHandIndices, index],
+      };
+    });
+  };
+
+  const handleRitualSummonCancel = () => setPendingRitualSummon(null);
+
+  // Confirming selection doesn't place anything yet — it just hands off
+  // to the Battle Position dialog, mirroring Fusion's own
+  // handleFusionSummonConfirm. At least one material, from either
+  // source, is required — unlike Fusion, which only ever draws from one.
+  const handleRitualSummonConfirm = () => {
+    if (
+      !pendingRitualSummon ||
+      (pendingRitualSummon.selectedZoneIndices.length === 0 &&
+        pendingRitualSummon.selectedHandIndices.length === 0)
+    ) {
+      return;
+    }
+    setPendingRitualPositionChoice(pendingRitualSummon);
+    setPendingRitualSummon(null);
+  };
+
+  const completeRitualSummon = (position: 'attack' | 'defense') => {
+    const pending = pendingRitualPositionChoice;
+    setPendingRitualPositionChoice(null);
+    if (!pending) return;
+    const { extraDeckInstance, selectedZoneIndices, selectedHandIndices } = pending;
+
+    applyMeUpdate((current) => {
+      // Same reasoning as Fusion's own completeFusionSummon: the
+      // tributed zone materials are about to be removed as part of this
+      // very summon, so their own slots should count as available too —
+      // checking findEmptyZoneSlot against the CURRENT zones (still
+      // occupied by the materials) would wrongly report no room in the
+      // common case where the selected materials fill every zone.
+      const zonesAfterMaterialRemoval = [...current.monsterZones];
+      for (const idx of selectedZoneIndices) zonesAfterMaterialRemoval[idx] = null;
+      const emptySlot = findEmptyZoneSlot(zonesAfterMaterialRemoval);
+      if (emptySlot === -1) return current;
+
+      // Unlike Fusion, tributed materials go straight to the Grave, not
+      // buried beneath the summoned monster — but a zone material's
+      // WHOLE stack (its own top card plus anything already buried
+      // beneath IT) still comes along, same as how Fusion absorbs a
+      // material's own buried cards, just to a different destination.
+      const graveAdditions: CardInstance[] = [];
+      for (const idx of selectedZoneIndices) {
+        const material = current.monsterZones[idx];
+        if (!material) continue;
+        graveAdditions.push(...(material.stackedBelow ?? []));
+        // Conditionally spread owner in, rather than always including
+        // the key — see Fusion's own identical comment on why.
+        graveAdditions.push({
+          instanceId: material.instanceId,
+          card: material.card,
+          ...(material.owner ? { owner: material.owner } : {}),
+        });
+      }
+
+      // Hand materials are selected by INDEX, so removed high-to-low —
+      // splicing out a lower index first would shift every later one
+      // out from under its own, still-pending removal.
+      const nextHand = [...current.hand];
+      const sortedHandIndices = [...selectedHandIndices].sort((a, b) => b - a);
+      const handMaterials: CardInstance[] = [];
+      for (const idx of sortedHandIndices) {
+        const [removed] = nextHand.splice(idx, 1);
+        // Rebuilds the original left-to-right hand order in
+        // graveAdditions, despite removing highest-index-first above.
+        if (removed) handMaterials.unshift(removed);
+      }
+      graveAdditions.push(...handMaterials);
+
+      const nextZones = [...current.monsterZones];
+      for (const idx of selectedZoneIndices) nextZones[idx] = null;
+      nextZones[emptySlot] = {
+        instanceId: extraDeckInstance.instanceId,
+        card: extraDeckInstance.card,
+        faceDown: false,
+        position,
+      };
+
+      return {
+        ...current,
+        monsterZones: nextZones,
+        hand: nextHand,
+        grave: [...current.grave, ...graveAdditions],
         extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
       };
     });
@@ -1182,21 +1361,6 @@ function MultiplayerDuelFieldPage() {
       setPendingMove(null);
       return;
     }
-    // Captured NOW, before anything is removed anywhere — see
-    // DuelDoc's own comment on pendingControlTransfers' `from` field
-    // for why this can't just be looked up later instead.
-    const sourceEntry = cardPositionEntries.find((e) => e.instanceId === card.instanceId);
-    if (!sourceEntry) {
-      setPendingMove(null);
-      return;
-    }
-    const from: SharedCardVisualPosition = {
-      x: sourceEntry.x,
-      y: sourceEntry.y,
-      scale: sourceEntry.scale,
-      rotation: sourceEntry.rotation,
-      faceDown: sourceEntry.faceDown,
-    };
     const toRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
     // Preserves an existing owner if this card has already changed
     // control before — ownership is set once and never changes again
@@ -1216,7 +1380,11 @@ function MultiplayerDuelFieldPage() {
       toRole,
       toIndex: destIndex,
       card: cardWithOwner,
-      from,
+      // Plain, known values — see DuelDoc's own comment on
+      // pendingControlTransfers' fromRole/fromZone for why these
+      // replace what used to be a captured raw coordinate.
+      fromRole: state.role,
+      fromZone: { kind: 'monster' as const, index: originIndex },
     };
     setPendingMove(null);
     // Queued locally, immediately — this is what lets the SENDING
@@ -1379,6 +1547,22 @@ function MultiplayerDuelFieldPage() {
   const handleShuffleMainDeck = () =>
     applyMeUpdate((current) => ({ ...current, mainDeck: shuffle(current.mainDeck) }));
 
+  // Closing the Main Deck viewer always shuffles afterward — matches
+  // the real-world convention that looking through your deck requires
+  // a shuffle once you're done, regardless of what else was done (any
+  // card actions taken) while it was open. Only the Main Deck viewer
+  // does this — Grave/Banished/Extra Deck order is either public
+  // knowledge already or, for Extra Deck, deliberately NOT randomized
+  // (see MAIN_DECK_ACTIONS' own comment on why Extra Deck never gets a
+  // Shuffle option at all).
+  const handleCloseOwnPile = () => {
+    const wasViewingMain = viewingOwnPile === 'main';
+    setViewingOwnPile(null);
+    if (wasViewingMain) {
+      handleShuffleMainDeck();
+    }
+  };
+
   // --- Main Deck viewer actions (per card, once View is opened) ---
 
   const getMainDeckCardActions = (card: CardData) => {
@@ -1430,7 +1614,9 @@ function MultiplayerDuelFieldPage() {
       ? { key: 'fusionSummon', label: 'Fusion Summon' }
       : card.cardSubclass === 'Evolution'
         ? { key: 'evolutionSummon', label: 'Evolution Summon' }
-        : { key: 'specialSummon', label: 'S. Summon' },
+        : card.cardSubclass === 'Ritual'
+          ? { key: 'ritualSummon', label: 'Ritual Summon' }
+          : { key: 'specialSummon', label: 'S. Summon' },
   ];
 
   const handleExtraDeckCardAction = (instanceId: string, actionKey: string) => {
@@ -1452,6 +1638,17 @@ function MultiplayerDuelFieldPage() {
     if (actionKey === 'evolutionSummon') {
       setViewingOwnPile(null);
       setPendingEvolutionSummon({ extraDeckInstance: instance });
+      return;
+    }
+
+    if (actionKey === 'ritualSummon') {
+      // Closes the viewer so the field AND hand are both visible for
+      // material selection — the rest of this flow (toggling zones and
+      // hand cards, Confirm, choosing a Battle Position) is handled by
+      // handleRitualZoneMaterialToggle/handleRitualHandMaterialToggle/
+      // handleRitualSummonConfirm and the banner below, not here.
+      setViewingOwnPile(null);
+      setPendingRitualSummon({ extraDeckInstance: instance, selectedZoneIndices: [], selectedHandIndices: [] });
       return;
     }
 
@@ -1676,6 +1873,228 @@ function MultiplayerDuelFieldPage() {
     });
   };
 
+  // --- Opponent Grave/Banished viewer actions ---
+  // The card lives entirely in the OPPONENT's own public state here, so
+  // neither handler below ever calls applyMeUpdate directly — only the
+  // opponent's own client can act on their own Grave/Banished. Both
+  // just write a request instead (see pendingPileRequests' own comment)
+  // and let the opponent's own client — running the exact same
+  // component, just on their side — pick it up via the receiving effect
+  // below.
+
+  const requestOpponentPileAction = (
+    pile: 'grave' | 'banished',
+    instanceId: string,
+    action: 'toOtherPile',
+  ) => {
+    if (!duelId || !state.role) return;
+    const opponentRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
+    setDoc(
+      doc(db, 'duels', duelId),
+      {
+        pendingPileRequests: arrayUnion({
+          id: crypto.randomUUID(),
+          targetRole: opponentRole,
+          instanceId,
+          pile,
+          action,
+        }),
+      },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to request pile action:', err);
+    });
+  };
+
+  const getOpponentGraveCardActions = (card: CardData) => {
+    const actions = [{ key: 'banish', label: 'Banish' }];
+    if (card.cardClass === 'Monster') {
+      actions.push({ key: 'specialSummon', label: 'S. Summon' });
+    }
+    return actions;
+  };
+
+  const handleOpponentGraveCardAction = (instanceId: string, actionKey: string) => {
+    if (actionKey === 'specialSummon') {
+      // Checked against MY OWN field, same as every other Special
+      // Summon source — this card is about to land there, regardless
+      // of which pile of the opponent's it's coming from.
+      if (!me || findEmptyZoneSlot(me.monsterZones) === -1) return;
+      setPendingSummon({ instanceId, source: 'opponentGrave' });
+      return;
+    }
+    if (actionKey === 'banish') {
+      requestOpponentPileAction('grave', instanceId, 'toOtherPile');
+    }
+  };
+
+  // --- Opponent Banished viewer actions ---
+  // Identical to the Grave viewer's own actions above, except "To
+  // Grave" swaps in for "Banish" (a card already in the Banished Zone
+  // obviously can't be banished again) — same reasoning as the
+  // existing own-pile getBanishedCardActions' own comment.
+
+  const getOpponentBanishedCardActions = (card: CardData) => {
+    const actions = [{ key: 'toGrave', label: 'To Grave' }];
+    if (card.cardClass === 'Monster') {
+      actions.push({ key: 'specialSummon', label: 'S. Summon' });
+    }
+    return actions;
+  };
+
+  const handleOpponentBanishedCardAction = (instanceId: string, actionKey: string) => {
+    if (actionKey === 'specialSummon') {
+      if (!me || findEmptyZoneSlot(me.monsterZones) === -1) return;
+      setPendingSummon({ instanceId, source: 'opponentBanished' });
+      return;
+    }
+    if (actionKey === 'toGrave') {
+      requestOpponentPileAction('banished', instanceId, 'toOtherPile');
+    }
+  };
+
+  // Completes every pile request targeting THIS client (targetRole ===
+  // my own role) — not just the most recent one, same batching/Set-
+  // guard reasoning as the pendingControlTransfers/pendingCardReturns
+  // effects above. This is the target-side half of the opponent-pile
+  // actions above: only this client can actually remove a card from its
+  // own Grave/Banished, which is exactly why those actions could only
+  // ever request this rather than do it directly.
+  const processedPileRequestsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!duelId || !state.role || !me) return;
+    const myRequests = pendingPileRequests.filter((r) => r.targetRole === state.role);
+    const newRequests = myRequests.filter((r) => !processedPileRequestsRef.current.has(r.id));
+    if (newRequests.length === 0) return;
+    for (const r of newRequests) {
+      processedPileRequestsRef.current.add(r.id);
+    }
+
+    const opponentRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
+    // Resolved up front, from this render's own closure values, for the
+    // same reason handleMoveToOpponentTarget's own `from` is captured
+    // before anything is touched — cardPositionEntries reflects MY OWN
+    // pile's current rendered layout (the card sits in MY state from
+    // this client's own point of view, even though it was the OTHER
+    // player who asked for it), and won't still be there once this
+    // client's own local, optimistic removal below takes effect.
+    // findEmptyZoneSlot is checked against `opponent` (the requester's
+    // own field, from this client's point of view) — same approximation
+    // tolerance as everywhere else that trusts the synced snapshot
+    // rather than re-verifying after a round trip: if the requester's
+    // field has genuinely filled up since they asked, this request is
+    // simply dropped rather than risking placing a card nowhere at all.
+    const newTransfers: {
+      id: string;
+      toRole: PlayerRole;
+      toIndex: number;
+      card: PlacedCard;
+      fromRole: PlayerRole;
+      fromZone: { kind: 'monster'; index: number } | { kind: 'grave' } | { kind: 'banished' };
+    }[] = [];
+    const resolvedRequests: {
+      request: (typeof newRequests)[number];
+      transfer: (typeof newTransfers)[number] | null;
+    }[] = [];
+    for (const request of newRequests) {
+      if (request.action !== 'specialSummon') {
+        resolvedRequests.push({ request, transfer: null });
+        continue;
+      }
+      const sourcePile = request.pile === 'grave' ? me.grave : me.banished;
+      const instance = sourcePile.find((i) => i.instanceId === request.instanceId);
+      const destIndex = opponent ? findEmptyZoneSlot(opponent.monsterZones) : -1;
+      if (!instance || destIndex === -1) {
+        // Nothing safe to do — the card is already gone, or the
+        // requester's field has no room anymore. Dropped silently, same
+        // convention as every other "the target isn't valid anymore"
+        // case elsewhere in this file.
+        resolvedRequests.push({ request, transfer: null });
+        continue;
+      }
+      const transfer = {
+        id: crypto.randomUUID(),
+        toRole: opponentRole,
+        toIndex: destIndex,
+        card: {
+          instanceId: instance.instanceId,
+          card: instance.card,
+          faceDown: false,
+          position: request.position ?? 'attack',
+          // Preserves an existing owner if this card had already
+          // changed control before landing in my Grave/Banished — same
+          // reasoning as every other control-transfer-initiating action.
+          // Only ever defaults to MY OWN role here, since an unset
+          // owner means I was both the controller and the (implicit)
+          // owner up to this point.
+          owner: instance.owner ?? state.role,
+        },
+        // Plain, known values — see DuelDoc's own comment on
+        // pendingControlTransfers' fromRole/fromZone for why these
+        // replace what used to be a captured raw coordinate: that raw
+        // coordinate was captured from THIS client's (the target's) own
+        // perspective on their own Grave/Banished, but was being reused
+        // verbatim by the REQUESTER's client — where the same numeric
+        // coordinates land somewhere on the requester's OWN side of the
+        // board instead, since "flipped=false" always means "whoever's
+        // rendering this' own side," not a fixed physical location. That
+        // mismatch was the actual cause of the card visibly appearing at
+        // the requester's own Grave/Banished before snapping to its real
+        // destination.
+        fromRole: state.role,
+        fromZone: { kind: request.pile } as const,
+      };
+      newTransfers.push(transfer);
+      resolvedRequests.push({ request, transfer });
+    }
+
+    // Queued locally, immediately — same reasoning as every other
+    // control-transfer-initiating action: this client is the one whose
+    // own local, optimistic state update is about to remove the card
+    // from view, well before pendingControlTransfers could ever
+    // round-trip back to confirm it.
+    for (const transfer of newTransfers) {
+      cardLayerRef.current?.queueControlTransfer(transfer);
+    }
+
+    applyMeUpdate(
+      (current) => {
+        let next: MyDuelState = { ...current };
+        for (const { request, transfer } of resolvedRequests) {
+          const sourcePile = request.pile === 'grave' ? next.grave : next.banished;
+          const inst = sourcePile.find((i) => i.instanceId === request.instanceId);
+          if (!inst) continue;
+          const restSource = sourcePile.filter((i) => i.instanceId !== request.instanceId);
+
+          if (request.action === 'toOtherPile') {
+            next =
+              request.pile === 'grave'
+                ? { ...next, grave: restSource, banished: [...next.banished, inst] }
+                : { ...next, banished: restSource, grave: [...next.grave, inst] };
+          } else if (transfer) {
+            next = request.pile === 'grave' ? { ...next, grave: restSource } : { ...next, banished: restSource };
+          }
+        }
+        return next;
+      },
+      {
+        extraFields: {
+          pendingPileRequests: arrayRemove(...newRequests),
+          ...(newTransfers.length > 0
+            ? { pendingControlTransfers: arrayUnion(...newTransfers) }
+            : {}),
+        },
+      },
+    );
+    // applyMeUpdate/cardPositionEntries/opponent are intentionally not
+    // listed — same reasoning as every other effect in this file that
+    // omits them: processedPileRequestsRef's own guard is what actually
+    // makes this effect idempotent, not the dependency array, and these
+    // three are read only for their CURRENT closure values at the
+    // moment a new request arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPileRequests, duelId, state.role]);
+
   if (!state.role || !state.opponentInfo || !state.myDeckId) {
     return (
       <div className="MultiplayerDuelFieldPage-status">
@@ -1890,9 +2309,13 @@ function MultiplayerDuelFieldPage() {
               onToggleMaterialSelection={handleFusionMaterialToggle}
               isSelectingEvolutionMaterial={pendingEvolutionSummon !== null}
               onSelectEvolutionMaterial={handleEvolutionMaterialClick}
+              isSelectingRitualMaterial={pendingRitualSummon !== null}
+              selectedRitualZoneIndices={pendingRitualSummon?.selectedZoneIndices ?? []}
+              onToggleRitualZoneMaterial={handleRitualZoneMaterialToggle}
               currentPhase={currentPhase}
               turnEnding={turnEnding}
               isMyTurn={isMyTurn}
+              turnNumber={turnNumber}
               onPrevPhase={handlePrevPhase}
               onNextPhase={handleNextPhase}
               onStartTurn={handleStartTurn}
@@ -1908,6 +2331,7 @@ function MultiplayerDuelFieldPage() {
               cards={renderMe.hand}
               onCardHover={handleCardHover}
               onCardHoverEnd={handleCardHoverEnd}
+              onHoveredInstanceChange={setHoveredHandInstanceId}
               onNormalSummon={handleNormalSummon}
               onActivateSpell={handleActivateSpell}
               onSetSpellOrTrap={handleSetSpellOrTrap}
@@ -1934,6 +2358,10 @@ function MultiplayerDuelFieldPage() {
               onSelectCard={handleSelectCard}
               pendingControlTransfers={pendingControlTransfers}
               pendingCardReturns={pendingCardReturns}
+              isSelectingRitualMaterial={pendingRitualSummon !== null}
+              selectedRitualHandIndices={pendingRitualSummon?.selectedHandIndices ?? []}
+              onToggleRitualHandMaterial={handleRitualHandMaterialToggle}
+              hoveredHandInstanceId={hoveredHandInstanceId}
             />
           </div>
         </div>
@@ -2015,6 +2443,13 @@ function MultiplayerDuelFieldPage() {
         />
       )}
 
+      {pendingRitualPositionChoice && (
+        <SummonPositionDialog
+          onSelectAttack={() => completeRitualSummon('attack')}
+          onSelectDefense={() => completeRitualSummon('defense')}
+        />
+      )}
+
       {pendingStatAdjustIndex !== null &&
         (() => {
           const slot = renderMe.monsterZones[pendingStatAdjustIndex];
@@ -2074,6 +2509,29 @@ function MultiplayerDuelFieldPage() {
         </div>
       )}
 
+      {pendingRitualSummon && (
+        <div className="MultiplayerDuelFieldPage-materialSelectionBanner">
+          <span>
+            Select cards to Tribute for the Ritual Summon (
+            {pendingRitualSummon.selectedZoneIndices.length + pendingRitualSummon.selectedHandIndices.length}{' '}
+            selected)
+          </span>
+          <button
+            type="button"
+            onClick={handleRitualSummonConfirm}
+            disabled={
+              pendingRitualSummon.selectedZoneIndices.length === 0 &&
+              pendingRitualSummon.selectedHandIndices.length === 0
+            }
+          >
+            Confirm
+          </button>
+          <button type="button" onClick={handleRitualSummonCancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+
       {pendingMove && (
         <div className="MultiplayerDuelFieldPage-materialSelectionBanner">
           <span>
@@ -2098,7 +2556,7 @@ function MultiplayerDuelFieldPage() {
                   ? renderMe.banished
                   : renderMe.extraDeck
           }
-          onClose={() => setViewingOwnPile(null)}
+          onClose={handleCloseOwnPile}
           onCardHover={handleCardHover}
           onCardHoverEnd={handleCardHoverEnd}
           getCardActions={
@@ -2128,6 +2586,12 @@ function MultiplayerDuelFieldPage() {
           onClose={() => setViewingOpponentPile(null)}
           onCardHover={handleCardHover}
           onCardHoverEnd={handleCardHoverEnd}
+          getCardActions={
+            viewingOpponentPile === 'grave' ? getOpponentGraveCardActions : getOpponentBanishedCardActions
+          }
+          onCardAction={
+            viewingOpponentPile === 'grave' ? handleOpponentGraveCardAction : handleOpponentBanishedCardAction
+          }
         />
       )}
 

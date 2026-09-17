@@ -165,20 +165,28 @@ interface DuelDoc {
     toRole: PlayerRole;
     toIndex: number;
     card: PlacedCard;
-    // Captured by the SENDING client, from its own rendered card
-    // positions, at the moment the transfer is initiated — before the
-    // card is actually removed from anywhere. Embedding this directly,
-    // rather than having either client look up the card's last known
-    // position after the fact (in previousEntries or similar), is what
-    // makes the resulting animation's starting point correct regardless
-    // of timing: the SENDING client's own local, optimistic state update
-    // (see applyMeUpdate's own requestAnimationFrame) removes the card
-    // from its rendered entries almost immediately — often well before
-    // this very record has even finished writing to Firestore, let
-    // alone round-tripped back — so any lookup performed after the fact
-    // on the sending client's own side would frequently find nothing at
-    // all.
-    from: SharedCardVisualPosition;
+    // Where this card came from, described so EVERY client — not just
+    // the one that initiated the transfer — can correctly resolve it
+    // into their own coordinate space. Raw (x, y, rotation) coordinates
+    // are only ever valid from the CAPTURING client's own perspective
+    // (their own side of the board is always rendered as if they're
+    // looking at it themselves), and get silently misinterpreted by any
+    // OTHER client reusing them verbatim — the same numeric coordinates
+    // land in a genuinely different physical board location depending
+    // on who's rendering them (their own side vs. the opponent's are
+    // NOT just the same coordinates with a 180° rotation — the board's
+    // own row/column geometry is asymmetric enough that no simple
+    // transform recovers the correct position either). fromRole is
+    // whose side this came from; each client resolves the actual
+    // position themselves by comparing it against their own role and
+    // feeding the result through the same geometry functions the
+    // destination (toIndex) already uses — see CardLayer's own
+    // buildControlTransferCard. 'monster' additionally carries an index
+    // (which of the 3 slots); Grave/Banished don't need one, since the
+    // whole pile occupies one spot that matters for an animation's
+    // starting point.
+    fromRole: PlayerRole;
+    fromZone: { kind: 'monster'; index: number } | { kind: 'grave' } | { kind: 'banished' };
   }[];
   // Same array-not-single-object reasoning as pendingControlTransfers
   // above, for the same reason — see that field's own comment. A card
@@ -224,6 +232,46 @@ interface DuelDoc {
       // materials, each with their own slightly offset stack position).
       from: SharedCardVisualPosition;
     }[];
+  }[];
+  // A request from one player to the OTHER, asking them to act on a
+  // card sitting in THEIR OWN Grave or Banished Zone — backs the
+  // opponent-Grave/Banished viewer's own hover-menu actions (S. Summon,
+  // Banish, To Grave). Unlike pendingControlTransfers/pendingCardReturns
+  // above, which hand off something the SENDER has already removed from
+  // their own state, the requester here can't remove anything at all:
+  // the card lives entirely within the TARGET's own public state slice,
+  // which only the target's own client can ever write to. So this is a
+  // request awaiting action, not a handoff of something already in
+  // flight — the target's own client is what actually reads it, carries
+  // it out, and clears it again (arrayRemove, once done), the same
+  // one-way "only the owning client writes their own slice" rule as
+  // every other cross-player interaction in this document.
+  //
+  // Same array-not-single-object reasoning as pendingControlTransfers/
+  // pendingCardReturns above, for the same reason: two requests arriving
+  // close together must never let the second silently overwrite the
+  // first before the target ever sees it.
+  pendingPileRequests: {
+    id: string;
+    targetRole: PlayerRole;
+    instanceId: string;
+    pile: 'grave' | 'banished';
+    // 'specialSummon': the target removes the card from their own pile
+    // and hands it to the REQUESTER's field, by building and appending
+    // a normal pendingControlTransfers entry themselves — from that
+    // point on it's handled no differently than a transfer that
+    // originated from an ordinary field move; the requester's own
+    // existing receiving effect places it. 'toOtherPile': moves the
+    // card to the target's OTHER pile (Grave -> Banished or the
+    // reverse) — entirely within the target's own state once they act
+    // on it, no further handoff needed.
+    action: 'specialSummon' | 'toOtherPile';
+    // Only meaningful for 'specialSummon' — the Battle Position the
+    // REQUESTER chose (via the same SummonPositionDialog flow the
+    // existing, same-owner Special Summon already uses). Carried here
+    // because the requester is the one asked, but the target's own
+    // client is the one building the resulting PlacedCard.
+    position?: 'attack' | 'defense';
   }[];
 }
 
@@ -315,7 +363,8 @@ interface UseMultiplayerDuelResult {
     toRole: PlayerRole;
     toIndex: number;
     card: PlacedCard;
-    from: SharedCardVisualPosition;
+    fromRole: PlayerRole;
+    fromZone: { kind: 'monster'; index: number } | { kind: 'grave' } | { kind: 'banished' };
   }[];
   // Same raw/unresolved, array-not-single-object convention as
   // pendingControlTransfers above.
@@ -327,6 +376,18 @@ interface UseMultiplayerDuelResult {
       card: CardInstance;
       from: SharedCardVisualPosition;
     }[];
+  }[];
+  // Same raw/unresolved convention as pendingControlTransfers above —
+  // the caller checks each entry's own targetRole, since either client
+  // might be the one asked to act on any given request depending on
+  // who initiated it.
+  pendingPileRequests: {
+    id: string;
+    targetRole: PlayerRole;
+    instanceId: string;
+    pile: 'grave' | 'banished';
+    action: 'specialSummon' | 'toOtherPile';
+    position?: 'attack' | 'defense';
   }[];
 }
 
@@ -564,5 +625,6 @@ export function useMultiplayerDuel(
     opponentSelection,
     pendingControlTransfers: duelDoc?.pendingControlTransfers ?? [],
     pendingCardReturns: duelDoc?.pendingCardReturns ?? [],
+    pendingPileRequests: duelDoc?.pendingPileRequests ?? [],
   };
 }

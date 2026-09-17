@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import type { CardData } from '../../types/Card';
 import './FieldZone.css';
 
@@ -174,20 +175,37 @@ function FieldZone({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      {menuEnabled && showMenu && (
-        <div className="FieldZone-contextMenu">
-          {menuActions!.map((action) => (
-            <button
-              key={action.key}
-              type="button"
-              className="FieldZone-contextMenuButton"
-              onClick={(e) => handleAction(e, action.key)}
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {menuEnabled && showMenu && (
+          <motion.div
+            key="context-menu"
+            className="FieldZone-contextMenu"
+            // x replaces what used to be a plain CSS
+            // transform:translateX(-50%) — needed so it composes
+            // correctly with the animated y offset below (both are
+            // framer-motion-managed values that combine into one final
+            // transform; mixing a raw CSS transform string with an
+            // animated one on the same element doesn't compose the way
+            // a person might expect).
+            style={{ x: '-50%' }}
+            initial={{ y: 8, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 8, opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+          >
+            {menuActions!.map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                className="FieldZone-contextMenuButton"
+                onClick={(e) => handleAction(e, action.key)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
       {showRotatedOverlay && (
         <div
           className="FieldZone-rotatedOverlay"

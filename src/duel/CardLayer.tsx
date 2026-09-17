@@ -27,12 +27,36 @@ import {
   getOpponentHandSlot,
 } from './cardGeometry';
 
+// How far a hand card floats upward while hovered — see the main render
+// loop's own hoverEntry. Purely a visual cue for which card the cursor
+// is over; ~13% of a hand card's own rendered height (HAND_CELL_HEIGHT,
+// cardGeometry.ts) reads as a clear lift without the card overlapping
+// its neighbors' own art. Exported so Hand.tsx's own context menu can
+// rise by the exact same amount, rather than the two drifting apart if
+// this ever changes.
+export const HAND_HOVER_LIFT = 18;
+
 interface ControlTransferRecord {
   id: string;
   toRole: PlayerRole;
   toIndex: number;
   card: PlacedCard;
-  from: CardVisualPosition;
+  // Where this card came from, described so EVERY client can correctly
+  // resolve it into their own coordinate space — not raw (x, y, rotation)
+  // coordinates, which are only ever valid from the CAPTURING client's
+  // own perspective (their own side of the board is always rendered
+  // flipped=false, from their own point of view) and get silently
+  // misinterpreted by any OTHER client reusing them verbatim, since the
+  // exact same numeric coordinates land in a different physical board
+  // location depending on who's rendering them. fromRole is whose side
+  // this came from; each client computes fromFlipped = fromRole !==
+  // myRole themselves and feeds it through the same geometry functions
+  // that already compute the destination — see buildControlTransferCard
+  // below. 'monster' additionally carries an index (which of the 3
+  // slots); Grave/Banished don't need one, since the whole pile occupies
+  // one spot that matters for an animation's starting point.
+  fromRole: PlayerRole;
+  fromZone: { kind: 'monster'; index: number } | { kind: 'grave' } | { kind: 'banished' };
 }
 
 interface CardReturnItem {
@@ -85,6 +109,28 @@ interface CardLayerProps {
   // queues it; the other is a no-op once it catches up.
   pendingControlTransfers?: ControlTransferRecord[];
   pendingCardReturns?: CardReturnBatch[];
+  // True while a Ritual Summon's material-selection step is in progress
+  // (see the duel page's pendingRitualSummon) — the ONLY reason the
+  // player's own hand cards are ever individually clickable here at
+  // all. Every other selectable card (Monster/Spell-Trap/Field Zone) is
+  // clicked through its own FieldZone instead (see DuelField.tsx),
+  // which coexists correctly with hover-menus and other zone
+  // interactions — hand cards have no FieldZone underneath them to hook
+  // into, so this is the one place a hand-based selection can be wired
+  // up at all. Multi-select, same as Fusion's own Monster Zone material
+  // selection (see DuelField.tsx's own isSelectingFusionMaterial).
+  isSelectingRitualMaterial?: boolean;
+  selectedRitualHandIndices?: number[];
+  onToggleRitualHandMaterial?: (index: number) => void;
+  // Which of the player's OWN hand cards, if any, the cursor is
+  // currently over — drives the hover-lift effect (see the main render
+  // loop's own hoverEntry). Provided as a prop, not tracked locally,
+  // because the actual hover detection happens in Hand.tsx (a sibling
+  // component, rendered separately from this one — see that file's own
+  // comment on why its .Hand-cell elements have to sit BELOW this
+  // layer, which is exactly why this layer can't detect its own hover
+  // directly without blocking that).
+  hoveredHandInstanceId?: string | null;
 }
 
 interface CardVisualPosition {
@@ -291,14 +337,24 @@ function AnimatedCard({
   onAnimationComplete?: () => void;
   animationDuration?: number;
   coordinateOffset?: { x: number; y: number } | null;
-  // 'mine' (red) or 'opponent' (blue) — see getSelectionColor. Purely
-  // visual; rendered with pointer-events:none regardless of onClick
-  // below, so the outline itself never blocks a click reaching whatever
-  // it's layered on top of.
-  selectionColor?: 'mine' | 'opponent' | null;
-  // Only ever passed for the opponent's hand proxies (see CardLayer's
-  // own render loop) — everywhere else, selecting a card is handled by
-  // that card's own FieldZone instead, not here.
+  // 'mine' (red) or 'opponent' (blue) — see getSelectionColor. 'material'
+  // (gold, matching FieldZone's own .FieldZone--selected outline) is
+  // separate from those two: it's for Ritual Summon's own hand-material
+  // selection (see the main render loop's own onClick below), a
+  // multi-select indicator rather than getSelectionColor's single
+  // mine/opponent selection. Purely visual either way; rendered with
+  // pointer-events:none regardless of onClick below, so the outline
+  // itself never blocks a click reaching whatever it's layered on top
+  // of.
+  selectionColor?: 'mine' | 'opponent' | 'material' | null;
+  // Wired up for two different things, mutually exclusive in practice:
+  // the opponent's hand proxies (the "select card" feature — see
+  // CardLayer's own render loop), and, during Ritual Summon's own
+  // material-selection step, the player's OWN hand cards. Everywhere
+  // else, selecting or acting on a card is handled by that card's own
+  // FieldZone instead, not here — hand cards (either player's) have no
+  // FieldZone underneath them to hook into at all, which is why both
+  // cases end up here rather than there.
   onClick?: () => void;
 }) {
   const targetRotationY = entry.faceDown ? 180 : 0;
@@ -419,11 +475,15 @@ function AnimatedCard({
         top: 0,
         zIndex: entry.zIndex,
         // Only clickable at all when onClick was actually passed
-        // (opponent hand proxies) — every other card stays
-        // pointer-events:none here, same as before this feature
-        // existed, so it never blocks hover reaching the FieldZone
-        // underneath it. That zone's own onClick is what handles
-        // selecting for every card except this one case.
+        // (opponent hand proxies, or the player's own hand cards during
+        // Ritual Summon's own material selection) — every other card
+        // stays pointer-events:none here, same as before this feature
+        // existed, so it never blocks hover/click reaching whatever's
+        // underneath it: a FieldZone for field cards, or Hand's own
+        // .Hand-cell for hand cards (see Hand.tsx's own comment on why
+        // it still needs to sit BELOW this layer for exactly this
+        // reason — its hover-menu trigger depends on events reaching it
+        // unobstructed).
         pointerEvents: onClick ? 'auto' : 'none',
         cursor: onClick ? 'pointer' : undefined,
       }}
@@ -521,7 +581,9 @@ function AnimatedCard({
             position: 'absolute',
             inset: 3,
             pointerEvents: 'none',
-            boxShadow: `inset 0 0 0 3px ${selectionColor === 'mine' ? '#e53935' : '#1e88e5'}`,
+            boxShadow: `inset 0 0 0 3px ${
+              selectionColor === 'mine' ? '#e53935' : selectionColor === 'opponent' ? '#1e88e5' : '#d4af37'
+            }`,
             borderRadius: 4,
           }}
         />
@@ -560,6 +622,10 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     onSelectCard,
     pendingControlTransfers = [],
     pendingCardReturns = [],
+    isSelectingRitualMaterial = false,
+    selectedRitualHandIndices = [],
+    onToggleRitualHandMaterial,
+    hoveredHandInstanceId = null,
   },
   ref,
 ) {
@@ -818,40 +884,66 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
   const cardReturnItemKey = (batch: CardReturnBatch, item: CardReturnItem) =>
     `${batch.id}:${item.destination}:${item.card.instanceId}`;
 
+  // Shared by both ends of a control transfer (see buildControlTransferCard
+  // below) — a Monster Zone slot's exact rendered position AND rotation,
+  // Defense Position included. Matches monsterZoneEntries' own formula in
+  // cardPositions.ts exactly: dropping the Defense Position term (or the
+  // small 0.5px correction) here would silently misrender any Defense
+  // Position monster passing through either end of a transfer.
+  const monsterZonePosition = (flipped: boolean, index: number, isDefense: boolean) => {
+    const slot = getFieldZoneSlot(flipped, 'monster', index);
+    const rotation = (isDefense ? -90 : 0) + (flipped ? 180 : 0);
+    const position = isDefense ? { x: slot.x + 0.5, y: slot.y + 0.5 } : { x: slot.x, y: slot.y };
+    return { x: position.x, y: position.y, rotation };
+  };
+
   const buildControlTransferCard = (transfer: ControlTransferRecord): InTransitCard => {
     const flipped = transfer.toRole !== myRole;
-    const destSlot = getFieldZoneSlot(flipped, 'monster', transfer.toIndex);
-    const destIsDefense = transfer.card.position === 'defense';
-    // Matches monsterZoneEntries' own formula in cardPositions.ts
-    // exactly — this was previously just `flipped ? 180 : 0`, which
-    // silently dropped the Defense Position term entirely. A Defense
-    // Position monster would animate at the wrong (Attack Position)
-    // rotation for the whole transfer, then visibly snap to the
-    // correct one the instant the real entry took over.
-    const destRotation = (destIsDefense ? -90 : 0) + (flipped ? 180 : 0);
-    // Same small manual correction monsterZoneEntries applies, for the
-    // same reason (Defense Position renders 1px off otherwise).
-    const destPosition = destIsDefense
-      ? { x: destSlot.x + 0.5, y: destSlot.y + 0.5 }
-      : { x: destSlot.x, y: destSlot.y };
+    const isDefense = transfer.card.position === 'defense';
+    const dest = monsterZonePosition(flipped, transfer.toIndex, isDefense);
+
+    // Resolved from fromRole/fromZone via pure geometry, not the
+    // embedded raw coordinate this used to carry — see
+    // ControlTransferRecord's own comment for why. Correct for EVERY
+    // client, including the one that initiated the transfer, since
+    // nothing here depends on any live/rendered state that could go
+    // stale.
+    const fromFlipped = transfer.fromRole !== myRole;
+    let from: CardVisualPosition;
+    if (transfer.fromZone.kind === 'monster') {
+      const origin = monsterZonePosition(fromFlipped, transfer.fromZone.index, isDefense);
+      from = {
+        x: origin.x,
+        y: origin.y,
+        scale: FIELD_CARD_SCALE,
+        rotation: origin.rotation,
+        // A control transfer never flips the card — whatever it was
+        // (face-up/down) on the sender's field, it arrives the same way.
+        faceDown: transfer.card.faceDown,
+      };
+    } else {
+      const originSlot = getFieldZoneSlot(fromFlipped, transfer.fromZone.kind);
+      from = {
+        x: originSlot.x,
+        y: originSlot.y,
+        scale: FIELD_CARD_SCALE,
+        rotation: fromFlipped ? 180 : 0,
+        // Grave and Banished are always shown face-up, regardless of
+        // whose they are — see pileEntries' own convention in
+        // cardPositions.ts.
+        faceDown: false,
+      };
+    }
+
     return {
       id: `transfer-${transfer.card.instanceId}`,
       card: transfer.card.card,
-      // Embedded directly in the transfer record itself (see DuelDoc's
-      // own comment on why) rather than looked up in previousEntries —
-      // a lookup here would frequently fail on the SENDING client's own
-      // side specifically, since its local, optimistic state update
-      // (applyMeUpdate's own requestAnimationFrame) removes the card
-      // from its own rendered entries almost immediately, often before
-      // this very record has even round-tripped back from Firestore.
-      from: transfer.from,
-      // A control transfer never flips the card — whatever it was
-      // (face-up/down) on the sender's field, it arrives the same way.
+      from,
       to: {
-        x: destPosition.x,
-        y: destPosition.y,
+        x: dest.x,
+        y: dest.y,
         scale: FIELD_CARD_SCALE,
-        rotation: destRotation,
+        rotation: dest.rotation,
         faceDown: transfer.card.faceDown,
       },
       zIndex: 360,
@@ -1137,29 +1229,48 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
 
   return (
     <div ref={layerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-      {visibleEntries.map((entry) => (
-        <AnimatedCard
-          key={entry.instanceId}
-          entry={entry}
-          hiddenSource={getHiddenSource(entry, previousOpponent, opponent)}
-          selectionColor={getSelectionColor(
-            entry.instanceId,
-            mySelection,
-            opponentSelection,
-            me,
-            myRole,
-            opponentRole,
-          )}
-          onClick={
-            entry.instanceId.startsWith('opponent-hand-') && onSelectCard && opponentRole
-              ? () => {
-                  const index = Number(entry.instanceId.slice('opponent-hand-'.length));
-                  onSelectCard(encodeHandSelection(opponentRole, index));
-                }
-              : undefined
-          }
-        />
-      ))}
+      {visibleEntries.map((entry) => {
+        // Computed unconditionally now, not just during Ritual
+        // selection — also needed for the hover-lift effect below,
+        // which applies regardless of mode. isSelectableHandCard keeps
+        // the ORIGINAL gating for Ritual-specific behavior (selection
+        // outline, toggling), same as before.
+        const myHandIndex = me?.hand.findIndex((c) => c.instanceId === entry.instanceId) ?? -1;
+        const isMyHandCard = myHandIndex !== -1;
+        const isSelectableHandCard = isSelectingRitualMaterial && isMyHandCard;
+        const isHovered = isMyHandCard && hoveredHandInstanceId === entry.instanceId;
+        // Purely a rendered-position tweak — reuses AnimatedCard's own
+        // existing x/y animation entirely (see its own animate prop)
+        // rather than introducing a separate motion value: hovering
+        // just feeds it a different target y for the SAME transition it
+        // already has, so "smoothly float up, smoothly settle back
+        // down" comes for free, with no new animation machinery needed.
+        const hoverEntry = isHovered ? { ...entry, y: entry.y - HAND_HOVER_LIFT } : entry;
+        return (
+          <AnimatedCard
+            key={entry.instanceId}
+            entry={hoverEntry}
+            hiddenSource={getHiddenSource(entry, previousOpponent, opponent)}
+            selectionColor={
+              isSelectableHandCard
+                ? selectedRitualHandIndices.includes(myHandIndex)
+                  ? 'material'
+                  : null
+                : getSelectionColor(entry.instanceId, mySelection, opponentSelection, me, myRole, opponentRole)
+            }
+            onClick={
+              isSelectableHandCard && onToggleRitualHandMaterial
+                ? () => onToggleRitualHandMaterial(myHandIndex)
+                : entry.instanceId.startsWith('opponent-hand-') && onSelectCard && opponentRole
+                  ? () => {
+                      const index = Number(entry.instanceId.slice('opponent-hand-'.length));
+                      onSelectCard(encodeHandSelection(opponentRole, index));
+                    }
+                  : undefined
+            }
+          />
+        );
+      })}
 
       {returningCards.length > 0 && (
         <>

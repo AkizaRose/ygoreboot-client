@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import type { CardData } from '../../types/Card';
 import type { CardInstance } from '../../types/CardInstance';
 import { getHandSlot } from '../../duel/cardGeometry';
+import { HAND_HOVER_LIFT } from '../../duel/CardLayer';
 import './Hand.css';
 
 // How long to wait before actually hiding the menu after the cursor
@@ -53,6 +55,14 @@ interface HandProps {
   cards: CardInstance[];
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
+  // Reports which card the cursor is directly over, immediately on both
+  // enter and leave — unlike this component's own hoveredInstanceId
+  // state below, which delays CLEARING (see scheduleHide/
+  // MENU_HIDE_DELAY_MS) so the context menu doesn't unmount before the
+  // cursor can reach it. CardLayer's own hover-lift effect wants the
+  // opposite: it should track the cursor directly, with no lingering
+  // delay once it leaves.
+  onHoveredInstanceChange?: (instanceId: string | null) => void;
   onNormalSummon: (instanceId: string) => void;
   onActivateSpell: (instanceId: string) => void;
   onSetSpellOrTrap: (instanceId: string) => void;
@@ -66,6 +76,7 @@ function Hand({
   cards,
   onCardHover,
   onCardHoverEnd,
+  onHoveredInstanceChange,
   onNormalSummon,
   onActivateSpell,
   onSetSpellOrTrap,
@@ -159,10 +170,12 @@ function Hand({
               cancelHide();
               setHoveredInstanceId(instanceId);
               onCardHover?.(card);
+              onHoveredInstanceChange?.(instanceId);
             }}
             onMouseLeave={() => {
               scheduleHide(instanceId);
               onCardHoverEnd?.();
+              onHoveredInstanceChange?.(null);
             }}
           >
             {/* No card art rendered here anymore — CardLayer (src/duel/)
@@ -190,31 +203,70 @@ function Hand({
           hovered card's own slot, since it's no longer nested inside
           that card's cell and so can't rely on that cell's own
           bottom:100%/left:50% relative positioning anymore. */}
-      {hoveredSlot && hoveredActions.length > 0 && (
-        <div
-          className="Hand-contextMenu"
-          style={{
-            position: 'absolute',
-            left: hoveredSlot.x + hoveredSlot.width / 2,
-            top: hoveredSlot.y,
-            transform: 'translate(-50%, -100%)',
-            marginTop: -4,
-          }}
-          onMouseEnter={cancelHide}
-          onMouseLeave={() => scheduleHide(hoveredInstanceId!)}
-        >
-          {hoveredActions.map((action) => (
-            <button
-              key={action.key}
-              type="button"
-              className="Hand-contextMenuButton"
-              onClick={() => handleAction(hoveredInstanceId!, action.key)}
+      <AnimatePresence>
+        {hoveredSlot && hoveredActions.length > 0 && (
+          <motion.div
+            key="hand-context-menu"
+            style={{
+              position: 'absolute',
+              left: hoveredSlot.x + hoveredSlot.width / 2,
+              // Matches the card's own hover-lift exactly (see
+              // HAND_HOVER_LIFT's own comment in CardLayer.tsx) —
+              // without this, the menu would stay anchored to the
+              // card's unlifted position while the card itself rises
+              // above it.
+              top: hoveredSlot.y - HAND_HOVER_LIFT,
+              transform: 'translate(-50%, -100%)',
+              marginTop: -4,
+              // Lives here, not in .Hand-contextMenu's own CSS (where
+              // it used to be, back when that class was on this same,
+              // positioned element) — z-index has no effect at all on
+              // the INNER element below, which has no `position` of its
+              // own (defaults to static), only on an element that's
+              // actually positioned, which this one is.
+              zIndex: 9999,
+            }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            onMouseEnter={cancelHide}
+            onMouseLeave={() => scheduleHide(hoveredInstanceId!)}
+          >
+            {/* The actual slide lives on this inner element, as a plain
+                pixel offset, rather than on the outer one above as a
+                percentage — the outer's own translate(-100%) is already
+                a percentage of its own (content-dependent) height, and
+                combining that with an animated percentage risked not
+                animating reliably. A plain pixel slide on a separate,
+                nested element sidesteps that entirely: it's independent
+                of the outer's own transform, so the two compose without
+                either one needing to account for the other. Framer
+                Motion still plays this nested exit animation correctly
+                even though AnimatePresence only directly tracks the
+                OUTER element above — exit propagates to descendant
+                motion components automatically. */}
+            <motion.div
+              className="Hand-contextMenu"
+              initial={{ y: 8 }}
+              animate={{ y: 0 }}
+              exit={{ y: 8 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
             >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      )}
+              {hoveredActions.map((action) => (
+                <button
+                  key={action.key}
+                  type="button"
+                  className="Hand-contextMenuButton"
+                  onClick={() => handleAction(hoveredInstanceId!, action.key)}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import FieldZone, { type FieldZoneAction } from './FieldZone';
 import PhaseTracker from './PhaseTracker';
+import TurnCounter from './TurnCounter';
 import type { TurnPhase } from '../Matchmaking/useMultiplayerDuel';
 import type { CardData } from '../../types/Card';
 import type { CardInstance, PlacedCard } from '../../types/CardInstance';
@@ -214,10 +215,23 @@ interface PlayerFieldProps {
   // the player then has to separately confirm.
   isSelectingEvolutionMaterial?: boolean;
   onSelectEvolutionMaterial?: (index: number) => void;
-  // Only meaningful for the player's own (non-flipped) side — gates the
-  // Attack menu option below to the turn player's own Battle Phase.
+  // Same idea again, for Ritual Summon (see the duel page's
+  // pendingRitualSummon) — multi-select, same as Fusion's own above, not
+  // single-select like Evolution's. Only covers the Monster Zone half of
+  // Ritual's material selection — Ritual can also tribute from hand,
+  // which has no FieldZone to hook a click into at all and is handled
+  // separately (see CardLayer's own isSelectingRitualMaterial).
+  isSelectingRitualMaterial?: boolean;
+  selectedRitualZoneIndices?: number[];
+  onToggleRitualZoneMaterial?: (index: number) => void;
+  // currentPhase gates the Attack menu option below to the turn
+  // player's own Battle Phase — only meaningful for the player's own
+  // (non-flipped) side. isMyTurn/turnNumber are also read by the
+  // flipped side now, for TurnCounter (see fieldRow below) — that's the
+  // only thing either of them does there.
   currentPhase?: TurnPhase | null;
   isMyTurn?: boolean;
+  turnNumber?: number;
   // Opens StatAdjustDialog for the given Monster Zone slot index — only
   // ever wired up for the player's own (non-flipped) side, same as
   // onFieldAction.
@@ -275,8 +289,12 @@ function PlayerField({
   onToggleMaterialSelection,
   isSelectingEvolutionMaterial = false,
   onSelectEvolutionMaterial,
+  isSelectingRitualMaterial = false,
+  selectedRitualZoneIndices = [],
+  onToggleRitualZoneMaterial,
   currentPhase,
   isMyTurn = false,
+  turnNumber,
   onStatsAdjust,
   onSelectCard,
   isSelectingMoveDestination = false,
@@ -411,7 +429,10 @@ function PlayerField({
           // check here means this zone doesn't care which one it is,
           // only whether some selection is in progress at all.
           const isInSelectionMode =
-            isSelectingFusionMaterial || isSelectingEvolutionMaterial || isSelectingMoveDestination;
+            isSelectingFusionMaterial ||
+            isSelectingEvolutionMaterial ||
+            isSelectingRitualMaterial ||
+            isSelectingMoveDestination;
 
           return (
             <FieldZone
@@ -457,15 +478,20 @@ function PlayerField({
                   ? () => onToggleMaterialSelection(slotIndex)
                   : isSelectingEvolutionMaterial && placed && onSelectEvolutionMaterial
                     ? () => onSelectEvolutionMaterial(slotIndex)
-                    : isSelectingMoveDestination && !placed && onMoveTarget
-                      ? () => onMoveTarget('monster', slotIndex)
-                      : isSelectingMoveToOpponentZone && !placed && onMoveToOpponentTarget
-                        ? () => onMoveToOpponentTarget(slotIndex)
-                        : placed && onSelectCard
-                          ? () => onSelectCard(placed.instanceId)
-                          : undefined
+                    : isSelectingRitualMaterial && placed && onToggleRitualZoneMaterial
+                      ? () => onToggleRitualZoneMaterial(slotIndex)
+                      : isSelectingMoveDestination && !placed && onMoveTarget
+                        ? () => onMoveTarget('monster', slotIndex)
+                        : isSelectingMoveToOpponentZone && !placed && onMoveToOpponentTarget
+                          ? () => onMoveToOpponentTarget(slotIndex)
+                          : placed && onSelectCard
+                            ? () => onSelectCard(placed.instanceId)
+                            : undefined
               }
-              selected={isSelectingFusionMaterial && selectedMaterialIndices.includes(slotIndex)}
+              selected={
+                (isSelectingFusionMaterial && selectedMaterialIndices.includes(slotIndex)) ||
+                (isSelectingRitualMaterial && selectedRitualZoneIndices.includes(slotIndex))
+              }
               showRotatedOverlay
               showStats
               atkOverride={placed?.atkOverride}
@@ -546,6 +572,14 @@ function PlayerField({
         }
         return <FieldZone key={i} label={zone.label} />;
       })}
+      {/* Opponent only — sits one row above PhaseTracker, in the same
+          grid-column: 7 it occupies (see TurnCounter.css). The
+          opponent's row above has no leading empty cell (unlike the
+          player's own, see the comment at this row's own top), which is
+          what leaves column 7 free here for this to occupy. */}
+      {flipped && turnNumber !== undefined && (
+        <TurnCounter turnNumber={turnNumber} isMyTurn={isMyTurn} />
+      )}
     </div>
   );
 
@@ -666,6 +700,9 @@ interface DuelFieldProps {
   onToggleMaterialSelection?: (index: number) => void;
   isSelectingEvolutionMaterial?: boolean;
   onSelectEvolutionMaterial?: (index: number) => void;
+  isSelectingRitualMaterial?: boolean;
+  selectedRitualZoneIndices?: number[];
+  onToggleRitualZoneMaterial?: (index: number) => void;
   // The opponent's side — deliberately a much smaller set of props than
   // the player's own side gets above. No mainDeck/extraDeck arrays (only
   // ever a count — see PlayerFieldProps), no per-card action wiring at
@@ -691,6 +728,7 @@ interface DuelFieldProps {
   currentPhase?: TurnPhase | null;
   turnEnding?: boolean;
   isMyTurn?: boolean;
+  turnNumber?: number;
   onPrevPhase?: () => void;
   onNextPhase?: () => void;
   onStartTurn?: () => void;
@@ -729,6 +767,9 @@ function DuelField({
   onToggleMaterialSelection,
   isSelectingEvolutionMaterial,
   onSelectEvolutionMaterial,
+  isSelectingRitualMaterial,
+  selectedRitualZoneIndices,
+  onToggleRitualZoneMaterial,
   opponentMainDeckCount,
   opponentExtraDeckCount,
   opponentMonsterZones = [],
@@ -742,6 +783,7 @@ function DuelField({
   currentPhase,
   turnEnding = false,
   isMyTurn = false,
+  turnNumber,
   onPrevPhase,
   onNextPhase,
   onStartTurn,
@@ -771,6 +813,8 @@ function DuelField({
         onSelectCard={onSelectCard}
         isSelectingMoveToOpponentZone={isSelectingMoveToOpponentZone}
         onMoveToOpponentTarget={onMoveToOpponentTarget}
+        isMyTurn={isMyTurn}
+        turnNumber={turnNumber}
       />
       {/* Same 7-column grid as every zone row (.DuelField-row) — the
           tracker itself sits at grid-column: 7 (see PhaseTracker.css),
@@ -818,6 +862,9 @@ function DuelField({
         onToggleMaterialSelection={onToggleMaterialSelection}
         isSelectingEvolutionMaterial={isSelectingEvolutionMaterial}
         onSelectEvolutionMaterial={onSelectEvolutionMaterial}
+        isSelectingRitualMaterial={isSelectingRitualMaterial}
+        selectedRitualZoneIndices={selectedRitualZoneIndices}
+        onToggleRitualZoneMaterial={onToggleRitualZoneMaterial}
         onViewGrave={onViewGrave}
         onViewBanished={onViewBanished}
       />
