@@ -37,6 +37,12 @@ interface DeckViewerProps {
   // which don't have per-card actions yet).
   getCardActions?: (card: CardData) => DeckViewerAction[];
   onCardAction?: (instanceId: string, actionKey: string) => void;
+
+  // Click-to-select — independent of the hover menu above (the Hand
+  // Viewer wants this without wanting any menu at all, so the two are
+  // deliberately separate props, not bundled together the way
+  // getCardActions/onCardAction are).
+  onCardClick?: (instanceId: string) => void;
 }
 
 function DeckViewer({
@@ -46,6 +52,7 @@ function DeckViewer({
   onCardHoverEnd,
   getCardActions,
   onCardAction,
+  onCardClick,
 }: DeckViewerProps) {
   // Which card (by instanceId) currently shows its context menu.
   const [hoveredInstanceId, setHoveredInstanceId] = useState<string | null>(null);
@@ -158,7 +165,9 @@ function DeckViewer({
               style={{
                 width: CARD_WIDTH * SCALE,
                 height: CARD_HEIGHT * SCALE,
+                cursor: onCardClick ? 'pointer' : undefined,
               }}
+              onClick={onCardClick ? () => onCardClick(instanceId) : undefined}
               onMouseEnter={() => {
                 cancelHide();
 

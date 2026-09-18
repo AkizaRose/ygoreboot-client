@@ -60,6 +60,28 @@ export interface PlacedCard extends CardInstance {
   // the whole stack breaking apart (straight to Grave, regardless of
   // what happens to the top card — see handleFieldAction).
   stackedBelow?: CardInstance[];
+  // Only ever set on an Equip Spell (cardSubclass 'Equip') placed in a
+  // Spell/Trap Zone — which monster it's currently equipped to, if
+  // any, by the monster's own instanceId. Every instanceId in this app
+  // is globally unique (crypto.randomUUID(), never reused), so either
+  // client can resolve this by searching BOTH players' monsterZones for
+  // a match — no need to also record which player's field it's on, and
+  // this correctly keeps following the actual monster if it's later
+  // moved to a different zone slot or changes control, rather than
+  // staying pinned to whatever's now sitting in the original slot.
+  // Both players can already read this directly: spellTrapZones is
+  // public data (part of PublicPlayerState), so this single field, set
+  // only by the activating player's own client, is enough for either
+  // client to resolve the link in EITHER direction — no separate
+  // cross-player signal needed, unlike a genuine control change (see
+  // pendingControlTransfers). See MultiplayerDuelFieldPage's own
+  // handleEquipTarget for where this gets set, and CardLayer's own
+  // equip-overlay logic for how both directions get resolved from it.
+  // null/undefined means this Equip Spell isn't currently equipped to
+  // anything (e.g. its target left the field — see handleEquipTarget's
+  // own comment on why this is left for a future pass rather than
+  // auto-detected here).
+  equippedTo?: string | null;
 }
 
 export function createCardInstance(card: CardData): CardInstance {

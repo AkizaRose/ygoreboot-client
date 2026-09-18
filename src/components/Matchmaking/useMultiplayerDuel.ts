@@ -9,7 +9,12 @@ import cardData from '../../data/carddata.json';
 import type { CardData } from '../../types/Card';
 import { type CardInstance, type PlacedCard, createCardInstance } from '../../types/CardInstance';
 
-const OPENING_HAND_SIZE = 5;
+// Exported so MultiplayerDuelFieldPage.tsx's own opening-hand-draw effect
+// (which deals this many cards one at a time, rather than having them
+// already in hand from the start — see buildInitialState below) uses the
+// exact same number, rather than a second hardcoded "5" that could drift
+// out of sync with this one.
+export const OPENING_HAND_SIZE = 5;
 
 export type PlayerRole = 'player1' | 'player2';
 
@@ -82,6 +87,61 @@ interface PublicPlayerState {
   // client know a shuffle just happened and play the animation for it,
   // the same idea as lastHandDepartureIndex above.
   handShuffleVersion: number;
+  // Same idea as handShuffleVersion above, for the Main Deck instead —
+  // incremented every time it's shuffled (see MultiplayerDuelFieldPage's
+  // own handleShuffleMainDeck), purely so either client can detect the
+  // event and play the shuffle flourish for it (see CardLayer's own
+  // deckShuffleFlourishes). Just a counter, reveals nothing about deck
+  // order.
+  mainDeckShuffleVersion: number;
+  // True once this player's own opening hand has been fully dealt (see
+  // MultiplayerDuelFieldPage's own opening-hand-draw effect) — set once,
+  // stays true for the rest of the duel. This is the actual thing that
+  // distinguishes "still dealing the opening hand" from "hand count has
+  // simply dipped below OPENING_HAND_SIZE during normal play" (playing
+  // cards, discarding, etc.) — checking hand.length/handCount against
+  // OPENING_HAND_SIZE directly, without this flag, can't tell those two
+  // situations apart, and would otherwise auto-draw (or, for the
+  // opponent-side check on the start-of-turn draw, wrongly block a
+  // normal draw) any time hand size happens to cross that threshold
+  // again later in the game.
+  openingHandDealt: boolean;
+  // A hand card temporarily moved here by the hand's own "Reveal"
+  // action (see MultiplayerDuelFieldPage's own handleHandReveal) —
+  // renders in a shared, neutral, centered zone (see cardGeometry.ts's
+  // own getRevealZoneSlot) visible to both players, then moves back to
+  // hand a couple of seconds later. Unlike hand itself, this is public,
+  // not private — deliberately: revealing something is the entire
+  // point, so unlike every other card in a player's hand, this one
+  // SHOULD be visible in the opponent's own read of this document. null
+  // whenever nothing is currently being revealed.
+  revealedCard: PlacedCard | null;
+  // Which end of the Main Deck the most recent card to join it went to
+  // — same "small hint, reveals nothing about the card itself" idea as
+  // lastHandDepartureIndex above, purely so the OPPONENT's own client
+  // can tell CardLayer's own returning-card animation which side to
+  // visually land on (in front of the pile for the top, behind it for
+  // the bottom — see cardPositions.ts's own deckPileEntries and its
+  // comment on why the visual stacking order isn't simply "index 0").
+  // Extra Deck never needs this: toExtra only ever prepends, so there's
+  // no top/bottom ambiguity for it the way there is for the Main Deck's
+  // own stackTop/stackBottom. null whenever nothing has joined the Main
+  // Deck yet, or (deliberately) stays at its last value afterward —
+  // this is read once, at the moment a deck-count increase is
+  // detected, not tracked as an ongoing state to clear.
+  lastMainDeckReturnSide: 'top' | 'bottom' | null;
+  // A live copy of this player's own hand, present here (and thus
+  // readable by the opponent) only while they've chosen to reveal it —
+  // backs the "Reveal Hand" button. Unlike revealedCard above (a single
+  // card, temporarily relocated to a shared zone), the hand itself
+  // never moves anywhere — this is purely an ADDITIONAL, public mirror
+  // of it, recomputed by buildPublicState (see MultiplayerDuelFieldPage's
+  // own copy of that function) on every single write this player makes,
+  // for as long as handRevealed (MyDuelState's own local toggle for
+  // this) stays true — so it's always in sync with the real hand's
+  // current contents, not a stale snapshot from the moment the button
+  // was pressed. null whenever nothing is currently revealed.
+  revealedHand: CardInstance[] | null;
 }
 
 // The half that must stay private — genuinely unreadable by the
@@ -124,6 +184,21 @@ interface DuelDoc {
   // all — only its owner and position are ever knowable to anyone else.
   player1Selection?: string | null;
   player2Selection?: string | null;
+  // Set by the VIEWING player's own client when they close the Hand
+  // Viewer opened by the other player's own "Reveal Hand" (see
+  // PublicPlayerState's own revealedHand and MultiplayerDuelFieldPage's
+  // own handleExitOpponentHandView) — the revealing player's own client
+  // is the only one that can turn their own reveal off (same "a client
+  // can only ever write its own public state slice" principle as
+  // pendingControlTransfers above), so this is how the OTHER player
+  // signals "please end your reveal" across that boundary. Whichever
+  // role wrote it; the revealing player's own effect (see
+  // MultiplayerDuelFieldPage's own watcher) checks it against their
+  // OWN opponent's role, and always clears it back to null the moment
+  // a reveal ends via EITHER path (this signal, or the revealer's own
+  // "Hide Hand") — never left stale, so a later, genuinely new signal
+  // (even reusing the same role) is always a real change to react to.
+  handRevealExitedBy?: PlayerRole | null;
   // Every monster currently in transit to the OPPONENT's Monster Zone
   // (see MultiplayerDuelFieldPage's own handleMoveToOpponentTarget) — a
   // handoff, same idea as turnEnding/Start Turn above: a client can only
@@ -322,6 +397,10 @@ export interface MyDuelState {
   extraDeck: CardInstance[];
   lastHandDepartureIndex: number | null;
   handShuffleVersion: number;
+  mainDeckShuffleVersion: number;
+  openingHandDealt: boolean;
+  revealedCard: PlacedCard | null;
+  lastMainDeckReturnSide: 'top' | 'bottom' | null;
 }
 
 export interface OpponentDuelState extends PublicPlayerState {
@@ -389,6 +468,9 @@ interface UseMultiplayerDuelResult {
     action: 'specialSummon' | 'toOtherPile';
     position?: 'attack' | 'defense';
   }[];
+  // Resolved straight from DuelDoc's own field of the same name — see
+  // that field's own comment for the full reasoning.
+  handRevealExitedBy: PlayerRole | null;
 }
 
 function buildInitialState(
@@ -411,9 +493,14 @@ function buildInitialState(
     .filter((card): card is CardData => !!card)
     .map(createCardInstance);
 
-  const openingHandSize = Math.min(OPENING_HAND_SIZE, mainInstances.length);
-  const hand = mainInstances.slice(0, openingHandSize);
-  const mainDeck = mainInstances.slice(openingHandSize);
+  // Deliberately NOT pre-dealt here — both start at 0/full deck, and
+  // MultiplayerDuelFieldPage.tsx's own effect deals the opening
+  // OPENING_HAND_SIZE cards one at a time once the duel doc is live,
+  // the same way any other draw happens (so it animates the same way
+  // too), rather than the hand just starting full from the very first
+  // snapshot with nothing to see happen.
+  const hand: CardInstance[] = [];
+  const mainDeck = mainInstances;
 
   return {
     publicState: {
@@ -429,6 +516,11 @@ function buildInitialState(
       fieldZone: null,
       lastHandDepartureIndex: null,
       handShuffleVersion: 0,
+      mainDeckShuffleVersion: 0,
+      openingHandDealt: false,
+      revealedCard: null,
+      lastMainDeckReturnSide: null,
+      revealedHand: null,
     },
     privateState: { hand, mainDeck, extraDeck: extraInstances },
   };
@@ -626,5 +718,6 @@ export function useMultiplayerDuel(
     pendingControlTransfers: duelDoc?.pendingControlTransfers ?? [],
     pendingCardReturns: duelDoc?.pendingCardReturns ?? [],
     pendingPileRequests: duelDoc?.pendingPileRequests ?? [],
+    handRevealExitedBy: duelDoc?.handRevealExitedBy ?? null,
   };
 }

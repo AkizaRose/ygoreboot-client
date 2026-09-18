@@ -12,8 +12,10 @@ import type {
 } from '../components/Matchmaking/useMultiplayerDuel';
 import { encodeHandSelection, decodeHandSelection } from '../components/Matchmaking/useMultiplayerDuel';
 import type { CardInstance, PlacedCard } from '../types/CardInstance';
+import type { CardData } from '../types/Card';
 import CardImage from '../components/CardView/CardImage';
 import cardBackImg from '../assets/card/CardBack.png';
+import equipSpellOverlayImg from '../assets/ui/equipspelloverlay.png';
 import {
   CARD_NATIVE_WIDTH,
   CARD_NATIVE_HEIGHT,
@@ -34,7 +36,37 @@ import {
 // its neighbors' own art. Exported so Hand.tsx's own context menu can
 // rise by the exact same amount, rather than the two drifting apart if
 // this ever changes.
-export const HAND_HOVER_LIFT = 18;
+export const HAND_HOVER_LIFT = 28;
+
+// Deck shuffle animation — applied directly to the REAL, already-visible
+// pile card backs (see the main render loop's own shuffleOscillation),
+// not separate decorative elements. Each affected card oscillates
+// purely horizontally: out to one side, back through center to the
+// other, repeated DECK_SHUFFLE_CYCLES times, landing exactly back at
+// its own real x — see buildDeckShuffleXKeyframes below for how the
+// keyframe sequence is generated from these.
+const DECK_SHUFFLE_TOTAL_DURATION_S = 0.6;
+// One "cycle" = out to the first side and back through to the other and
+// back to center (a full sine period) — 3 cycles reads as a rapid
+// shuffle without being too busy within ~1 second.
+const DECK_SHUFFLE_CYCLES = 3;
+// Keyframes sampled per cycle (0, peak, 0, trough, back to 0) — 4 gives
+// a clean sine sample without needing an excessive keyframe count.
+const DECK_SHUFFLE_SEGMENTS_PER_CYCLE = 4;
+// Maximum horizontal deviation, as a fraction of the card's own
+// (scaled) width — the user asked for "never look like they are fully
+// flying out of the pile", hence comfortably under 100%.
+const DECK_SHUFFLE_AMPLITUDE_RATIO = 0.15;
+// Staggers each successive pile card's own start slightly, so they
+// don't all oscillate in perfect unison — reads more like an actual
+// shuffle.
+const DECK_SHUFFLE_STAGGER_S = 0.01;
+// How long the shuffle stays "active" (affecting which real cards get
+// shuffleOscillation at all) before being cleared — must comfortably
+// exceed the last card's own finish time (DECK_SHUFFLE_TOTAL_DURATION_S
+// + the largest stagger delay, converted to ms), so nothing reverts to
+// its normal, static position mid-motion.
+const DECK_SHUFFLE_CLEANUP_MS = 500;
 
 interface ControlTransferRecord {
   id: string;
@@ -122,15 +154,36 @@ interface CardLayerProps {
   isSelectingRitualMaterial?: boolean;
   selectedRitualHandIndices?: number[];
   onToggleRitualHandMaterial?: (index: number) => void;
-  // Which of the player's OWN hand cards, if any, the cursor is
-  // currently over — drives the hover-lift effect (see the main render
-  // loop's own hoverEntry). Provided as a prop, not tracked locally,
-  // because the actual hover detection happens in Hand.tsx (a sibling
-  // component, rendered separately from this one — see that file's own
-  // comment on why its .Hand-cell elements have to sit BELOW this
-  // layer, which is exactly why this layer can't detect its own hover
-  // directly without blocking that).
+  // Which of the player's OWN hand cards, if any, is in an active hover
+  // state — the card itself, or its own context menu, with a brief
+  // grace period while moving between them (see Hand.tsx's own
+  // hoveredInstanceId, which this mirrors exactly) — drives the
+  // hover-lift effect (see the main render loop's own hoverEntry).
+  // Provided as a prop, not tracked locally, because the actual hover
+  // detection happens in Hand.tsx (a sibling component, rendered
+  // separately from this one — see that file's own comment on why its
+  // .Hand-cell elements have to sit BELOW this layer, which is exactly
+  // why this layer can't detect its own hover directly without
+  // blocking that).
   hoveredHandInstanceId?: string | null;
+  // Which Monster/Spell-Trap Zone card, on EITHER side, is currently
+  // hovered — see DuelField's own onFieldInstanceHoverChange, which is
+  // what actually detects this (FieldZone elements, not this layer,
+  // sit under the cursor). Drives the Equip Spell hover-overlay
+  // specifically (see equipOverlayInstanceId below, and its own
+  // comment on why the resolution lives here rather than in the duel
+  // page) — nothing else consumes this yet.
+  hoveredFieldInstanceId?: string | null;
+  // Card Display preview support for the reveal zone specifically (see
+  // the main render loop's own isRevealedCard) — every other card gets
+  // this via its own FieldZone or Hand-cell instead (see DuelField.tsx/
+  // Hand.tsx), neither of which the reveal zone has, since it isn't
+  // part of either player's own field or hand at all. onMouseEnter/
+  // onMouseLeave are wired directly on AnimatedCard for this one case
+  // only — everywhere else, a card's hover is still handled by
+  // whatever's underneath it, not here.
+  onCardHover?: (card: CardData) => void;
+  onCardHoverEnd?: () => void;
 }
 
 interface CardVisualPosition {
@@ -143,10 +196,21 @@ interface CardVisualPosition {
 
 interface ReturningOpponentCard {
   id: string;
-  card: CardInstance['card'];
+  // null for a genuinely anonymous slide (see the detection effect's
+  // own comment on draw/hand-to-deck) — AnimatedCard already renders
+  // entry.card === null as a plain card back with no CardImage at all,
+  // the same convention used for the opponent's own hidden hand/deck
+  // proxies elsewhere in this file.
+  card: CardInstance['card'] | null;
   from: CardVisualPosition;
   to: CardVisualPosition;
   zIndex: number;
+  // Same convention as InTransitCard's own field of the same name —
+  // true only when the destination is the opponent's hand specifically
+  // (the viewport-fixed layer's whole reason to exist). A deck
+  // destination (Main or Extra) is an ordinary board-space position,
+  // same as any field zone.
+  fixed: boolean;
 }
 
 // A card traveling between the two players' own areas entirely — either
@@ -180,6 +244,36 @@ interface ShufflingCard {
   via: CardVisualPosition;
   to: CardVisualPosition;
   zIndex: number;
+}
+
+// Marks a Main Deck as actively shuffling (see the detection effect
+// further down) — NOT a separate decorative element the way an earlier
+// version of this feature used. While one of these exists for a given
+// side, the main render loop applies shuffleOscillation (see
+// AnimatedCard's own prop of that name) to whichever REAL entries are
+// currently part of that side's visible pile, so the animation plays on
+// the actual card backs already there rather than anything spawned
+// separately.
+interface DeckShuffleAnimation {
+  id: string;
+  // Which side's deck this plays over — mirrors AnimatedCard's own
+  // `flipped` convention (true for the opponent's side).
+  flipped: boolean;
+}
+
+// Generates the x-offset keyframe sequence for one pile card's own
+// shuffle oscillation — a clean sine wave sampled at
+// DECK_SHUFFLE_SEGMENTS_PER_CYCLE points per cycle, for
+// DECK_SHUFFLE_CYCLES cycles, scaled by amplitude and flipped by
+// direction (1 = out to the right first, -1 = left first). Always
+// starts AND ends at exactly 0 (sin(0) = sin(2*pi*wholeNumber) = 0), so
+// composing this with the card's own real x always lands it back
+// exactly where it started — no separate "return" step needed.
+function buildDeckShuffleXKeyframes(amplitude: number, direction: 1 | -1): number[] {
+  const totalSegments = DECK_SHUFFLE_CYCLES * DECK_SHUFFLE_SEGMENTS_PER_CYCLE;
+  return Array.from({ length: totalSegments + 1 }, (_, i) =>
+    direction * amplitude * Math.sin((2 * Math.PI * i) / DECK_SHUFFLE_SEGMENTS_PER_CYCLE),
+  );
 }
 
 interface HiddenSource extends CardVisualPosition {}
@@ -248,6 +342,7 @@ function containsOpponentInstance(
     opponent.monsterZones.some(containsPlaced) ||
     opponent.spellTrapZones.some(containsPlaced) ||
     containsPlaced(opponent.fieldZone) ||
+    containsPlaced(opponent.revealedCard) ||
     containsPile(opponent.grave) ||
     containsPile(opponent.banished)
   );
@@ -319,11 +414,14 @@ function AnimatedCard({
   hiddenSource = null,
   startOverride = null,
   viaOverride = null,
+  shuffleOscillation = null,
   onAnimationComplete,
-  animationDuration = 0.3,
+  animationDuration = 0.2,
   coordinateOffset = null,
   selectionColor = null,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
 }: {
   entry: CardPositionEntry;
   hiddenSource?: HiddenSource | null;
@@ -334,6 +432,17 @@ function AnimatedCard({
   // null for every other animation, which just goes straight from start
   // to target as before.
   viaOverride?: CardVisualPosition | null;
+  // Deck shuffle animation (see DeckShuffleAnimation above) — when set,
+  // this card's own x oscillates horizontally around its real entry.x
+  // for DECK_SHUFFLE_TOTAL_DURATION_S (see buildDeckShuffleXKeyframes),
+  // then lands back exactly on entry.x. Every other property (y, width,
+  // height, rotate) is untouched and keeps animating toward its normal
+  // target as usual — the pile itself never visually reorders during a
+  // shuffle, only this horizontal wobble plays over it. index staggers
+  // this card's own start slightly later than index 0's (see
+  // DECK_SHUFFLE_STAGGER_S); direction picks which side it swings
+  // toward first.
+  shuffleOscillation?: { index: number; direction: 1 | -1 } | null;
   onAnimationComplete?: () => void;
   animationDuration?: number;
   coordinateOffset?: { x: number; y: number } | null;
@@ -356,6 +465,12 @@ function AnimatedCard({
   // FieldZone underneath them to hook into at all, which is why both
   // cases end up here rather than there.
   onClick?: () => void;
+  // Only ever wired up for the reveal zone's own card (see the main
+  // render loop's own isRevealedCard) — everywhere else, hover is
+  // handled by whatever's underneath the card instead (a FieldZone, or
+  // Hand.tsx's own .Hand-cell), which the reveal zone doesn't have.
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }) {
   const targetRotationY = entry.faceDown ? 180 : 0;
   // Reflects whichever source's ACTUAL faceDown value applies — not just
@@ -411,6 +526,17 @@ function AnimatedCard({
   // keyframes means no movement happens between them, which is exactly
   // what "briefly stacked at the center before fanning back out" needs.
   const shuffleStart = initialPosition ?? viaOverride;
+  // Deck-shuffle oscillation is computed independently of the
+  // via/plain split below — shuffleOscillation only ever applies to a
+  // pile card sitting still in place (never mid-via, in practice), so
+  // it's folded into the plain branch's own x value rather than
+  // needing a third top-level case.
+  const oscillationXKeyframes = shuffleOscillation
+    ? buildDeckShuffleXKeyframes(
+        DECK_SHUFFLE_AMPLITUDE_RATIO * displayWidth,
+        shuffleOscillation.direction,
+      ).map((offset) => entry.x + offsetX + offset)
+    : null;
   const animateTarget = viaOverride
     ? {
         x: [
@@ -445,7 +571,7 @@ function AnimatedCard({
         ],
       }
     : {
-        x: entry.x + offsetX,
+        x: oscillationXKeyframes ?? entry.x + offsetX,
         y: entry.y + offsetY,
         width: displayWidth,
         height: displayHeight,
@@ -455,13 +581,29 @@ function AnimatedCard({
   // plain (non-via) case above, framer-motion ignores it entirely, since
   // there's only one value to reach, not a sequence to schedule.
   const keyframeTimes = viaOverride ? [0, 0.4, 0.6, 1] : undefined;
+  // x's own transition is entirely independent of animationDuration
+  // while oscillating — DECK_SHUFFLE_TOTAL_DURATION_S and a staggered
+  // delay instead, with `times` evenly spaced across the sine sample
+  // (see buildDeckShuffleXKeyframes). Every other property below is
+  // untouched, still using the normal animationDuration.
+  const xTransition = shuffleOscillation
+    ? {
+        duration: DECK_SHUFFLE_TOTAL_DURATION_S,
+        delay: shuffleOscillation.index * DECK_SHUFFLE_STAGGER_S,
+        ease: 'easeInOut' as const,
+        times: Array.from(
+          { length: DECK_SHUFFLE_CYCLES * DECK_SHUFFLE_SEGMENTS_PER_CYCLE + 1 },
+          (_, i) => i / (DECK_SHUFFLE_CYCLES * DECK_SHUFFLE_SEGMENTS_PER_CYCLE),
+        ),
+      }
+    : { duration: animationDuration, ease: 'easeInOut' as const, times: keyframeTimes };
 
   return (
     <motion.div
       initial={initialAnimation}
       animate={animateTarget}
       transition={{
-        x: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
+        x: xTransition,
         y: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
         width: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
         height: { duration: animationDuration, ease: 'easeInOut', times: keyframeTimes },
@@ -469,22 +611,26 @@ function AnimatedCard({
       }}
       onAnimationComplete={onAnimationComplete}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       style={{
         position: 'absolute',
         left: 0,
         top: 0,
         zIndex: entry.zIndex,
-        // Only clickable at all when onClick was actually passed
-        // (opponent hand proxies, or the player's own hand cards during
-        // Ritual Summon's own material selection) — every other card
-        // stays pointer-events:none here, same as before this feature
+        // Only clickable/hoverable at all when onClick or onMouseEnter
+        // was actually passed (opponent hand proxies, the player's own
+        // hand cards during Ritual Summon's own material selection, or
+        // the reveal zone's own card) — every other card stays
+        // pointer-events:none here, same as before this feature
         // existed, so it never blocks hover/click reaching whatever's
         // underneath it: a FieldZone for field cards, or Hand's own
         // .Hand-cell for hand cards (see Hand.tsx's own comment on why
         // it still needs to sit BELOW this layer for exactly this
         // reason — its hover-menu trigger depends on events reaching it
-        // unobstructed).
-        pointerEvents: onClick ? 'auto' : 'none',
+        // unobstructed). The reveal zone has no such underlying element
+        // at all, so enabling this for it is safe.
+        pointerEvents: onClick || onMouseEnter ? 'auto' : 'none',
         cursor: onClick ? 'pointer' : undefined,
       }}
     >
@@ -626,6 +772,9 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     selectedRitualHandIndices = [],
     onToggleRitualHandMaterial,
     hoveredHandInstanceId = null,
+    hoveredFieldInstanceId = null,
+    onCardHover,
+    onCardHoverEnd,
   },
   ref,
 ) {
@@ -636,6 +785,11 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
   const previousOpponentRef = useRef<OpponentDuelState | null>(null);
   const previousEntriesRef = useRef<CardPositionEntry[]>([]);
   const [returningCards, setReturningCards] = useState<ReturningOpponentCard[]>([]);
+  // Simple incrementing counter for the two genuinely-anonymous-slide
+  // cases below (a draw, or a card returning from hand to the Main
+  // Deck) — neither has a real instanceId to key off at all, unlike
+  // every other entry in returningCards.
+  const anonymousSlideIdRef = useRef(0);
   const previousOpponent = previousOpponentRef.current;
   const previousEntries = previousEntriesRef.current;
 
@@ -676,70 +830,180 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
   const previousMeShuffleVersionRef = useRef<number | null>(null);
   const previousOpponentShuffleVersionRef = useRef<number | null>(null);
   const [shufflingCards, setShufflingCards] = useState<ShufflingCard[]>([]);
+  // Same "only detect an actual increment" reasoning as the hand-shuffle
+  // refs above, for mainDeckShuffleVersion instead — see
+  // DeckShuffleAnimation's own comment above.
+  const previousMeMainDeckShuffleVersionRef = useRef<number | null>(null);
+  const previousOpponentMainDeckShuffleVersionRef = useRef<number | null>(null);
+  const [deckShuffleAnimations, setDeckShuffleAnimations] = useState<DeckShuffleAnimation[]>([]);
   const [inTransitCards, setInTransitCards] = useState<InTransitCard[]>([]);
 
   useEffect(() => {
-    if (previousOpponent && opponent && opponent.handCount > previousOpponent.handCount) {
-      const currentIds = new Set(entries.map((entry) => entry.instanceId));
-      const previousPublicOpponentIds = new Set<string>();
-      const currentPublicOpponentIds = new Set<string>();
+    if (previousOpponent && opponent) {
+      const handGrew = opponent.handCount > previousOpponent.handCount;
+      const handShrank = opponent.handCount < previousOpponent.handCount;
+      const mainDeckGrew = opponent.mainDeckCount > previousOpponent.mainDeckCount;
+      const mainDeckShrank = opponent.mainDeckCount < previousOpponent.mainDeckCount;
+      const extraDeckGrew = opponent.extraDeckCount > previousOpponent.extraDeckCount;
 
-      for (const entry of previousEntries) {
-        if (containsOpponentInstance(previousOpponent, entry.instanceId)) {
-          previousPublicOpponentIds.add(entry.instanceId);
+      if (handGrew || mainDeckGrew || extraDeckGrew) {
+        const currentIds = new Set(entries.map((entry) => entry.instanceId));
+        const previousPublicOpponentIds = new Set<string>();
+        const currentPublicOpponentIds = new Set<string>();
+
+        for (const entry of previousEntries) {
+          if (containsOpponentInstance(previousOpponent, entry.instanceId)) {
+            previousPublicOpponentIds.add(entry.instanceId);
+          }
         }
-      }
 
-      for (const entry of entries) {
-        if (containsOpponentInstance(opponent, entry.instanceId)) {
-          currentPublicOpponentIds.add(entry.instanceId);
+        for (const entry of entries) {
+          if (containsOpponentInstance(opponent, entry.instanceId)) {
+            currentPublicOpponentIds.add(entry.instanceId);
+          }
         }
-      }
 
-      const disappeared = [...previousPublicOpponentIds].filter(
-        (id) => !currentPublicOpponentIds.has(id) && !currentIds.has(id),
-      );
+        const disappeared = [...previousPublicOpponentIds].filter(
+          (id) => !currentPublicOpponentIds.has(id) && !currentIds.has(id),
+        );
 
-      if (disappeared.length > 0) {
-        const handCount = opponent.handCount;
-        const firstNewHandIndex = previousOpponent.handCount;
-        const newReturningCards = disappeared
-          .map((id, offset) => {
-            const fromEntry = previousEntries.find((entry) => entry.instanceId === id);
-            if (!fromEntry) return null;
+        if (disappeared.length > 0) {
+          // A KNOWN card left a known public position (grave, banished,
+          // field, or the reveal zone) — whichever pile actually grew
+          // is where it's headed. Only one of these three is ever
+          // expected to grow at once for the actions that reach this
+          // branch, so checking them in a fixed order (rather than
+          // trying to handle more than one growing at once) is enough.
+          const handCount = opponent.handCount;
+          const firstNewHandIndex = previousOpponent.handCount;
+          const newReturningCards = disappeared
+            .map((id, offset) => {
+              const fromEntry = previousEntries.find((entry) => entry.instanceId === id);
+              if (!fromEntry) return null;
 
-            const targetSlot = getOpponentHandSlot(
-              handCount,
-              Math.min(handCount - 1, firstNewHandIndex + offset),
-            );
+              const from: CardVisualPosition = {
+                x: fromEntry.x,
+                y: fromEntry.y,
+                scale: fromEntry.scale,
+                rotation: fromEntry.rotation,
+                faceDown: fromEntry.faceDown,
+              };
 
-            const from: CardVisualPosition = {
-              x: fromEntry.x,
-              y: fromEntry.y,
-              scale: fromEntry.scale,
-              rotation: fromEntry.rotation,
-              faceDown: fromEntry.faceDown,
-            };
-            const to: CardVisualPosition = {
-              x: targetSlot.x,
-              y: targetSlot.y,
-              scale: targetSlot.width / CARD_NATIVE_WIDTH,
-              rotation: 180,
-              faceDown: true,
-            };
+              let to: CardVisualPosition;
+              // 320 by default (matches every other returning-card
+              // destination) — except landing at the BOTTOM of the Main
+              // Deck, which needs to render BEHIND the whole pile
+              // instead of in front of it (see
+              // PublicPlayerState's own lastMainDeckReturnSide for the
+              // full reasoning). 10 is comfortably below deckPileEntries'
+              // own baseZIndex of 50 in cardPositions.ts, so it's
+              // guaranteed to sit underneath every card in the pile,
+              // not just the topmost one.
+              let toZIndex = 320;
+              if (handGrew) {
+                const targetSlot = getOpponentHandSlot(
+                  handCount,
+                  Math.min(handCount - 1, firstNewHandIndex + offset),
+                );
+                to = {
+                  x: targetSlot.x,
+                  y: targetSlot.y,
+                  scale: targetSlot.width / CARD_NATIVE_WIDTH,
+                  rotation: 180,
+                  faceDown: true,
+                };
+              } else {
+                // mainDeckGrew or extraDeckGrew — a single, shared pile
+                // position (not indexed by offset the way hand slots
+                // are), since every card in the opponent's own deck
+                // renders at the same spot regardless of how many are
+                // in it.
+                const slot = getDeckZoneSlot(true, mainDeckGrew ? 'main' : 'extra');
+                to = {
+                  x: slot.x,
+                  y: slot.y,
+                  scale: FIELD_CARD_SCALE,
+                  rotation: 180,
+                  faceDown: true,
+                };
+                if (mainDeckGrew && opponent.lastMainDeckReturnSide === 'bottom') {
+                  toZIndex = 10;
+                }
+              }
 
-            return {
-              id,
-              card: fromEntry.card,
-              from,
-              to,
-              zIndex: 320 + offset,
-            };
-          })
-          .filter((card): card is ReturningOpponentCard => card !== null);
+              return {
+                id,
+                card: fromEntry.card,
+                from,
+                to,
+                zIndex: toZIndex + offset,
+                fixed: handGrew,
+              };
+            })
+            .filter((card): card is ReturningOpponentCard => card !== null);
 
-        if (newReturningCards.length > 0) {
-          setReturningCards((current) => [...current, ...newReturningCards]);
+          if (newReturningCards.length > 0) {
+            setReturningCards((current) => [...current, ...newReturningCards]);
+          }
+        } else if (handGrew && mainDeckShrank) {
+          // A draw — the opponent's own hand grew and their own Main
+          // Deck shrank by the same event, but no KNOWN card explains
+          // it (that's the branch above, for grave/banished/field/the
+          // reveal zone specifically). The only remaining source is the
+          // deck's own anonymous top card — never individually visible
+          // to this client at all, unlike every other case this effect
+          // handles, so this animates a plain card back (card: null)
+          // rather than a real one, from the deck's own shared position
+          // to the new hand slot.
+          const targetSlot = getOpponentHandSlot(opponent.handCount, opponent.handCount - 1);
+          const deckSlot = getDeckZoneSlot(true, 'main');
+          setReturningCards((current) => [
+            ...current,
+            {
+              id: `anon-draw-${anonymousSlideIdRef.current++}`,
+              card: null,
+              from: { x: deckSlot.x, y: deckSlot.y, scale: FIELD_CARD_SCALE, rotation: 180, faceDown: true },
+              to: {
+                x: targetSlot.x,
+                y: targetSlot.y,
+                scale: targetSlot.width / CARD_NATIVE_WIDTH,
+                rotation: 180,
+                faceDown: true,
+              },
+              zIndex: 320,
+              fixed: true,
+            },
+          ]);
+        } else if (mainDeckGrew && handShrank) {
+          // The reverse of a draw — an anonymous hand card (never
+          // individually visible to this client either) joining the
+          // also-anonymous Main Deck. Approximates the FROM position as
+          // the last slot the previous, larger hand had — the exact
+          // card that left isn't knowable, but this is close enough to
+          // read as "came from the hand," the same approximation
+          // tolerance used elsewhere in this file for similar cases.
+          const fromSlot = getOpponentHandSlot(previousOpponent.handCount, previousOpponent.handCount - 1);
+          const deckSlot = getDeckZoneSlot(true, 'main');
+          setReturningCards((current) => [
+            ...current,
+            {
+              id: `anon-todeck-${anonymousSlideIdRef.current++}`,
+              card: null,
+              from: {
+                x: fromSlot.x,
+                y: fromSlot.y,
+                scale: fromSlot.width / CARD_NATIVE_WIDTH,
+                rotation: 180,
+                faceDown: true,
+              },
+              to: { x: deckSlot.x, y: deckSlot.y, scale: FIELD_CARD_SCALE, rotation: 180, faceDown: true },
+              // Same top/bottom distinction as the known-card branch
+              // above — see PublicPlayerState's own
+              // lastMainDeckReturnSide.
+              zIndex: opponent.lastMainDeckReturnSide === 'bottom' ? 10 : 320,
+              fixed: false,
+            },
+          ]);
         }
       }
     }
@@ -864,6 +1128,48 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     // previousEntriesRef current before this one reads it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.handShuffleVersion, opponent?.handShuffleVersion]);
+
+  // Detects a Main Deck shuffle (either side) by comparing
+  // mainDeckShuffleVersion across renders, same idea as the
+  // handShuffleVersion detection above but far simpler: this doesn't
+  // need to track any real card's from/to position at all — the cards
+  // this plays on never leave the pile or change position, they just
+  // temporarily oscillate around wherever they already are (see
+  // DeckShuffleAnimation's own comment above and shuffleOscillation's
+  // own comment on AnimatedCard) — just that a shuffle happened and
+  // which side's deck it was.
+  useEffect(() => {
+    const newAnimations: DeckShuffleAnimation[] = [];
+
+    if (me && previousMeMainDeckShuffleVersionRef.current !== null) {
+      if (me.mainDeckShuffleVersion > previousMeMainDeckShuffleVersionRef.current) {
+        newAnimations.push({ id: `deck-shuffle-me-${me.mainDeckShuffleVersion}`, flipped: false });
+      }
+    }
+    if (opponent && previousOpponentMainDeckShuffleVersionRef.current !== null) {
+      if (opponent.mainDeckShuffleVersion > previousOpponentMainDeckShuffleVersionRef.current) {
+        newAnimations.push({
+          id: `deck-shuffle-opponent-${opponent.mainDeckShuffleVersion}`,
+          flipped: true,
+        });
+      }
+    }
+
+    if (newAnimations.length > 0) {
+      setDeckShuffleAnimations((current) => [...current, ...newAnimations]);
+      // Clears itself once the animation has definitely finished —
+      // DECK_SHUFFLE_CLEANUP_MS is comfortably longer than the last
+      // pile card's own finish time, so no card ever reverts to its
+      // normal, static x mid-oscillation.
+      window.setTimeout(() => {
+        const ids = new Set(newAnimations.map((a) => a.id));
+        setDeckShuffleAnimations((current) => current.filter((a) => !ids.has(a.id)));
+      }, DECK_SHUFFLE_CLEANUP_MS);
+    }
+
+    previousMeMainDeckShuffleVersionRef.current = me?.mainDeckShuffleVersion ?? null;
+    previousOpponentMainDeckShuffleVersionRef.current = opponent?.mainDeckShuffleVersion ?? null;
+  }, [me?.mainDeckShuffleVersion, opponent?.mainDeckShuffleVersion]);
 
   // Cards changing control (moving to the OTHER player's Monster Zone)
   // or returning to their true owner (Grave, Banished, hand, either
@@ -1125,6 +1431,62 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
   const inTransitIds = new Set(
     inTransitCards.map((c) => c.id.replace(/^(transfer|return)-/, '')),
   );
+  // Same "exclude the un-animated real entry while a separate, animated
+  // stand-in is playing" reasoning as shufflingIds/inTransitIds above —
+  // opponent.handCount has ALREADY increased by the time a return is
+  // detected (that increase is what triggers it), so the normal
+  // opponent-hand-N proxy entries already include a slot for each card
+  // currently returning TO HAND. Without this, that slot's own proxy
+  // would render instantly, with no animation at all, while
+  // returningCards separately animates a duplicate element toward the
+  // very same destination — a "ghost" card sitting there before the
+  // real, animated one even arrives. New proxy slots are always
+  // appended at the END (matching handCount), so the cards currently
+  // returning are always the LAST N of them.
+  //
+  // Filtered to card.fixed (true only for a hand destination — see
+  // ReturningOpponentCard's own comment) before counting, deliberately
+  // — returningCards can also contain cards headed to a deck instead
+  // (see the detection effect above), which have no hand slot of their
+  // own to exclude at all. Counting the whole array regardless of
+  // destination would wrongly exclude a real, unrelated hand slot for
+  // every deck-destined card mixed in, hiding a card that was never
+  // actually leaving the hand in the first place.
+  // Resolves which OTHER card (if any) should show the Equip Spell
+  // hover-overlay right now, given whichever field card is currently
+  // hovered (see DuelField's own onFieldInstanceHoverChange). Lives
+  // here rather than in the duel page because it only needs props this
+  // component already receives (me/opponent), and the result is
+  // consumed immediately below for positioning — no need to split it
+  // across two files. Two directions, since either side could be the
+  // one actually hovered — both are a single, direct instanceId
+  // comparison, since equippedTo is the target MONSTER's own instanceId
+  // (see PlacedCard's own comment on why), not a (role, index) pair
+  // that would need figuring out which player's zones to search first:
+  //   1. Hovering an Equip Spell itself — find it in either player's
+  //      spellTrapZones; its own equippedTo IS the result directly.
+  //   2. Hovering a monster — find an Equip Spell (in either player's
+  //      spellTrapZones) whose own equippedTo equals the hovered
+  //      instanceId; ITS instanceId is the result.
+  let equipOverlayInstanceId: string | null = null;
+  if (hoveredFieldInstanceId && me && opponent) {
+    const allSpells = [...me.spellTrapZones, ...opponent.spellTrapZones];
+    const hoveredSpell = allSpells.find((zone) => zone?.instanceId === hoveredFieldInstanceId);
+    if (hoveredSpell?.equippedTo) {
+      equipOverlayInstanceId = hoveredSpell.equippedTo;
+    } else {
+      const equipSpell = allSpells.find((zone) => zone?.equippedTo === hoveredFieldInstanceId);
+      equipOverlayInstanceId = equipSpell?.instanceId ?? null;
+    }
+  }
+
+  const returningOpponentHandIds = new Set(
+    opponent
+      ? returningCards
+          .filter((card) => card.fixed)
+          .map((_, i) => `opponent-hand-${opponent.handCount - 1 - i}`)
+      : [],
+  );
   const opponentHandIds = new Set(
     entries
       .filter((entry) => entry.instanceId.startsWith('opponent-hand-'))
@@ -1134,10 +1496,16 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     (entry) =>
       !shufflingIds.has(entry.instanceId) &&
       !inTransitIds.has(entry.instanceId) &&
+      !returningOpponentHandIds.has(entry.instanceId) &&
       (!stageOffset || !opponentHandIds.has(entry.instanceId)),
   );
   const opponentHandEntries = stageOffset
-    ? entries.filter((entry) => !shufflingIds.has(entry.instanceId) && opponentHandIds.has(entry.instanceId))
+    ? entries.filter(
+        (entry) =>
+          !shufflingIds.has(entry.instanceId) &&
+          !returningOpponentHandIds.has(entry.instanceId) &&
+          opponentHandIds.has(entry.instanceId),
+      )
     : [];
   const opponentShufflingCards = stageOffset
     ? shufflingCards.filter((card) => card.id.startsWith('opponent-hand-'))
@@ -1167,6 +1535,39 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
         animationDuration={0.5}
         onAnimationComplete={() => {
           setInTransitCards((current) => current.filter((item) => item.id !== card.id));
+        }}
+      />
+    );
+  };
+
+  // Cards leaving a KNOWN public position (see containsOpponentInstance)
+  // and reappearing in the opponent's hand — always rendered face-down
+  // here regardless of how they looked at their own origin, since a
+  // hand (either player's — this covers both the reveal zone returning
+  // to its own owner's hand and any other public-to-hand departure) is
+  // never visible once a card actually lands in it from this client's
+  // own point of view.
+  const renderReturningCard = (card: ReturningOpponentCard, fixed: boolean) => {
+    const returningEntry: CardPositionEntry = {
+      instanceId: card.id,
+      card: card.card,
+      x: card.to.x,
+      y: card.to.y,
+      rotation: card.to.rotation,
+      scale: card.to.scale,
+      faceDown: true,
+      zIndex: card.zIndex,
+    };
+
+    return (
+      <AnimatedCard
+        key={`returning-${card.id}`}
+        entry={returningEntry}
+        startOverride={card.from}
+        coordinateOffset={fixed ? stageOffset : null}
+        animationDuration={0.45}
+        onAnimationComplete={() => {
+          setReturningCards((current) => current.filter((item) => item.id !== card.id));
         }}
       />
     );
@@ -1227,6 +1628,13 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     );
   };
 
+  // True while EITHER side's Main Deck is currently shuffling (see
+  // DeckShuffleAnimation above) — checked once per render rather than
+  // per-entry, since every visible pile card on a given side shares the
+  // same answer.
+  const isMeMainDeckShuffling = deckShuffleAnimations.some((a) => !a.flipped);
+  const isOpponentMainDeckShuffling = deckShuffleAnimations.some((a) => a.flipped);
+
   return (
     <div ref={layerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
       {visibleEntries.map((entry) => {
@@ -1239,6 +1647,14 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
         const isMyHandCard = myHandIndex !== -1;
         const isSelectableHandCard = isSelectingRitualMaterial && isMyHandCard;
         const isHovered = isMyHandCard && hoveredHandInstanceId === entry.instanceId;
+        // True for whichever side's card currently sits in the reveal
+        // zone (see PublicPlayerState's own revealedCard) — the one
+        // case where hover is detected directly on this layer, since
+        // there's no FieldZone or Hand-cell underneath a reveal-zone
+        // card the way there is for every other card.
+        const isRevealedCard =
+          entry.instanceId === me?.revealedCard?.instanceId ||
+          entry.instanceId === opponent?.revealedCard?.instanceId;
         // Purely a rendered-position tweak — reuses AnimatedCard's own
         // existing x/y animation entirely (see its own animate prop)
         // rather than introducing a separate motion value: hovering
@@ -1246,11 +1662,29 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
         // already has, so "smoothly float up, smoothly settle back
         // down" comes for free, with no new animation machinery needed.
         const hoverEntry = isHovered ? { ...entry, y: entry.y - HAND_HOVER_LIFT } : entry;
+        // See DeckShuffleAnimation/AnimatedCard's own shuffleOscillation
+        // comments — pileIndex comes from wherever this entry's own
+        // position within the pile is already known: me.mainDeck's own
+        // array index for a real card, or the index already encoded in
+        // an opponent-mainDeck-N proxy id. Even indices swing right
+        // first, odd indices swing left first, so roughly half go each
+        // way.
+        let shuffleOscillation: { index: number; direction: 1 | -1 } | null = null;
+        if (isMeMainDeckShuffling && me) {
+          const pileIndex = me.mainDeck.findIndex((c) => c.instanceId === entry.instanceId);
+          if (pileIndex !== -1) {
+            shuffleOscillation = { index: pileIndex, direction: pileIndex % 2 === 0 ? 1 : -1 };
+          }
+        } else if (isOpponentMainDeckShuffling && entry.instanceId.startsWith('opponent-mainDeck-')) {
+          const pileIndex = Number(entry.instanceId.slice('opponent-mainDeck-'.length));
+          shuffleOscillation = { index: pileIndex, direction: pileIndex % 2 === 0 ? 1 : -1 };
+        }
         return (
           <AnimatedCard
             key={entry.instanceId}
             entry={hoverEntry}
             hiddenSource={getHiddenSource(entry, previousOpponent, opponent)}
+            shuffleOscillation={shuffleOscillation}
             selectionColor={
               isSelectableHandCard
                 ? selectedRitualHandIndices.includes(myHandIndex)
@@ -1268,19 +1702,22 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
                     }
                   : undefined
             }
+            onMouseEnter={
+              isRevealedCard && onCardHover && entry.card
+                ? () => onCardHover(entry.card!)
+                : undefined
+            }
+            onMouseLeave={isRevealedCard && onCardHoverEnd ? onCardHoverEnd : undefined}
           />
         );
       })}
 
-      {returningCards.length > 0 && (
-        <>
-          {!stageOffset && returningCards.map((card) => renderReturningCard(card, false))}
-          {stageOffset && (
-            <div className="MultiplayerDuelFieldPage-opponentHandLayer">
-              {returningCards.map((card) => renderReturningCard(card, true))}
-            </div>
-          )}
-        </>
+      {returningCards.filter((card) => !card.fixed).map((card) => renderReturningCard(card, false))}
+
+      {stageOffset && returningCards.some((card) => card.fixed) && (
+        <div className="MultiplayerDuelFieldPage-opponentHandLayer">
+          {returningCards.filter((card) => card.fixed).map((card) => renderReturningCard(card, true))}
+        </div>
       )}
 
       {inTransitCards.filter((card) => !card.fixed).map((card) => renderInTransitCard(card))}
@@ -1305,6 +1742,56 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
           {opponentHandEntries.map((entry) => renderOpponentHandEntry(entry))}
         </div>
       )}
+
+      {/* The Equip Spell hover-overlay (see equipOverlayInstanceId's own
+          comment above for how the target is resolved). Always
+          board-space: both a Monster Zone card and a Spell/Trap Zone
+          card are ordinary field positions, never part of the
+          viewport-fixed opponentHandLayer above, so this needs none of
+          that layer's own stageOffset handling. Purely visual — no
+          onClick/onMouseEnter, so pointerEvents stays off and it never
+          blocks whatever's underneath it (the real FieldZone hover
+          target this whole feature depends on). */}
+      {equipOverlayInstanceId &&
+        (() => {
+          const overlayEntry = entries.find(
+            (entry) => entry.instanceId === equipOverlayInstanceId,
+          );
+          if (!overlayEntry) return null;
+          return (
+            <motion.div
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                width: CARD_NATIVE_WIDTH * overlayEntry.scale,
+                height: CARD_NATIVE_HEIGHT * overlayEntry.scale,
+                transform: `translate(${overlayEntry.x}px, ${overlayEntry.y}px) rotate(${overlayEntry.rotation}deg)`,
+                zIndex: 500,
+                pointerEvents: 'none',
+              }}
+              // Oscillates 0% -> 50% -> 0%, continuously, for as long as
+              // this stays mounted (i.e. for as long as the hover it
+              // depends on lasts) — framer-motion's own animate/
+              // transition, not a CSS @keyframes class, since this file
+              // has no stylesheet of its own at all and is already
+              // built on framer-motion throughout. Only opacity is
+              // animated here; the static transform string above
+              // (translate + rotate) is a plain, un-animated style
+              // value, which framer-motion leaves alone since it isn't
+              // one of ITS OWN animatable props (x/y/rotate/scale) —
+              // the two coexist without conflict.
+              animate={{ opacity: [0, 0.25, 0] }}
+              transition={{ duration: 1.25, repeat: Infinity, ease: 'easeInOut' }}
+            >
+              <img
+                src={equipSpellOverlayImg}
+                alt=""
+                style={{ width: '100%', height: '100%', display: 'block' }}
+              />
+            </motion.div>
+          );
+        })()}
     </div>
   );
 });

@@ -8,6 +8,7 @@ import Hand from '../components/DuelField/Hand';
 import DeckViewer from '../components/DuelField/DeckViewer';
 import CardDisplay from '../components/CardDisplay/CardDisplay';
 import LifePointCounter from '../components/DuelField/LifePointCounter';
+import useAnimatedCount from '../components/DuelField/useAnimatedCount';
 import PlayerAvatarBox from '../components/Avatar/PlayerAvatarBox';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
 import StatAdjustDialog from '../components/DuelField/StatAdjustDialog';
@@ -20,6 +21,7 @@ import {
   TURN_PHASES,
   encodeHandSelection,
   decodeHandSelection,
+  OPENING_HAND_SIZE,
   type PlayerRole,
   type OpponentInfo,
   type MyDuelState,
@@ -68,7 +70,7 @@ function duelStatesEqual(a: MyDuelState, b: MyDuelState): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function buildPublicState(me: MyDuelState) {
+function buildPublicState(me: MyDuelState, handRevealed: boolean) {
   return {
     lifePoints: me.lifePoints,
     phase: me.phase,
@@ -82,6 +84,15 @@ function buildPublicState(me: MyDuelState) {
     fieldZone: me.fieldZone,
     lastHandDepartureIndex: me.lastHandDepartureIndex,
     handShuffleVersion: me.handShuffleVersion,
+    mainDeckShuffleVersion: me.mainDeckShuffleVersion,
+    openingHandDealt: me.openingHandDealt,
+    revealedCard: me.revealedCard,
+    lastMainDeckReturnSide: me.lastMainDeckReturnSide,
+    // Recomputed from the CURRENT hand on every single write, for as
+    // long as handRevealed stays true — see PublicPlayerState's own
+    // comment on revealedHand for why this needs to be live, not a
+    // stale snapshot from the moment "Reveal Hand" was first pressed.
+    revealedHand: handRevealed ? me.hand : null,
   };
 }
 
@@ -107,7 +118,16 @@ function MultiplayerDuelFieldPage() {
     pendingControlTransfers,
     pendingCardReturns,
     pendingPileRequests,
+    handRevealExitedBy,
   } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
+
+  // Called unconditionally (hooks can't be conditional), with a
+  // fallback for the brief window before the first snapshot arrives and
+  // opponent is still null — see the opponent LP display below, which
+  // is a plain, non-interactive div (not LifePointCounter itself, which
+  // also carries the edit popover this player should never see for
+  // their opponent's own life points).
+  const opponentDisplayLifePoints = useAnimatedCount(opponent?.lifePoints ?? 0);
 
   const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
   // Lets a control-transfer/card-return be animated immediately, locally,
@@ -122,6 +142,41 @@ function MultiplayerDuelFieldPage() {
   // visual hover-lift effect (see that component's own comment on why
   // the detection and the display live in two different places).
   const [hoveredHandInstanceId, setHoveredHandInstanceId] = useState<string | null>(null);
+  // Same idea as hoveredHandInstanceId above, but for Monster/Spell-Trap
+  // Zone cards on EITHER side (see DuelField's own
+  // onFieldInstanceHoverChange) — currently only consumed by CardLayer,
+  // to resolve and render the Equip Spell hover-overlay (see that
+  // component's own equipOverlayInstanceId).
+  const [hoveredFieldInstanceId, setHoveredFieldInstanceId] = useState<string | null>(null);
+  // The local toggle behind "Reveal Hand" — see buildPublicState's own
+  // revealedHand parameter for what this actually drives. Purely local:
+  // only this player's own client needs the raw toggle, since the
+  // opponent only ever sees its effect (their own read of
+  // opponent.revealedHand being present or absent), not the flag
+  // itself.
+  const [handRevealed, setHandRevealed] = useState(false);
+  // Mirrors handRevealed above, synchronously — applyMeUpdate reads
+  // THIS, not the state variable directly, since a toggle needs to
+  // trigger a write using the brand-new value immediately, within the
+  // same event handler, well before React has re-rendered with
+  // setHandRevealed's own update applied. Same reasoning as this file's
+  // own latestMeRef/renderMeState split elsewhere.
+  const handRevealedRef = useRef(false);
+  // Lets the VIEWING player locally dismiss their own view of an active
+  // reveal (see the viewer's own onClose below) without needing to
+  // affect — or being able to affect — the revealing player's own
+  // opponent.revealedHand at all. Reset below whenever a genuinely NEW
+  // reveal begins, so dismissing one doesn't silently suppress the
+  // next.
+  const [handRevealDismissed, setHandRevealDismissed] = useState(false);
+  const previousOpponentHandRevealedRef = useRef(false);
+  useEffect(() => {
+    const isRevealed = opponent?.revealedHand !== null && opponent?.revealedHand !== undefined;
+    if (isRevealed && !previousOpponentHandRevealedRef.current) {
+      setHandRevealDismissed(false);
+    }
+    previousOpponentHandRevealedRef.current = isRevealed;
+  }, [opponent?.revealedHand]);
   // Shown once, briefly, before the actual field ever renders — see the
   // render guard further down. Starts true on every mount rather than
   // being tied to turnNumber === 1 specifically, since a fresh page load
@@ -200,6 +255,58 @@ function MultiplayerDuelFieldPage() {
     return () => window.clearTimeout(timeoutId);
   }, [turnPlayer]);
 
+  // Deals the opening hand one card at a time (both start at 0 — see
+  // buildInitialState's own comment) rather than it just being there
+  // from the very first snapshot. Re-fires on every hand.length change,
+  // which is what naturally chains it into a full sequence: each draw's
+  // own state update (via handleDrawCard, the same function every other
+  // draw in the game uses, so it animates identically) triggers this
+  // effect again, which schedules the next one, until the hand reaches
+  // OPENING_HAND_SIZE, at which point openingHandDealt is set instead —
+  // see that field's own comment on why this flag, not a live
+  // hand.length comparison, is what actually gates this effect: once
+  // set, it stays true for the rest of the duel, so this effect can
+  // never misfire again later just because hand size happens to dip
+  // back below OPENING_HAND_SIZE during normal play (playing a card,
+  // discarding, etc.) — a live length check alone can't tell "still
+  // dealing the opening hand" apart from that. renderMeState (not the
+  // later-declared renderMe) since this runs well before that alias
+  // exists in the component body — same underlying value either way. A
+  // brief delay between each draw is what actually makes this look
+  // like cards arriving one at a time rather than all at once;
+  // mainDeck.length === 0 guards a pathologically small deck from
+  // looping forever trying to draw cards that don't exist. Gated on
+  // !showFirstPlayerBanner because DuelField (and CardLayer, which is
+  // what actually animates each draw) doesn't mount at all while that
+  // banner is up — without this gate, the whole opening hand would be
+  // dealt invisibly before the player ever sees the field, defeating
+  // the entire point of dealing it one card at a time in the first
+  // place.
+  useEffect(() => {
+    if (showFirstPlayerBanner) return;
+    const current = renderMeState ?? me;
+    if (!current || current.openingHandDealt) return;
+    if (current.hand.length >= OPENING_HAND_SIZE) {
+      applyMeUpdate((c) => ({ ...c, openingHandDealt: true }));
+      return;
+    }
+    if (current.mainDeck.length === 0) return;
+    const timeoutId = window.setTimeout(() => {
+      handleDrawCard();
+    }, 450);
+    return () => window.clearTimeout(timeoutId);
+    // handleDrawCard/applyMeUpdate intentionally not dependencies — same
+    // reasoning as the turn-start draw effect just below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    showFirstPlayerBanner,
+    renderMeState?.hand.length,
+    renderMeState?.openingHandDealt,
+    me?.hand.length,
+    me?.mainDeck.length,
+    me?.openingHandDealt,
+  ]);
+
   // Draws exactly one card at the start of the turn player's own turn —
   // including turn 1 for whoever goes first, not just turns claimed via
   // "Start Turn". Keyed on turnNumber (via this ref) rather than firing
@@ -209,9 +316,23 @@ function MultiplayerDuelFieldPage() {
   // !showFirstPlayerBanner so even turn 1's own draw happens once the
   // field is actually visible and CardLayer is mounted to animate it,
   // rather than invisibly while the announcement banner is still up.
+  // Also gated on BOTH players' own openingHandDealt — opponent's own
+  // is public, so this client can see whether the opponent has finished
+  // their opening draw even though it can't see the cards themselves.
+  // Without this, turn 1's own draw could interleave with the opening
+  // hand still being dealt (e.g. arriving as an out-of-place 6th card
+  // partway through), rather than opening hands finishing cleanly
+  // before any turn-based drawing begins. Checked via this flag, not a
+  // live hand.length/handCount comparison, for the same reason the
+  // opening-hand-draw effect above uses it instead of one too: a normal
+  // draw later in the game must never be blocked just because either
+  // player's hand size happens to be under OPENING_HAND_SIZE at that
+  // moment (e.g. after playing several cards) — only whether the
+  // ONE-TIME opening deal has ever completed matters here.
   const lastAutoDrawnTurnRef = useRef<number | null>(null);
   useEffect(() => {
     if (!isMyTurn || showFirstPlayerBanner) return;
+    if (!me?.openingHandDealt || !opponent?.openingHandDealt) return;
     if (lastAutoDrawnTurnRef.current === turnNumber) return;
     lastAutoDrawnTurnRef.current = turnNumber;
     handleDrawCard();
@@ -220,7 +341,7 @@ function MultiplayerDuelFieldPage() {
     // makes this effect idempotent per turnNumber regardless of exactly
     // when within that render cycle it fires.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMyTurn, turnNumber, showFirstPlayerBanner]);
+  }, [isMyTurn, turnNumber, showFirstPlayerBanner, me?.openingHandDealt, opponent?.openingHandDealt]);
   // TEMPORARY DIAGNOSTIC ref — see its use further down, near
   // cardPositionEntries. Remove alongside that code once the animation
   // bug is confirmed fixed.
@@ -311,6 +432,13 @@ function MultiplayerDuelFieldPage() {
     zoneType: 'monster' | 'spellTrap';
     index: number;
   } | null>(null);
+  // The instanceId of a hand Equip Spell currently waiting on its
+  // target monster — set by handleActivateSpell, cleared once a target
+  // is confirmed (handleEquipTarget) or the player cancels
+  // (handleEquipCancel). Unlike pendingMove above, this only ever needs
+  // a single instanceId: the card hasn't been placed anywhere yet, so
+  // there's no zone/index of its own to track until a target is chosen.
+  const [pendingEquip, setPendingEquip] = useState<string | null>(null);
 
   const handleCardHover = useCallback((card: CardData) => {
     if (hoverTimeoutRef.current !== undefined) {
@@ -430,7 +558,7 @@ function MultiplayerDuelFieldPage() {
     await setDoc(
       doc(db, 'duels', duelId),
       {
-        [state.role]: buildPublicState(next),
+        [state.role]: buildPublicState(next, handRevealedRef.current),
         // Any real action clears BOTH players' selections — selecting a
         // card is deliberately its own separate write (handleSelectCard
         // below) that never goes through applyMeUpdate at all, which is
@@ -471,6 +599,66 @@ function MultiplayerDuelFieldPage() {
       hand: shuffle(current.hand),
       handShuffleVersion: current.handShuffleVersion + 1,
     }));
+
+  // Ends an active "Reveal Hand" — shared by BOTH ways it can end: the
+  // revealing player's own "Hide Hand" click, and the viewing player's
+  // own "Exit" on the Hand Viewer (see the effect below watching
+  // handRevealExitedBy for that second path). Always shuffles the hand
+  // and always clears handRevealExitedBy back to null, regardless of
+  // which path triggered it — leaving it stale after the SELF path
+  // would mean a later, genuinely new signal from the opponent (even
+  // reusing the exact same role value) would look unchanged to the
+  // effect's own dependency comparison, and be silently missed.
+  const endHandReveal = () => {
+    handRevealedRef.current = false;
+    setHandRevealed(false);
+    applyMeUpdate(
+      (current) => ({
+        ...current,
+        hand: shuffle(current.hand),
+        handShuffleVersion: current.handShuffleVersion + 1,
+      }),
+      { extraFields: { handRevealExitedBy: null } },
+    );
+  };
+
+  // Turns "Reveal Hand" ON specifically — turning it off goes through
+  // endHandReveal above instead, since that path additionally needs to
+  // shuffle the hand and clear handRevealExitedBy.
+  const handleToggleHandReveal = () => {
+    if (handRevealedRef.current) {
+      endHandReveal();
+      return;
+    }
+    handRevealedRef.current = true;
+    setHandRevealed(true);
+    // A shallow copy, not the same reference passed straight back —
+    // applyMeUpdate treats an updater returning THE SAME object as "no
+    // real change, skip the write entirely" (see its own `next ===
+    // current` guard), which would otherwise silently skip this write
+    // altogether, including the one thing it actually needs to do:
+    // recompute revealedHand from the new handRevealedRef value.
+    // handRevealExitedBy is cleared defensively here too, in case a
+    // previous cycle's signal somehow never made it through
+    // endHandReveal's own clear.
+    applyMeUpdate((current) => ({ ...current }), { extraFields: { handRevealExitedBy: null } });
+  };
+
+  // The revealing player's own side of the opponent-exits-the-viewer
+  // handoff — see DuelDoc's own handRevealExitedBy for the full
+  // reasoning on why this needs to be a signal at all (the revealing
+  // player's own client is the only one that can turn off their own
+  // reveal). Only acts when a reveal is genuinely active AND the signal
+  // specifically names THIS client's own opponent — a signal from an
+  // earlier, already-ended cycle is never left around to misfire here,
+  // since endHandReveal always clears it back to null.
+  useEffect(() => {
+    if (!state.role || !handRevealExitedBy || !handRevealedRef.current) return;
+    const opponentRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
+    if (handRevealExitedBy === opponentRole) {
+      endHandReveal();
+    }
+  }, [handRevealExitedBy]);
 
   // --- Turn / Phase actions ---
 
@@ -526,6 +714,35 @@ function MultiplayerDuelFieldPage() {
     setDoc(doc(db, 'duels', duelId), { [`${state.role}Selection`]: next }, { merge: true }).catch(
       (err) => {
         console.error('[MultiplayerDuelFieldPage] Failed to update selection:', err);
+      },
+    );
+  };
+
+  // Clicking a card in the opponent's own revealed-hand viewer — reuses
+  // the exact same select-card mechanism as everywhere else (see
+  // handleSelectCard above), so it drives the same outline this app
+  // already shows on any other selected card. The viewer only ever
+  // shows opponent.revealedHand, so the index found here always refers
+  // to a card in the OPPONENT's own hand, never this player's own.
+  const handleRevealedHandCardClick = (instanceId: string) => {
+    if (!opponent?.revealedHand || !state.role) return;
+    const index = opponent.revealedHand.findIndex((c) => c.instanceId === instanceId);
+    if (index === -1) return;
+    const opponentRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
+    handleSelectCard(encodeHandSelection(opponentRole, index));
+  };
+
+  // Exiting the opponent's own revealed-hand viewer — dismisses THIS
+  // client's own view of it immediately, and separately signals the
+  // REVEALING player's own client (via handRevealExitedBy) to actually
+  // end their reveal, since only their own client can turn it off (see
+  // DuelDoc's own comment on that field for the full reasoning).
+  const handleExitOpponentHandView = () => {
+    setHandRevealDismissed(true);
+    if (!duelId || !state.role) return;
+    setDoc(doc(db, 'duels', duelId), { handRevealExitedBy: state.role }, { merge: true }).catch(
+      (err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to signal hand reveal exit:', err);
       },
     );
   };
@@ -981,6 +1198,14 @@ function MultiplayerDuelFieldPage() {
   const handleActivateSpell = (instanceId: string) => {
     const instance = me?.hand.find((i) => i.instanceId === instanceId);
     if (!instance) return;
+    // Equip Spells specifically need a target monster before they can
+    // actually be placed — see pendingEquip's own comment. Every other
+    // Spell (including Set Equip Spells, which aren't resolving yet)
+    // places immediately, same as before.
+    if (instance.card.cardSubclass === 'Equip') {
+      setPendingEquip(instanceId);
+      return;
+    }
     if (instance.card.cardSubclass === 'Field') placeInFieldZone(instanceId, false);
     else placeInSpellTrapZone(instanceId, false);
   };
@@ -990,6 +1215,67 @@ function MultiplayerDuelFieldPage() {
     if (!instance) return;
     if (instance.card.cardSubclass === 'Field') placeInFieldZone(instanceId, true);
     else placeInSpellTrapZone(instanceId, true);
+  };
+
+  // --- Equip Spell target selection ---
+
+  const handleEquipCancel = () => setPendingEquip(null);
+
+  // Confirms the equip target — targetRole is resolved by the caller
+  // (see DuelField.tsx's own onEquipTarget wiring) from which of the
+  // two PlayerField instances (flipped or not) was actually clicked, so
+  // this doesn't need to work that out itself. Same "nothing is placed
+  // until Confirm" approach as placeInSpellTrapZone above — the card
+  // stays in hand, completely untouched, for as long as pendingEquip is
+  // set.
+  const handleEquipTarget = (targetRole: PlayerRole, index: number) => {
+    if (!pendingEquip || !state.role) return;
+    const instanceId = pendingEquip;
+    setPendingEquip(null);
+    // Resolved once, outside the updater, when the target is on the
+    // OPPONENT's side — their own state isn't touched by this update at
+    // all, so there's no "current" equivalent to read it from fresh the
+    // way this player's own side is read inside the updater below.
+    const opponentTargetInstanceId =
+      targetRole !== state.role ? (opponent?.monsterZones[index]?.instanceId ?? null) : null;
+    applyMeUpdate((current) => {
+      const instance = current.hand.find((i) => i.instanceId === instanceId);
+      const emptySlot = findEmptyZoneSlot(current.spellTrapZones);
+      if (!instance || emptySlot === -1) return current;
+      // Stores the target MONSTER's own instanceId, not its (role,
+      // index) — see PlacedCard's own equippedTo comment for why: this
+      // way it keeps following the actual monster even if it's later
+      // moved to a different zone slot or changes control, rather than
+      // staying pinned to whatever ends up in the original slot.
+      const targetInstanceId =
+        targetRole === state.role
+          ? (current.monsterZones[index]?.instanceId ?? null)
+          : opponentTargetInstanceId;
+      const nextZones = [...current.spellTrapZones];
+      nextZones[emptySlot] = {
+        instanceId: instance.instanceId,
+        card: instance.card,
+        faceDown: false,
+        equippedTo: targetInstanceId,
+      };
+      return {
+        ...current,
+        hand: current.hand.filter((i) => i.instanceId !== instanceId),
+        spellTrapZones: nextZones,
+      };
+    });
+  };
+
+  // DuelField's own onEquipTarget only ever reports WHICH SIDE was
+  // clicked (flipped: true for the opponent's field) — this resolves
+  // that into an actual PlayerRole before calling handleEquipTarget
+  // above, the same "flipped -> role" resolution this file already does
+  // inline in several other handlers (see e.g.
+  // handleRevealedHandCardClick).
+  const handleEquipTargetClick = (flipped: boolean, index: number) => {
+    if (!state.role) return;
+    const opponentRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
+    handleEquipTarget(flipped ? opponentRole : state.role, index);
   };
 
   const handleHandToGrave = (instanceId: string) =>
@@ -1022,6 +1308,7 @@ function MultiplayerDuelFieldPage() {
         ...current,
         hand: current.hand.filter((i) => i.instanceId !== instanceId),
         mainDeck: [instance, ...current.mainDeck],
+        lastMainDeckReturnSide: 'top',
       };
     });
 
@@ -1033,8 +1320,137 @@ function MultiplayerDuelFieldPage() {
         ...current,
         hand: current.hand.filter((i) => i.instanceId !== instanceId),
         mainDeck: [...current.mainDeck, instance],
+        lastMainDeckReturnSide: 'bottom',
       };
     });
+
+  // Where a card can land once it's done passing through (or being
+  // shown in) the reveal zone.
+  type RevealDestination = 'hand' | 'extraDeck' | 'mainDeckTop' | 'mainDeckBottom';
+
+  const placeAtRevealDestination = (
+    current: MyDuelState,
+    instance: CardInstance,
+    destination: RevealDestination,
+  ): MyDuelState => {
+    switch (destination) {
+      case 'hand':
+        return { ...current, hand: [...current.hand, instance] };
+      case 'extraDeck':
+        return { ...current, extraDeck: [instance, ...current.extraDeck] };
+      case 'mainDeckTop':
+        return { ...current, mainDeck: [instance, ...current.mainDeck], lastMainDeckReturnSide: 'top' };
+      case 'mainDeckBottom':
+        return { ...current, mainDeck: [...current.mainDeck, instance], lastMainDeckReturnSide: 'bottom' };
+    }
+  };
+
+  // Moves a card through the shared, neutral reveal zone (see
+  // PublicPlayerState's own revealedCard, and cardGeometry.ts's own
+  // getRevealZoneSlot) before it reaches its actual destination — holds
+  // it there for holdMs so the opponent has a chance to see what's
+  // moving, then continues on. Both the initial move to the reveal zone
+  // and the later move onward are ordinary applyMeUpdate writes, no
+  // different from any other card action — revealedCard is PUBLIC, so
+  // the opponent already sees it the moment it's written, the same way
+  // they'd see any other change to this player's own public state. No
+  // separate cross-player handoff needed at all, and the card animates
+  // via the exact same entries-based mechanism as any other card moving
+  // between two of a player's own zones (see cardPositions.ts's own
+  // revealZoneEntry) — including the return trip to hand specifically,
+  // which additionally gets a real, animated transition on the
+  // OPPONENT's own side via containsOpponentInstance/returningCards
+  // (see those comments), since revealedCard counts as one of the
+  // "known public positions" a card can be seen leaving.
+  //
+  // removeFromSource both finds the instance AND returns the state with
+  // it already removed, so each call site only has to describe ITS OWN
+  // source (which pile, and what filtering it needs) — everything about
+  // timing, the reveal itself, and the eventual placement lives here,
+  // in exactly one place, rather than being duplicated per source.
+  const moveCardViaRevealZone = (
+    removeFromSource: (current: MyDuelState) => { instance: CardInstance; next: MyDuelState } | null,
+    destination: RevealDestination,
+    holdMs: number,
+  ) => {
+    applyMeUpdate((current) => {
+      const result = removeFromSource(current);
+      if (!result) return current;
+      const { instance, next } = result;
+      return {
+        ...next,
+        revealedCard: {
+          instanceId: instance.instanceId,
+          card: instance.card,
+          faceDown: false,
+          ...(instance.owner ? { owner: instance.owner } : {}),
+        },
+      };
+    });
+
+    window.setTimeout(() => {
+      applyMeUpdate(
+        (current) => {
+          if (!current.revealedCard) return current;
+          const instance: CardInstance = {
+            instanceId: current.revealedCard.instanceId,
+            card: current.revealedCard.card,
+            ...(current.revealedCard.owner ? { owner: current.revealedCard.owner } : {}),
+          };
+          return placeAtRevealDestination({ ...current, revealedCard: null }, instance, destination);
+        },
+        // Without this, applyMeUpdate's own automatic reshuffle-on-add
+        // (see its own comment on shuffleHand) would fire the instant a
+        // hand-destined card lands — immediately, not after the delay
+        // below — defeating the entire point of deferring it. Harmless
+        // for every other destination, which never grows hand.length at
+        // all.
+        { shuffleHand: false },
+      );
+
+      // Deliberately a SEPARATE write, delayed past the return-to-hand
+      // animation itself, rather than bundled into the write above —
+      // shuffling bumps handShuffleVersion, which triggers the hand's
+      // own fan-out shuffle animation immediately. Doing that in the
+      // SAME write as the card leaving the reveal zone meant the two
+      // animations visibly overlapped: the card was still animating
+      // back into place (see renderReturningCard's own 0.45s duration,
+      // the longer of the two — the revealing player's own side uses
+      // AnimatedCard's default 0.3s instead) while the shuffle was
+      // already fanning the whole hand out from under it. 500ms
+      // comfortably covers both, with a little room to spare. Only
+      // relevant when the card actually lands in hand — every other
+      // destination has no shuffle to delay in the first place.
+      if (destination === 'hand') {
+        window.setTimeout(() => {
+          applyMeUpdate((current) => ({
+            ...current,
+            hand: shuffle(current.hand),
+            handShuffleVersion: current.handShuffleVersion + 1,
+          }));
+        }, 500);
+      }
+    }, holdMs);
+  };
+
+  // The hand's own "Reveal" action — a 2-second hold, always back to
+  // hand. See moveCardViaRevealZone's own comment for the full
+  // reasoning; this is now just that function with the hand's own
+  // instanceId-based removal described.
+  const handleHandReveal = (instanceId: string) => {
+    moveCardViaRevealZone(
+      (current) => {
+        const instance = current.hand.find((i) => i.instanceId === instanceId);
+        if (!instance) return null;
+        return {
+          instance,
+          next: { ...current, hand: current.hand.filter((i) => i.instanceId !== instanceId) },
+        };
+      },
+      'hand',
+      2000,
+    );
+  };
 
   // --- Field actions ---
 
@@ -1266,9 +1682,11 @@ function MultiplayerDuelFieldPage() {
           break;
         case 'stackTop':
           next.mainDeck = [asCardInstance, ...next.mainDeck];
+          next.lastMainDeckReturnSide = 'top';
           break;
         case 'stackBottom':
           next.mainDeck = [...next.mainDeck, asCardInstance];
+          next.lastMainDeckReturnSide = 'bottom';
           break;
       }
       return next;
@@ -1545,7 +1963,11 @@ function MultiplayerDuelFieldPage() {
     });
 
   const handleShuffleMainDeck = () =>
-    applyMeUpdate((current) => ({ ...current, mainDeck: shuffle(current.mainDeck) }));
+    applyMeUpdate((current) => ({
+      ...current,
+      mainDeck: shuffle(current.mainDeck),
+      mainDeckShuffleVersion: current.mainDeckShuffleVersion + 1,
+    }));
 
   // Closing the Main Deck viewer always shuffles afterward — matches
   // the real-world convention that looking through your deck requires
@@ -1588,13 +2010,27 @@ function MultiplayerDuelFieldPage() {
       return;
     }
 
+    if (actionKey === 'toHand') {
+      moveCardViaRevealZone(
+        (current) => {
+          const inst = current.mainDeck.find((i) => i.instanceId === instanceId);
+          if (!inst) return null;
+          return {
+            instance: inst,
+            next: { ...current, mainDeck: current.mainDeck.filter((i) => i.instanceId !== instanceId) },
+          };
+        },
+        'hand',
+        1000,
+      );
+      return;
+    }
+
     applyMeUpdate((current) => {
       const inst = current.mainDeck.find((i) => i.instanceId === instanceId);
       if (!inst) return current;
       const restDeck = current.mainDeck.filter((i) => i.instanceId !== instanceId);
       switch (actionKey) {
-        case 'toHand':
-          return { ...current, mainDeck: restDeck, hand: [...current.hand, inst] };
         case 'toGrave':
           return { ...current, mainDeck: restDeck, grave: [...current.grave, inst] };
         case 'banish':
@@ -1751,21 +2187,39 @@ function MultiplayerDuelFieldPage() {
       return;
     }
 
+    const removeFromGrave = (current: MyDuelState) => {
+      const inst = current.grave.find((i) => i.instanceId === instanceId);
+      if (!inst) return null;
+      return {
+        instance: inst,
+        next: { ...current, grave: current.grave.filter((i) => i.instanceId !== instanceId) },
+      };
+    };
+
+    if (actionKey === 'toHand') {
+      moveCardViaRevealZone(removeFromGrave, 'hand', 1000);
+      return;
+    }
+    if (actionKey === 'toExtra') {
+      moveCardViaRevealZone(removeFromGrave, 'extraDeck', 1000);
+      return;
+    }
+    if (actionKey === 'stackTop') {
+      moveCardViaRevealZone(removeFromGrave, 'mainDeckTop', 1000);
+      return;
+    }
+    if (actionKey === 'stackBottom') {
+      moveCardViaRevealZone(removeFromGrave, 'mainDeckBottom', 1000);
+      return;
+    }
+
     applyMeUpdate((current) => {
       const inst = current.grave.find((i) => i.instanceId === instanceId);
       if (!inst) return current;
       const restGrave = current.grave.filter((i) => i.instanceId !== instanceId);
       switch (actionKey) {
-        case 'toHand':
-          return { ...current, grave: restGrave, hand: [...current.hand, inst] };
-        case 'toExtra':
-          return { ...current, grave: restGrave, extraDeck: [inst, ...current.extraDeck] };
         case 'banish':
           return { ...current, grave: restGrave, banished: [...current.banished, inst] };
-        case 'stackTop':
-          return { ...current, grave: restGrave, mainDeck: [inst, ...current.mainDeck] };
-        case 'stackBottom':
-          return { ...current, grave: restGrave, mainDeck: [...current.mainDeck, inst] };
         default:
           return current;
       }
@@ -1852,21 +2306,39 @@ function MultiplayerDuelFieldPage() {
       return;
     }
 
+    const removeFromBanished = (current: MyDuelState) => {
+      const inst = current.banished.find((i) => i.instanceId === instanceId);
+      if (!inst) return null;
+      return {
+        instance: inst,
+        next: { ...current, banished: current.banished.filter((i) => i.instanceId !== instanceId) },
+      };
+    };
+
+    if (actionKey === 'toHand') {
+      moveCardViaRevealZone(removeFromBanished, 'hand', 1000);
+      return;
+    }
+    if (actionKey === 'toExtra') {
+      moveCardViaRevealZone(removeFromBanished, 'extraDeck', 1000);
+      return;
+    }
+    if (actionKey === 'stackTop') {
+      moveCardViaRevealZone(removeFromBanished, 'mainDeckTop', 1000);
+      return;
+    }
+    if (actionKey === 'stackBottom') {
+      moveCardViaRevealZone(removeFromBanished, 'mainDeckBottom', 1000);
+      return;
+    }
+
     applyMeUpdate((current) => {
       const inst = current.banished.find((i) => i.instanceId === instanceId);
       if (!inst) return current;
       const restBanished = current.banished.filter((i) => i.instanceId !== instanceId);
       switch (actionKey) {
-        case 'toHand':
-          return { ...current, banished: restBanished, hand: [...current.hand, inst] };
-        case 'toExtra':
-          return { ...current, banished: restBanished, extraDeck: [inst, ...current.extraDeck] };
         case 'toGrave':
           return { ...current, banished: restBanished, grave: [...current.grave, inst] };
-        case 'stackTop':
-          return { ...current, banished: restBanished, mainDeck: [inst, ...current.mainDeck] };
-        case 'stackBottom':
-          return { ...current, banished: restBanished, mainDeck: [...current.mainDeck, inst] };
         default:
           return current;
       }
@@ -2324,6 +2796,9 @@ function MultiplayerDuelFieldPage() {
               onMoveTarget={handleMoveTarget}
               isSelectingMoveToOpponentZone={pendingMove?.zoneType === 'monster'}
               onMoveToOpponentTarget={handleMoveToOpponentTarget}
+              isSelectingEquipTarget={pendingEquip !== null}
+              onEquipTarget={handleEquipTargetClick}
+              onFieldInstanceHoverChange={setHoveredFieldInstanceId}
               onSelectCard={handleSelectCard}
             />
 
@@ -2339,6 +2814,7 @@ function MultiplayerDuelFieldPage() {
               onBanish={handleHandBanish}
               onStackTop={handleHandStackTop}
               onStackBottom={handleHandStackBottom}
+              onReveal={handleHandReveal}
             />
 
             {/* Renders every card in cardPositionEntries on top of
@@ -2362,6 +2838,9 @@ function MultiplayerDuelFieldPage() {
               selectedRitualHandIndices={pendingRitualSummon?.selectedHandIndices ?? []}
               onToggleRitualHandMaterial={handleRitualHandMaterialToggle}
               hoveredHandInstanceId={hoveredHandInstanceId}
+              hoveredFieldInstanceId={hoveredFieldInstanceId}
+              onCardHover={handleCardHover}
+              onCardHoverEnd={handleCardHoverEnd}
             />
           </div>
         </div>
@@ -2373,9 +2852,12 @@ function MultiplayerDuelFieldPage() {
         {/* Reuses LifePointCounter-display's own steady-state styling,
             reused directly. A plain, non-interactive div rather than
             LifePointCounter itself: a player can never edit their
-            opponent's life points, only see them. */}
+            opponent's life points, only see them. opponentDisplayLifePoints
+            (see useAnimatedCount) counts steadily toward the real value
+            rather than jumping straight to it, the same as the
+            player's own counter. */}
         <div className="LifePointCounter-display MultiplayerDuelFieldPage-opponentLpDisplay">
-          {opponent.lifePoints}
+          {opponentDisplayLifePoints}
         </div>
         {/* Reuses PlayerAvatarBox's own CSS classes directly (already
             globally available — this page already imports that
@@ -2414,13 +2896,26 @@ function MultiplayerDuelFieldPage() {
             spot relative to it, rather than being just another item in
             the overall vertical stack above. */}
         <div className="MultiplayerDuelFieldPage-lpRow">
-          <button
-            type="button"
-            className="MultiplayerDuelFieldPage-shuffleHandButton"
-            onClick={handleShuffleHand}
-          >
-            Shuffle Hand
-          </button>
+          <div className="MultiplayerDuelFieldPage-handButtonColumn">
+            <button
+              type="button"
+              className={
+                handRevealed
+                  ? 'MultiplayerDuelFieldPage-revealHandButton MultiplayerDuelFieldPage-revealHandButton--active'
+                  : 'MultiplayerDuelFieldPage-revealHandButton'
+              }
+              onClick={handleToggleHandReveal}
+            >
+              {handRevealed ? 'Hide Hand' : 'Reveal Hand'}
+            </button>
+            <button
+              type="button"
+              className="MultiplayerDuelFieldPage-shuffleHandButton"
+              onClick={handleShuffleHand}
+            >
+              Shuffle Hand
+            </button>
+          </div>
           <LifePointCounter
             value={renderMe.lifePoints}
             onAdd={(amount) => handleLifePointChange(amount)}
@@ -2545,6 +3040,15 @@ function MultiplayerDuelFieldPage() {
         </div>
       )}
 
+      {pendingEquip && (
+        <div className="MultiplayerDuelFieldPage-materialSelectionBanner">
+          <span>Select a monster (yours or your opponent's) to equip this card to</span>
+          <button type="button" onClick={handleEquipCancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+
       {viewingOwnPile && (
         <DeckViewer
           cards={
@@ -2592,6 +3096,23 @@ function MultiplayerDuelFieldPage() {
           onCardAction={
             viewingOpponentPile === 'grave' ? handleOpponentGraveCardAction : handleOpponentBanishedCardAction
           }
+        />
+      )}
+
+      {/* The opponent's own "Reveal Hand" — shown only on THIS
+          (viewing) player's client, since the revealing player already
+          sees their own hand normally and doesn't need a redundant
+          overlay of it. No hover menu at all, per the feature's own
+          spec — just Card Display hover and click-to-select, reusing
+          the same highlight this app already shows for any other
+          selected card. */}
+      {opponent.revealedHand && !handRevealDismissed && (
+        <DeckViewer
+          cards={opponent.revealedHand}
+          onClose={handleExitOpponentHandView}
+          onCardHover={handleCardHover}
+          onCardHoverEnd={handleCardHoverEnd}
+          onCardClick={handleRevealedHandCardClick}
         />
       )}
 

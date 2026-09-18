@@ -260,6 +260,29 @@ interface PlayerFieldProps {
   // destination for this, per the feature as requested.
   isSelectingMoveToOpponentZone?: boolean;
   onMoveToOpponentTarget?: (index: number) => void;
+  // "Equip target" mode — set while an Equip Spell is waiting on its
+  // target monster (see MultiplayerDuelFieldPage's own pendingEquip). A
+  // SINGLE shared pair, unlike Move's own split into own-field/
+  // cross-field variants — an Equip Spell can target a monster on
+  // EITHER player's field under the exact same rule (an occupied
+  // Monster Zone slot), so this is passed identically to BOTH
+  // PlayerField instances (see DuelField's own two calls below).
+  // onEquipTarget is called with this PlayerField's own `flipped` value
+  // (which side was actually clicked) alongside the slot index, since
+  // PlayerField already knows that about itself — the caller (this
+  // file's own DuelField) never needs to bind a separate closure per
+  // side the way it does for Move's own cross-field handler.
+  isSelectingEquipTarget?: boolean;
+  onEquipTarget?: (flipped: boolean, index: number) => void;
+  // Reports whichever Monster/Spell-Trap Zone card (either side) is
+  // currently hovered, or null when nothing is — resolved here from
+  // FieldZone's own plain onHoverChange boolean against whatever
+  // instanceId this call site already knows for that slot (see each
+  // <FieldZone>'s own onHoverChange below). Drives the Equip Spell
+  // hover-overlay specifically (see CardLayer's own
+  // equipOverlayInstanceId, computed in MultiplayerDuelFieldPage from
+  // this) — nothing else needs zone-level hover identity yet.
+  onFieldInstanceHoverChange?: (instanceId: string | null) => void;
 }
 
 function PlayerField({
@@ -301,6 +324,9 @@ function PlayerField({
   onMoveTarget,
   isSelectingMoveToOpponentZone = false,
   onMoveToOpponentTarget,
+  isSelectingEquipTarget = false,
+  onEquipTarget,
+  onFieldInstanceHoverChange,
 }: PlayerFieldProps) {
   const fieldZones = flipped ? [...FIELD_ZONES].reverse() : FIELD_ZONES;
   const deckZones = flipped ? [...DECK_ZONES].reverse() : DECK_ZONES;
@@ -432,7 +458,8 @@ function PlayerField({
             isSelectingFusionMaterial ||
             isSelectingEvolutionMaterial ||
             isSelectingRitualMaterial ||
-            isSelectingMoveDestination;
+            isSelectingMoveDestination ||
+            isSelectingEquipTarget;
 
           return (
             <FieldZone
@@ -450,6 +477,9 @@ function PlayerField({
               rotated180={flipped}
               onCardHover={flipped && placed?.faceDown ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
+              onHoverChange={(hovering) =>
+                onFieldInstanceHoverChange?.(hovering ? (placed?.instanceId ?? null) : null)
+              }
               menuActions={
                 flipped
                   ? viewStackAction
@@ -484,9 +514,11 @@ function PlayerField({
                         ? () => onMoveTarget('monster', slotIndex)
                         : isSelectingMoveToOpponentZone && !placed && onMoveToOpponentTarget
                           ? () => onMoveToOpponentTarget(slotIndex)
-                          : placed && onSelectCard
-                            ? () => onSelectCard(placed.instanceId)
-                            : undefined
+                          : isSelectingEquipTarget && placed && onEquipTarget
+                            ? () => onEquipTarget(flipped, slotIndex)
+                            : placed && onSelectCard
+                              ? () => onSelectCard(placed.instanceId)
+                              : undefined
               }
               selected={
                 (isSelectingFusionMaterial && selectedMaterialIndices.includes(slotIndex)) ||
@@ -637,6 +669,9 @@ function PlayerField({
               rotated180={flipped}
               onCardHover={flipped && placed?.faceDown ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
+              onHoverChange={(hovering) =>
+                onFieldInstanceHoverChange?.(hovering ? (placed?.instanceId ?? null) : null)
+              }
               menuActions={
                 flipped || isSelectingMoveDestination
                   ? []
@@ -744,6 +779,12 @@ interface DuelFieldProps {
   // Meaningful on the OPPONENT's side — see PlayerFieldProps' own copy.
   isSelectingMoveToOpponentZone?: boolean;
   onMoveToOpponentTarget?: (index: number) => void;
+  // Passed identically to BOTH PlayerField instances — see
+  // PlayerFieldProps' own copy of these two for the full reasoning.
+  isSelectingEquipTarget?: boolean;
+  onEquipTarget?: (flipped: boolean, index: number) => void;
+  // See PlayerFieldProps' own copy for the full reasoning.
+  onFieldInstanceHoverChange?: (instanceId: string | null) => void;
 }
 
 function DuelField({
@@ -793,6 +834,9 @@ function DuelField({
   onMoveTarget,
   isSelectingMoveToOpponentZone = false,
   onMoveToOpponentTarget,
+  isSelectingEquipTarget = false,
+  onEquipTarget,
+  onFieldInstanceHoverChange,
 }: DuelFieldProps) {
   return (
     <div className="DuelField">
@@ -813,6 +857,9 @@ function DuelField({
         onSelectCard={onSelectCard}
         isSelectingMoveToOpponentZone={isSelectingMoveToOpponentZone}
         onMoveToOpponentTarget={onMoveToOpponentTarget}
+        isSelectingEquipTarget={isSelectingEquipTarget}
+        onEquipTarget={onEquipTarget}
+        onFieldInstanceHoverChange={onFieldInstanceHoverChange}
         isMyTurn={isMyTurn}
         turnNumber={turnNumber}
       />
@@ -854,6 +901,9 @@ function DuelField({
         onSelectCard={onSelectCard}
         isSelectingMoveDestination={isSelectingMoveDestination}
         onMoveTarget={onMoveTarget}
+        isSelectingEquipTarget={isSelectingEquipTarget}
+        onEquipTarget={onEquipTarget}
+        onFieldInstanceHoverChange={onFieldInstanceHoverChange}
         onFieldAction={onFieldAction}
         onMainDeckAction={onMainDeckAction}
         onViewExtraDeck={onViewExtraDeck}

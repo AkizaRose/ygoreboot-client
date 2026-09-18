@@ -6,10 +6,12 @@ import {
   getDeckZoneSlot,
   getHandSlot,
   getOpponentHandSlot,
+  getRevealZoneSlot,
   PLAYER_STACK_OFFSETS,
   OPPONENT_STACK_OFFSETS,
   FIELD_CARD_SCALE,
   HAND_CARD_SCALE,
+  REVEAL_ZONE_SCALE,
 } from './cardGeometry';
 
 // The single output type CardLayer (the one component that replaces
@@ -146,6 +148,30 @@ function fieldZoneEntry(
       rotation: flipped ? 180 : 0,
       scale: FIELD_CARD_SCALE,
       faceDown: placed.faceDown,
+      zIndex,
+    },
+  ];
+}
+
+// The hand's own "Reveal" action (see MultiplayerDuelFieldPage's own
+// handleHandReveal and getRevealZoneSlot's own comment) — a card
+// temporarily moved here renders upright, at roughly double a normal
+// field card's own size, in the exact same spot regardless of which
+// player it belongs to. Always face-up (faceDown: false) — the entire
+// point is showing it to both players, so unlike every other *Entry
+// function here, this never reads placed.faceDown at all.
+function revealZoneEntry(placed: PlacedCard | null, zIndex: number): CardPositionEntry[] {
+  if (!placed) return [];
+  const slot = getRevealZoneSlot();
+  return [
+    {
+      instanceId: placed.instanceId,
+      card: placed.card,
+      x: slot.x,
+      y: slot.y,
+      rotation: 0,
+      scale: REVEAL_ZONE_SCALE,
+      faceDown: false,
       zIndex,
     },
   ];
@@ -290,6 +316,10 @@ export function computeCardPositions(
     ...fieldZoneEntry(me.fieldZone, false, 250),
     ...pileEntries(me.grave, false, 'grave', 260),
     ...pileEntries(me.banished, false, 'banished', 270),
+    // High zIndex — a reveal should always sit clearly above every
+    // other card on the board, matching the prominence its doubled
+    // scale and centered position already give it.
+    ...revealZoneEntry(me.revealedCard, 400),
   ];
 
   if (opponent) {
@@ -301,6 +331,7 @@ export function computeCardPositions(
       ...pileEntries(opponent.banished, true, 'banished', 270),
       ...opponentDeckPileEntries(opponent.mainDeckCount, 'mainDeck', 50),
       ...opponentDeckPileEntries(opponent.extraDeckCount, 'extraDeck', 50),
+      ...revealZoneEntry(opponent.revealedCard, 400),
       // The hand — now real geometry (getOpponentHandSlot), the same
       // position getHiddenSource and CardLayer's own returning/shuffle
       // logic already assume for it. This used to be a placeholder (a

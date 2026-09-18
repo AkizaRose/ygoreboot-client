@@ -160,6 +160,29 @@ export function getFieldZoneSlot(
   };
 }
 
+// A single, shared, neutral zone centered over the whole board — for
+// the hand's own "Reveal" action (see MultiplayerDuelFieldPage's own
+// handleHandReveal), which temporarily moves a card here from hand so
+// both players can see it, then moves it back. Deliberately NOT
+// flipped/rotated for either player's own perspective the way every
+// other zone above is — there's no "whose side" this belongs to, so it
+// always renders upright, in the same spot, for both players alike.
+// Roughly double a normal field card's own size, matching the
+// DuelingBook convention this is modeled on.
+export const REVEAL_ZONE_SCALE = FIELD_CARD_SCALE * 2;
+
+export function getRevealZoneSlot(): ZoneSlot {
+  const width = CARD_NATIVE_WIDTH * REVEAL_ZONE_SCALE;
+  const height = CARD_NATIVE_HEIGHT * REVEAL_ZONE_SCALE;
+  return {
+    x: (BOARD_WIDTH - width) / 2,
+    y: (BOARD_HEIGHT - height) / 2,
+    width,
+    height,
+    rotated180: false,
+  };
+}
+
 export function getDeckZoneSlot(flipped: boolean, kind: DeckZoneKind, index = 0): ZoneSlot {
   const columns = deckRowColumns(flipped);
   // Same reasoning as getFieldZoneSlot's own occurrence above, for the

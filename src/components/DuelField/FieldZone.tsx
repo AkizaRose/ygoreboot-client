@@ -51,6 +51,18 @@ interface FieldZoneProps {
   // (image), since a face-down pile has no single card to reveal.
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
+  // A plain boolean, separate from onCardHover above — that callback
+  // reports the CARD (for Card Display, shared across every hoverable
+  // surface in the app), not which specific zone/instance this is. This
+  // zone doesn't know its own instanceId at all (see the top-level
+  // `card` comment above — actual card identity/rendering moved to
+  // CardLayer some time ago), so it can only report "hovering" or not;
+  // the caller (DuelField.tsx) is what resolves that against whichever
+  // instanceId it already knows for this specific slot. Used for the
+  // Equip Spell hover-overlay specifically (see CardLayer's own
+  // equipOverlayInstanceId) — nothing else needs zone-level hover
+  // identity yet.
+  onHoverChange?: (hovering: boolean) => void;
   // The 5 field-card actions, or "View" for Main/Extra Deck — see
   // DuelField.tsx for which one gets passed where.
   menuActions?: FieldZoneAction[];
@@ -106,6 +118,7 @@ function FieldZone({
   selected = false,
   onCardHover,
   onCardHoverEnd,
+  onHoverChange,
   menuActions,
   onMenuAction,
   showRotatedOverlay = false,
@@ -144,11 +157,13 @@ function FieldZone({
     cancelHide();
     if (menuEnabled) setShowMenu(true);
     if (card) onCardHover?.(card);
+    if (card) onHoverChange?.(true);
   };
 
   const handleMouseLeave = () => {
     scheduleHide();
     if (card) onCardHoverEnd?.();
+    if (card) onHoverChange?.(false);
   };
 
   const handleAction = (event: React.MouseEvent, actionKey: string) => {

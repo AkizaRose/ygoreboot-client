@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import useAnimatedCount from './useAnimatedCount';
 import './LifePointCounter.css';
 
 interface LifePointCounterProps {
@@ -13,54 +14,10 @@ function LifePointCounter({ value, onAdd, onSubtract }: LifePointCounterProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // The number actually shown, separate from `value` — counts toward
-  // `value` over a fixed 2s any time it changes, rather than jumping
-  // straight to it. Kept in a ref alongside the state so a new
-  // animation (value changing again before the current one finishes)
-  // always starts from wherever the count currently and actually is,
-  // not from a stale snapshot of value at the time the last animation
-  // was kicked off.
-  const [displayValue, setDisplayValue] = useState(value);
-  const displayValueRef = useRef(value);
-  const animationFrameRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    if (animationFrameRef.current !== undefined) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = undefined;
-    }
-
-    const startValue = displayValueRef.current;
-    const endValue = value;
-    if (startValue === endValue) return;
-
-    const durationMs = 2000;
-    const startTime = performance.now();
-
-    const step = (now: number) => {
-      const progress = Math.min(1, (now - startTime) / durationMs);
-      // Linear, not eased — this is meant to read as a steady count (an
-      // odometer/scoreboard), not a decelerating animation.
-      const current = Math.round(startValue + (endValue - startValue) * progress);
-      displayValueRef.current = current;
-      setDisplayValue(current);
-
-      if (progress < 1) {
-        animationFrameRef.current = requestAnimationFrame(step);
-      } else {
-        animationFrameRef.current = undefined;
-      }
-    };
-
-    animationFrameRef.current = requestAnimationFrame(step);
-
-    return () => {
-      if (animationFrameRef.current !== undefined) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = undefined;
-      }
-    };
-  }, [value]);
+  // See useAnimatedCount's own comment for the full reasoning — counts
+  // toward `value` over a fixed 2s any time it changes, rather than
+  // jumping straight to it.
+  const displayValue = useAnimatedCount(value);
 
   // Closes on any click outside the counter/popover — a plain button
   // triggering a popover (rather than the hover-driven menus elsewhere

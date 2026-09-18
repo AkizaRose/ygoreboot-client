@@ -102,6 +102,16 @@
   gap: 8px;
 }
 
+/* Stacks Reveal Hand above Shuffle Hand — the pair together still sits
+   to the LEFT of the LP counter, at the same fixed spot the single
+   button used to occupy, rather than either one becoming just another
+   item in the overall vertical stack above. */
+.MultiplayerDuelFieldPage-handButtonColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .MultiplayerDuelFieldPage-shuffleHandButton {
   font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
   font-size: 12px;
@@ -116,6 +126,38 @@
 
 .MultiplayerDuelFieldPage-shuffleHandButton:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* Same base look as Shuffle Hand's own button — matched deliberately,
+   rather than a shared class, so either can change independently later
+   without the other silently drifting along with it (same reasoning as
+   PhaseTracker/TurnCounter's own styling elsewhere in this app). */
+.MultiplayerDuelFieldPage-revealHandButton {
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.MultiplayerDuelFieldPage-revealHandButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* While active, a visibly different color from its own resting state —
+   the only indicator (besides the label itself switching to "Hide
+   Hand") that the opponent can currently see this hand. */
+.MultiplayerDuelFieldPage-revealHandButton--active {
+  background: #7a1f1fee;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.MultiplayerDuelFieldPage-revealHandButton--active:hover {
+  background: #8a2b2bee;
 }
 
 .MultiplayerDuelFieldPage-status {

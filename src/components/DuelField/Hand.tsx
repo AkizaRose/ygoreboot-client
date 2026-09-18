@@ -46,6 +46,7 @@ function getHandActions(card: CardData): HandAction[] {
     { key: 'banish', label: 'Banish' },
     { key: 'stackTop', label: 'To T. Deck' },
     { key: 'stackBottom', label: 'To B. Deck' },
+    { key: 'reveal', label: 'Reveal' },
   );
 
   return actions;
@@ -55,13 +56,15 @@ interface HandProps {
   cards: CardInstance[];
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
-  // Reports which card the cursor is directly over, immediately on both
-  // enter and leave — unlike this component's own hoveredInstanceId
-  // state below, which delays CLEARING (see scheduleHide/
-  // MENU_HIDE_DELAY_MS) so the context menu doesn't unmount before the
-  // cursor can reach it. CardLayer's own hover-lift effect wants the
-  // opposite: it should track the cursor directly, with no lingering
-  // delay once it leaves.
+  // Reports which card's own hover context (the card itself, OR its
+  // context menu, with the same brief grace period between them the
+  // menu itself gets) is currently active — mirrors this component's
+  // own hoveredInstanceId state exactly (see the effect that reports it
+  // below), rather than the raw, immediate cursor position. CardLayer's
+  // own hover-lift effect wants this: without it, moving the cursor
+  // from the card to its own menu would drop the card back down before
+  // the menu could even be reached, since the two are visually
+  // separate elements.
   onHoveredInstanceChange?: (instanceId: string | null) => void;
   onNormalSummon: (instanceId: string) => void;
   onActivateSpell: (instanceId: string) => void;
@@ -70,6 +73,7 @@ interface HandProps {
   onBanish: (instanceId: string) => void;
   onStackTop: (instanceId: string) => void;
   onStackBottom: (instanceId: string) => void;
+  onReveal: (instanceId: string) => void;
 }
 
 function Hand({
@@ -84,12 +88,29 @@ function Hand({
   onBanish,
   onStackTop,
   onStackBottom,
+  onReveal,
 }: HandProps) {
   // Which hand card (by instanceId) currently shows its context menu —
   // a separate concern from the CardDisplay hover callbacks above,
   // though both are driven by the same mouseenter/mouseleave.
   const [hoveredInstanceId, setHoveredInstanceId] = useState<string | null>(null);
   const hideTimeoutRef = useRef<number | undefined>(undefined);
+
+  // Reports this component's own hoveredInstanceId upward whenever it
+  // changes — see onHoveredInstanceChange's own comment for why this,
+  // rather than the raw cursor position, is what CardLayer's hover-lift
+  // effect should track: this state already captures "hovering the
+  // card OR its own menu, with a brief grace period while moving
+  // between them" (see cancelHide/scheduleHide below), which is exactly
+  // the lift's own desired behavior too.
+  useEffect(() => {
+    onHoveredInstanceChange?.(hoveredInstanceId);
+    // onHoveredInstanceChange intentionally not a dependency — it's the
+    // parent's own setState function, effectively stable in practice,
+    // and including it would risk extra fires if the parent ever passes
+    // a fresh closure on some unrelated render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hoveredInstanceId]);
 
   const cancelHide = () => {
     if (hideTimeoutRef.current !== undefined) {
@@ -131,6 +152,9 @@ function Hand({
       case 'stackBottom':
         onStackBottom(instanceId);
         break;
+      case 'reveal':
+        onReveal(instanceId);
+        break;
     }
     setHoveredInstanceId(null);
   };
@@ -170,12 +194,10 @@ function Hand({
               cancelHide();
               setHoveredInstanceId(instanceId);
               onCardHover?.(card);
-              onHoveredInstanceChange?.(instanceId);
             }}
             onMouseLeave={() => {
               scheduleHide(instanceId);
               onCardHoverEnd?.();
-              onHoveredInstanceChange?.(null);
             }}
           >
             {/* No card art rendered here anymore — CardLayer (src/duel/)
