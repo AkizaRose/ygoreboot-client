@@ -16,6 +16,7 @@ import type { CardData } from '../types/Card';
 import CardImage from '../components/CardView/CardImage';
 import cardBackImg from '../assets/card/CardBack.png';
 import equipSpellOverlayImg from '../assets/ui/equipspelloverlay.png';
+import attackOverlayImg from '../assets/ui/attackoverlay.png';
 import {
   CARD_NATIVE_WIDTH,
   CARD_NATIVE_HEIGHT,
@@ -67,6 +68,40 @@ const DECK_SHUFFLE_STAGGER_S = 0.01;
 // + the largest stagger delay, converted to ms), so nothing reverts to
 // its normal, static position mid-motion.
 const DECK_SHUFFLE_CLEANUP_MS = 500;
+
+// How long the attack overlay's own flight (attacker -> target/hand
+// center) plus its fade takes, once an attack has actually resolved
+// (see AttackResolutionAnimation below) — separate from the aiming
+// phase, which has no fixed duration at all since it lasts as long as
+// the player takes to pick a target.
+const ATTACK_RESOLUTION_DURATION_S = 0.8;
+// Stays visible for the first 65% of the flight (arriving at the
+// target), then fades over the remainder — "move... then stopping and
+// fading out", not fading gradually the whole way there.
+const ATTACK_RESOLUTION_FADE_START = 0.65;
+// Must comfortably exceed ATTACK_RESOLUTION_DURATION_S (converted to
+// ms) so the animation is never cut off before it finishes.
+const ATTACK_RESOLUTION_CLEANUP_MS = 900;
+// The raw angle from atan2 treats 0deg as "pointing right" — but
+// attackoverlay.png is drawn pointing up, 90deg short of that in CSS's
+// own clockwise-positive rotation. Added to every computed angle (both
+// the aiming overlay's own live mouse-follow rotation and the resolved
+// flight's own constant one) so the image actually points where it's
+// aimed/heading, not 90deg off from it.
+const ATTACK_OVERLAY_ROTATION_OFFSET_DEG = 90;
+// "Slingshot" wind-up before the forward snap (see
+// AttackResolutionAnimation's own pullback field) — a small step in the
+// OPPOSITE direction of travel first, slower than the snap that
+// follows, giving the flight some weight/anticipation rather than
+// moving in a straight line at a constant rate the whole way.
+// Reached comparatively early despite covering very little distance —
+// that's what makes it read as a deliberate, slower wind-up rather than
+// a stutter.
+const ATTACK_SLINGSHOT_PULLBACK_TIME = 0.25;
+// How far to pull back, as a fraction of the full attacker->target
+// distance — "move away slightly", so comfortably under the forward
+// distance it's about to cover.
+const ATTACK_SLINGSHOT_PULLBACK_RATIO = 0.12;
 
 interface ControlTransferRecord {
   id: string;
@@ -174,6 +209,17 @@ interface CardLayerProps {
   // comment on why the resolution lives here rather than in the duel
   // page) — nothing else consumes this yet.
   hoveredFieldInstanceId?: string | null;
+  // The attacking monster's own zone index while aiming (see
+  // MultiplayerDuelFieldPage's own pendingAttack) — null whenever no
+  // attack is currently being aimed. Always the ATTACKING PLAYER's own
+  // monsterZones index (an attack is only ever aimed from this client's
+  // own monster), so this never needs a flipped flag the way
+  // cross-player targets elsewhere in this file do.
+  pendingAttackIndex?: number | null;
+  // Raw viewport mouse coordinates, tracked only while
+  // pendingAttackIndex is set — see the aiming overlay's own rotation
+  // logic further down for how this gets turned into an angle.
+  attackMousePosition?: { x: number; y: number } | null;
   // Card Display preview support for the reveal zone specifically (see
   // the main render loop's own isRevealedCard) — every other card gets
   // this via its own FieldZone or Hand-cell instead (see DuelField.tsx/
@@ -274,6 +320,97 @@ function buildDeckShuffleXKeyframes(amplitude: number, direction: 1 | -1): numbe
   return Array.from({ length: totalSegments + 1 }, (_, i) =>
     direction * amplitude * Math.sin((2 * Math.PI * i) / DECK_SHUFFLE_SEGMENTS_PER_CYCLE),
   );
+}
+
+// One resolved attack's own flight — see PublicPlayerState's own
+// activeAttack for where this originates. rotation is computed ONCE,
+// from the actual attacker->target direction (not carried over from
+// whatever the aiming phase's own live mouse-follow angle happened to
+// be), and stays constant for the whole flight, since the direction
+// itself never changes once resolved.
+interface AttackResolutionAnimation {
+  id: string;
+  from: { x: number; y: number; scale: number };
+  // The "slingshot" wind-up point, reached first — a small step in the
+  // OPPOSITE direction of travel from `from`, before snapping forward
+  // to `to`. Only x/y: the card's own size doesn't need to change for
+  // this tiny pull-back, so the render function reuses from.scale for
+  // it rather than tracking a third scale value.
+  pullback: { x: number; y: number };
+  to: { x: number; y: number; scale: number };
+  rotation: number;
+}
+
+// Resolves an activeAttack into its actual from/to positions —
+// attackerSide says whose activeAttack this is (whose own monster the
+// attack came FROM), so the opposite side is always the defender, which
+// is where toIndex (when not null) is looked up. Symmetric by design:
+// this client's own attack and the opponent's attack against THIS
+// client both go through the exact same resolution logic, just with
+// `me`/`opponent` swapped for who counts as attacker vs defender.
+function buildAttackResolutionAnimation(
+  activeAttack: { id: string; fromIndex: number; toIndex: number | null },
+  attackerSide: 'me' | 'opponent',
+  me: MyDuelState | null,
+  opponent: OpponentDuelState | null,
+  entries: CardPositionEntry[],
+): AttackResolutionAnimation | null {
+  const attacker = attackerSide === 'me' ? me : opponent;
+  const defender = attackerSide === 'me' ? opponent : me;
+  if (!attacker || !defender) return null;
+
+  const attackerInstanceId = attacker.monsterZones[activeAttack.fromIndex]?.instanceId;
+  const fromEntry = attackerInstanceId
+    ? entries.find((entry) => entry.instanceId === attackerInstanceId)
+    : null;
+  if (!fromEntry) return null;
+
+  let to: { x: number; y: number; scale: number };
+  if (activeAttack.toIndex !== null) {
+    const targetInstanceId = defender.monsterZones[activeAttack.toIndex]?.instanceId;
+    const toEntry = targetInstanceId
+      ? entries.find((entry) => entry.instanceId === targetInstanceId)
+      : null;
+    if (!toEntry) return null;
+    to = { x: toEntry.x, y: toEntry.y, scale: toEntry.scale };
+  } else {
+    // Direct attack — flies toward the DEFENDING side's own hand
+    // center. Both are fixed board-space reference points (the same
+    // ones the hand-shuffle "via" waypoint already uses), not tied to
+    // any individual card slot, so no viewport-fixed handling is needed
+    // here the way the opponent's real hand proxies elsewhere need.
+    to =
+      attackerSide === 'me'
+        ? { x: HAND_CENTER_X, y: OPPONENT_HAND_TOP, scale: HAND_CARD_SCALE }
+        : { x: HAND_CENTER_X, y: getHandSlot(1, 0).y, scale: HAND_CARD_SCALE };
+  }
+
+  const fromCenterX = fromEntry.x + (CARD_NATIVE_WIDTH * fromEntry.scale) / 2;
+  const fromCenterY = fromEntry.y + (CARD_NATIVE_HEIGHT * fromEntry.scale) / 2;
+  const toCenterX = to.x + (CARD_NATIVE_WIDTH * to.scale) / 2;
+  const toCenterY = to.y + (CARD_NATIVE_HEIGHT * to.scale) / 2;
+  const rotation =
+    (Math.atan2(toCenterY - fromCenterY, toCenterX - fromCenterX) * 180) / Math.PI +
+    ATTACK_OVERLAY_ROTATION_OFFSET_DEG;
+
+  // A small step in the OPPOSITE direction of travel — extends the
+  // from->to line backward past `from` itself, by
+  // ATTACK_SLINGSHOT_PULLBACK_RATIO of the full distance. Computed from
+  // the raw from/to points (not their centers, which rotation above
+  // needed) — pullback only ever feeds into x/y positioning below, so
+  // it should stay in that same top-left-corner coordinate space.
+  const pullback = {
+    x: fromEntry.x - (to.x - fromEntry.x) * ATTACK_SLINGSHOT_PULLBACK_RATIO,
+    y: fromEntry.y - (to.y - fromEntry.y) * ATTACK_SLINGSHOT_PULLBACK_RATIO,
+  };
+
+  return {
+    id: activeAttack.id,
+    from: { x: fromEntry.x, y: fromEntry.y, scale: fromEntry.scale },
+    pullback,
+    to,
+    rotation,
+  };
 }
 
 interface HiddenSource extends CardVisualPosition {}
@@ -757,6 +894,83 @@ export interface CardLayerHandle {
   queueCardReturn: (batch: CardReturnBatch) => void;
 }
 
+// The "aiming" overlay for an attack — sits on the attacking monster and
+// rotates to continuously point at the mouse (see
+// MultiplayerDuelFieldPage's own pendingAttack/attackMousePosition). A
+// separate, dedicated component (not AnimatedCard) since this isn't a
+// card at all, just a rotating reticle image with no card-flip, no
+// entry-to-entry transition, nothing else AnimatedCard's own machinery
+// is built for.
+//
+// The rotation math deliberately avoids ever computing the board's own
+// CSS scale factor: rather than converting board-space coordinates into
+// viewport pixels (which would need that scale factor), this measures
+// its OWN rendered position directly via getBoundingClientRect() once,
+// right after mounting — at that point the browser has already done
+// all the scaling/positioning math, so the measured center is already
+// in the exact same viewport-pixel space attackMousePosition (from a
+// raw mousemove event) is in. The board's own position never changes
+// while aiming is active, so measuring once and caching is enough —
+// no need to re-measure on every mouse move (which would force a
+// layout reflow each time).
+function AttackAimOverlay({
+  entry,
+  mousePosition,
+}: {
+  entry: CardPositionEntry;
+  mousePosition: { x: number; y: number } | null;
+}) {
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const centerRef = useRef<{ x: number; y: number } | null>(null);
+  const [rotation, setRotation] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = overlayRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    centerRef.current = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.instanceId]);
+
+  useEffect(() => {
+    if (!mousePosition || !centerRef.current) return;
+    const dx = mousePosition.x - centerRef.current.x;
+    const dy = mousePosition.y - centerRef.current.y;
+    setRotation((Math.atan2(dy, dx) * 180) / Math.PI + ATTACK_OVERLAY_ROTATION_OFFSET_DEG);
+  }, [mousePosition]);
+
+  const displayWidth = CARD_NATIVE_WIDTH * entry.scale;
+  const displayHeight = CARD_NATIVE_HEIGHT * entry.scale;
+
+  return (
+    <div
+      ref={overlayRef}
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: displayWidth,
+        height: displayHeight,
+        transform: `translate(${entry.x}px, ${entry.y}px)`,
+        zIndex: 490,
+        pointerEvents: 'none',
+      }}
+    >
+      <img
+        src={attackOverlayImg}
+        alt=""
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'block',
+          transform: `rotate(${rotation}deg)`,
+          transformOrigin: 'center center',
+        }}
+      />
+    </div>
+  );
+}
+
 const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer(
   {
     entries,
@@ -773,6 +987,8 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     onToggleRitualHandMaterial,
     hoveredHandInstanceId = null,
     hoveredFieldInstanceId = null,
+    pendingAttackIndex = null,
+    attackMousePosition = null,
     onCardHover,
     onCardHoverEnd,
   },
@@ -836,6 +1052,15 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
   const previousMeMainDeckShuffleVersionRef = useRef<number | null>(null);
   const previousOpponentMainDeckShuffleVersionRef = useRef<number | null>(null);
   const [deckShuffleAnimations, setDeckShuffleAnimations] = useState<DeckShuffleAnimation[]>([]);
+  // Same "only detect an actual change" reasoning as the shuffle
+  // version refs above, keyed on activeAttack's own id instead of a
+  // version counter — a fresh crypto.randomUUID() per attack already
+  // serves the same purpose.
+  const previousMeActiveAttackIdRef = useRef<string | null>(null);
+  const previousOpponentActiveAttackIdRef = useRef<string | null>(null);
+  const [attackResolutionAnimations, setAttackResolutionAnimations] = useState<
+    AttackResolutionAnimation[]
+  >([]);
   const [inTransitCards, setInTransitCards] = useState<InTransitCard[]>([]);
 
   useEffect(() => {
@@ -1170,6 +1395,57 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     previousMeMainDeckShuffleVersionRef.current = me?.mainDeckShuffleVersion ?? null;
     previousOpponentMainDeckShuffleVersionRef.current = opponent?.mainDeckShuffleVersion ?? null;
   }, [me?.mainDeckShuffleVersion, opponent?.mainDeckShuffleVersion]);
+
+  // Detects an attack actually resolving (either side) by comparing
+  // activeAttack's own id across renders — see
+  // AttackResolutionAnimation's own comment above for the full
+  // reasoning, and buildAttackResolutionAnimation for how the from/to
+  // positions and rotation are actually worked out.
+  useEffect(() => {
+    const newAnimations: AttackResolutionAnimation[] = [];
+
+    if (me?.activeAttack && me.activeAttack.id !== previousMeActiveAttackIdRef.current) {
+      const animation = buildAttackResolutionAnimation(me.activeAttack, 'me', me, opponent, entries);
+      if (animation) newAnimations.push(animation);
+    }
+    if (
+      opponent?.activeAttack &&
+      opponent.activeAttack.id !== previousOpponentActiveAttackIdRef.current
+    ) {
+      const animation = buildAttackResolutionAnimation(
+        opponent.activeAttack,
+        'opponent',
+        me,
+        opponent,
+        entries,
+      );
+      if (animation) newAnimations.push(animation);
+    }
+
+    if (newAnimations.length > 0) {
+      setAttackResolutionAnimations((current) => [...current, ...newAnimations]);
+      // Clears itself once the flight and fade have definitely
+      // finished — ATTACK_RESOLUTION_CLEANUP_MS comfortably exceeds
+      // ATTACK_RESOLUTION_DURATION_S, so nothing is ever cut off
+      // mid-flight.
+      window.setTimeout(() => {
+        const ids = new Set(newAnimations.map((a) => a.id));
+        setAttackResolutionAnimations((current) => current.filter((a) => !ids.has(a.id)));
+      }, ATTACK_RESOLUTION_CLEANUP_MS);
+    }
+
+    previousMeActiveAttackIdRef.current = me?.activeAttack?.id ?? null;
+    previousOpponentActiveAttackIdRef.current = opponent?.activeAttack?.id ?? null;
+    // entries is read above but intentionally not a dependency —
+    // unlike previousEntries elsewhere in this file, entries is a
+    // plain value recomputed fresh on every render, not a ref that
+    // needs another effect to keep it current first. Listing it here
+    // would re-run this effect on every render (entries always
+    // "changes"), when it should only run when activeAttack itself
+    // actually changes; the id comparison inside already guards
+    // against detecting the same attack twice regardless.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.activeAttack, opponent?.activeAttack]);
 
   // Cards changing control (moving to the OTHER player's Monster Zone)
   // or returning to their true owner (Grave, Banished, hand, either
@@ -1628,6 +1904,75 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     );
   };
 
+  // An attack's own resolved flight — see AttackResolutionAnimation's
+  // own comment above. Same outer-translates/inner-rotates split as
+  // AttackAimOverlay: the outer motion.div animates x/y/width/height/
+  // opacity via framer-motion's own keyframes, while the inner <img>
+  // holds a constant, plain CSS rotation (the direction never changes
+  // mid-flight, so it doesn't need to be animated at all).
+  const renderAttackResolutionAnimation = (animation: AttackResolutionAnimation) => (
+    <motion.div
+      key={animation.id}
+      initial={{
+        x: animation.from.x,
+        y: animation.from.y,
+        width: CARD_NATIVE_WIDTH * animation.from.scale,
+        height: CARD_NATIVE_HEIGHT * animation.from.scale,
+        opacity: 1,
+      }}
+      animate={{
+        // 4 keyframes now, not 3 — from -> pullback (the "slingshot"
+        // wind-up) -> to -> to (holding for the fade). Every property
+        // shares this same shape deliberately: a mismatched keyframe
+        // count is what caused the fade-during-flight bug fixed
+        // earlier, since framer-motion spreads a shorter property
+        // evenly across the FULL duration regardless of `times`.
+        x: [animation.from.x, animation.pullback.x, animation.to.x, animation.to.x],
+        y: [animation.from.y, animation.pullback.y, animation.to.y, animation.to.y],
+        width: [
+          CARD_NATIVE_WIDTH * animation.from.scale,
+          CARD_NATIVE_WIDTH * animation.from.scale,
+          CARD_NATIVE_WIDTH * animation.to.scale,
+          CARD_NATIVE_WIDTH * animation.to.scale,
+        ],
+        height: [
+          CARD_NATIVE_HEIGHT * animation.from.scale,
+          CARD_NATIVE_HEIGHT * animation.from.scale,
+          CARD_NATIVE_HEIGHT * animation.to.scale,
+          CARD_NATIVE_HEIGHT * animation.to.scale,
+        ],
+        // Stays fully visible through both the wind-up and the snap,
+        // fading only over the final stretch once it's actually
+        // arrived — see ATTACK_RESOLUTION_FADE_START.
+        opacity: [1, 1, 1, 0],
+      }}
+      transition={{
+        duration: ATTACK_RESOLUTION_DURATION_S,
+        times: [0, ATTACK_SLINGSHOT_PULLBACK_TIME, ATTACK_RESOLUTION_FADE_START, 1],
+        // One easing per segment (3 segments for 4 keyframes): the
+        // wind-up decelerates INTO the pulled-back point (a deliberate,
+        // slowing pull), the snap accelerates OUT of it toward the
+        // target (building speed as it releases — the actual
+        // "slingshot" feel), and the final hold segment doesn't move at
+        // all, so its own easing is irrelevant.
+        ease: ['easeOut', 'easeIn', 'linear'],
+      }}
+      style={{ position: 'absolute', left: 0, top: 0, zIndex: 490, pointerEvents: 'none' }}
+    >
+      <img
+        src={attackOverlayImg}
+        alt=""
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'block',
+          transform: `rotate(${animation.rotation}deg)`,
+          transformOrigin: 'center center',
+        }}
+      />
+    </motion.div>
+  );
+
   // True while EITHER side's Main Deck is currently shuffling (see
   // DeckShuffleAnimation above) — checked once per render rather than
   // per-entry, since every visible pile card on a given side shares the
@@ -1792,6 +2137,18 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
             </motion.div>
           );
         })()}
+
+      {pendingAttackIndex !== null &&
+        (() => {
+          const attackerInstanceId = me?.monsterZones[pendingAttackIndex]?.instanceId;
+          const attackerEntry = attackerInstanceId
+            ? entries.find((entry) => entry.instanceId === attackerInstanceId)
+            : null;
+          if (!attackerEntry) return null;
+          return <AttackAimOverlay entry={attackerEntry} mousePosition={attackMousePosition} />;
+        })()}
+
+      {attackResolutionAnimations.map((animation) => renderAttackResolutionAnimation(animation))}
     </div>
   );
 });

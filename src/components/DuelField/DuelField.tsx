@@ -274,6 +274,17 @@ interface PlayerFieldProps {
   // side the way it does for Move's own cross-field handler.
   isSelectingEquipTarget?: boolean;
   onEquipTarget?: (flipped: boolean, index: number) => void;
+  // "Attack target" mode — set while an attack is waiting on its target
+  // monster (see MultiplayerDuelFieldPage's own pendingAttack). Unlike
+  // isSelectingEquipTarget above, this is meaningful ONLY on the
+  // OPPONENT's (flipped) side — you can only ever attack the opponent's
+  // own monsters, never your own — so onAttackTarget takes just the
+  // slot index, no flipped flag: DuelField's own two calls below pass
+  // this prop only to the flipped PlayerField instance, never the
+  // player's own. Only ever offered for an OCCUPIED Monster Zone slot,
+  // same as Equip target.
+  isSelectingAttackTarget?: boolean;
+  onAttackTarget?: (index: number) => void;
   // Reports whichever Monster/Spell-Trap Zone card (either side) is
   // currently hovered, or null when nothing is — resolved here from
   // FieldZone's own plain onHoverChange boolean against whatever
@@ -326,6 +337,8 @@ function PlayerField({
   onMoveToOpponentTarget,
   isSelectingEquipTarget = false,
   onEquipTarget,
+  isSelectingAttackTarget = false,
+  onAttackTarget,
   onFieldInstanceHoverChange,
 }: PlayerFieldProps) {
   const fieldZones = flipped ? [...FIELD_ZONES].reverse() : FIELD_ZONES;
@@ -459,7 +472,8 @@ function PlayerField({
             isSelectingEvolutionMaterial ||
             isSelectingRitualMaterial ||
             isSelectingMoveDestination ||
-            isSelectingEquipTarget;
+            isSelectingEquipTarget ||
+            isSelectingAttackTarget;
 
           return (
             <FieldZone
@@ -516,9 +530,11 @@ function PlayerField({
                           ? () => onMoveToOpponentTarget(slotIndex)
                           : isSelectingEquipTarget && placed && onEquipTarget
                             ? () => onEquipTarget(flipped, slotIndex)
-                            : placed && onSelectCard
-                              ? () => onSelectCard(placed.instanceId)
-                              : undefined
+                            : isSelectingAttackTarget && flipped && placed && onAttackTarget
+                              ? () => onAttackTarget(slotIndex)
+                              : placed && onSelectCard
+                                ? () => onSelectCard(placed.instanceId)
+                                : undefined
               }
               selected={
                 (isSelectingFusionMaterial && selectedMaterialIndices.includes(slotIndex)) ||
@@ -783,6 +799,10 @@ interface DuelFieldProps {
   // PlayerFieldProps' own copy of these two for the full reasoning.
   isSelectingEquipTarget?: boolean;
   onEquipTarget?: (flipped: boolean, index: number) => void;
+  // Passed only to the flipped (opponent) PlayerField instance below —
+  // see PlayerFieldProps' own copy for the full reasoning.
+  isSelectingAttackTarget?: boolean;
+  onAttackTarget?: (index: number) => void;
   // See PlayerFieldProps' own copy for the full reasoning.
   onFieldInstanceHoverChange?: (instanceId: string | null) => void;
 }
@@ -836,6 +856,8 @@ function DuelField({
   onMoveToOpponentTarget,
   isSelectingEquipTarget = false,
   onEquipTarget,
+  isSelectingAttackTarget = false,
+  onAttackTarget,
   onFieldInstanceHoverChange,
 }: DuelFieldProps) {
   return (
@@ -859,6 +881,8 @@ function DuelField({
         onMoveToOpponentTarget={onMoveToOpponentTarget}
         isSelectingEquipTarget={isSelectingEquipTarget}
         onEquipTarget={onEquipTarget}
+        isSelectingAttackTarget={isSelectingAttackTarget}
+        onAttackTarget={onAttackTarget}
         onFieldInstanceHoverChange={onFieldInstanceHoverChange}
         isMyTurn={isMyTurn}
         turnNumber={turnNumber}

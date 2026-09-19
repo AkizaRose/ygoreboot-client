@@ -142,6 +142,26 @@ interface PublicPlayerState {
   // current contents, not a stale snapshot from the moment the button
   // was pressed. null whenever nothing is currently revealed.
   revealedHand: CardInstance[] | null;
+  // A one-shot event: this player just resolved an attack from their own
+  // monsterZones[fromIndex]. toIndex is the DEFENDING player's own
+  // monsterZones index (null for a direct attack, with no monster
+  // targeted) — unambiguous without also recording which role that is,
+  // since the reader already knows the attacker's role (this object's
+  // own owner) and therefore who the defender is. Set once, by the
+  // attacking player's own client, the moment they resolve (see
+  // MultiplayerDuelFieldPage's own handleAttackTargetClick and the
+  // direct-attack path in handleFieldAction) — both clients detect it
+  // and play the SAME resolution animation (see CardLayer's own
+  // activeAttackAnimations), then the attacker's own client clears it
+  // back to null shortly after (see ATTACK_RESOLUTION_CLEAR_MS). id
+  // exists purely so a second attack from the same fromIndex to the
+  // same toIndex still counts as a fresh, distinct event — the object
+  // itself would otherwise look identical to the previous one. Unlike
+  // pendingAttack (MultiplayerDuelFieldPage's own local aiming state),
+  // this is never set while still deciding where to aim — only once
+  // actually resolved, since the opponent has no reason to see a
+  // targeting reticle waving around before an attack is committed.
+  activeAttack: { id: string; fromIndex: number; toIndex: number | null } | null;
 }
 
 // The half that must stay private — genuinely unreadable by the
@@ -199,6 +219,38 @@ interface DuelDoc {
   // "Hide Hand") — never left stale, so a later, genuinely new signal
   // (even reusing the same role) is always a real change to react to.
   handRevealExitedBy?: PlayerRole | null;
+  // The current state of a match-ending action — Admit Defeat or Offer
+  // Draw (see MultiplayerDuelFieldPage's own handleAdmitDefeat/
+  // handleOfferDraw and friends). A shared, top-level field rather than
+  // part of either player's own public state (unlike, say, equippedTo):
+  // this describes the WHOLE match's own outcome, not something that
+  // belongs to one player's own slice of it.
+  //   'drawOffered' — offererRole offered a draw; the OTHER player is
+  //     being shown an Accept/Decline prompt. Transient: only ever
+  //     followed by 'drawAccepted' or 'drawDeclined' below.
+  //   'drawDeclined' — the other player declined; offererRole is who
+  //     offered (so their own client knows this concerns them) and is
+  //     shown "declined" — the ONLY player who sees anything further,
+  //     since the decliner already knows their own choice. Cleared back
+  //     to null by the OFFERER's own client once THEY click OK on that
+  //     dialog (see handleAcknowledgeDrawDeclined) — the match resumes
+  //     normally at that point, so this never lingers once
+  //     acknowledged.
+  //   'defeatAdmitted' — loserRole admitted defeat. Permanent: the
+  //     match is over, and this is never cleared.
+  //   'drawAccepted' — the draw offer was accepted. Also permanent, for
+  //     the same reason.
+  // null the rest of the time (including after a decline is
+  // acknowledged) — MultiplayerDuelFieldPage's own buttons are disabled
+  // only for the two permanent outcomes, matching the game genuinely
+  // being over specifically then, not merely a pending or declined
+  // offer.
+  matchConclusion?:
+    | { type: 'drawOffered'; offererRole: PlayerRole }
+    | { type: 'drawDeclined'; offererRole: PlayerRole }
+    | { type: 'defeatAdmitted'; loserRole: PlayerRole }
+    | { type: 'drawAccepted' }
+    | null;
   // Every monster currently in transit to the OPPONENT's Monster Zone
   // (see MultiplayerDuelFieldPage's own handleMoveToOpponentTarget) — a
   // handoff, same idea as turnEnding/Start Turn above: a client can only
@@ -401,6 +453,7 @@ export interface MyDuelState {
   openingHandDealt: boolean;
   revealedCard: PlacedCard | null;
   lastMainDeckReturnSide: 'top' | 'bottom' | null;
+  activeAttack: { id: string; fromIndex: number; toIndex: number | null } | null;
 }
 
 export interface OpponentDuelState extends PublicPlayerState {
@@ -471,6 +524,14 @@ interface UseMultiplayerDuelResult {
   // Resolved straight from DuelDoc's own field of the same name — see
   // that field's own comment for the full reasoning.
   handRevealExitedBy: PlayerRole | null;
+  // Resolved straight from DuelDoc's own field of the same name — see
+  // that field's own comment for the full reasoning.
+  matchConclusion:
+    | { type: 'drawOffered'; offererRole: PlayerRole }
+    | { type: 'drawDeclined'; offererRole: PlayerRole }
+    | { type: 'defeatAdmitted'; loserRole: PlayerRole }
+    | { type: 'drawAccepted' }
+    | null;
 }
 
 function buildInitialState(
@@ -521,6 +582,7 @@ function buildInitialState(
       revealedCard: null,
       lastMainDeckReturnSide: null,
       revealedHand: null,
+      activeAttack: null,
     },
     privateState: { hand, mainDeck, extraDeck: extraInstances },
   };
@@ -719,5 +781,6 @@ export function useMultiplayerDuel(
     pendingCardReturns: duelDoc?.pendingCardReturns ?? [],
     pendingPileRequests: duelDoc?.pendingPileRequests ?? [],
     handRevealExitedBy: duelDoc?.handRevealExitedBy ?? null,
+    matchConclusion: duelDoc?.matchConclusion ?? null,
   };
 }

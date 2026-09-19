@@ -12,6 +12,7 @@ import useAnimatedCount from '../components/DuelField/useAnimatedCount';
 import PlayerAvatarBox from '../components/Avatar/PlayerAvatarBox';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
 import StatAdjustDialog from '../components/DuelField/StatAdjustDialog';
+import ConfirmDialog from '../components/ConfirmDialog/ConfirmDialog';
 import CardLayer, { type CardLayerHandle } from '../duel/CardLayer';
 import { computeCardPositions } from '../duel/cardPositions';
 import { BOARD_WIDTH, STAGE_HEIGHT } from '../duel/cardGeometry';
@@ -119,6 +120,7 @@ function MultiplayerDuelFieldPage() {
     pendingCardReturns,
     pendingPileRequests,
     handRevealExitedBy,
+    matchConclusion,
   } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
 
   // Called unconditionally (hooks can't be conditional), with a
@@ -177,6 +179,31 @@ function MultiplayerDuelFieldPage() {
     }
     previousOpponentHandRevealedRef.current = isRevealed;
   }, [opponent?.revealedHand]);
+
+  // The initial "are you sure?" prompts — purely local, shown before
+  // either action actually writes anything to matchConclusion at all.
+  const [showAdmitDefeatConfirm, setShowAdmitDefeatConfirm] = useState(false);
+  const [showOfferDrawConfirm, setShowOfferDrawConfirm] = useState(false);
+  // Tracks which matchConclusion this client has already clicked OK on
+  // (see handleAcknowledgeMatchConclusion), as a stable, derived key
+  // rather than the raw object itself — duelDoc is rebuilt fresh from
+  // every Firestore snapshot regardless of which field actually
+  // changed, so comparing object references directly would treat an
+  // unrelated update (e.g. a life point change) as a "new" conclusion
+  // to show again. Both of the PERMANENT outcomes (defeatAdmitted,
+  // drawAccepted) rely on this — matchConclusion itself is never
+  // cleared for those, so without tracking dismissal separately, the
+  // dialog would reappear on every future render.
+  const [dismissedMatchConclusionKey, setDismissedMatchConclusionKey] = useState<string | null>(
+    null,
+  );
+  const matchConclusionKey = matchConclusion ? JSON.stringify(matchConclusion) : null;
+  // The two PERMANENT outcomes only — a pending or declined draw offer
+  // does NOT end the match, so Admit Defeat/Offer Draw stay enabled
+  // through those (see this file's own handleDeclineDraw/
+  // handleAcknowledgeDrawDeclined, which resume the match normally).
+  const isMatchOver =
+    matchConclusion?.type === 'defeatAdmitted' || matchConclusion?.type === 'drawAccepted';
   // Shown once, briefly, before the actual field ever renders — see the
   // render guard further down. Starts true on every mount rather than
   // being tied to turnNumber === 1 specifically, since a fresh page load
@@ -439,6 +466,38 @@ function MultiplayerDuelFieldPage() {
   // a single instanceId: the card hasn't been placed anywhere yet, so
   // there's no zone/index of its own to track until a target is chosen.
   const [pendingEquip, setPendingEquip] = useState<string | null>(null);
+
+  // The attacking monster's own zone index while waiting on a target
+  // (the "aiming" phase) — set by handleFieldAction's own 'attack'
+  // case, cleared once a target is confirmed
+  // (handleAttackTargetClick) or the player cancels
+  // (handleAttackCancel). Purely local: the opponent has no reason to
+  // see a targeting reticle before an attack is actually committed —
+  // see PublicPlayerState's own activeAttack, which is what they DO
+  // see, once resolved.
+  const [pendingAttack, setPendingAttack] = useState<{ index: number } | null>(null);
+  // Raw viewport mouse coordinates, tracked only while pendingAttack is
+  // active — drives the attack overlay's own rotation in CardLayer (see
+  // that component's own pendingAttackMouse prop). null the rest of the
+  // time, both so CardLayer doesn't render the aiming overlay at all
+  // when there's nothing to aim, and so a stale position from a
+  // previous attack never briefly flashes at the start of a new one.
+  const [attackMousePosition, setAttackMousePosition] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!pendingAttack) {
+      setAttackMousePosition(null);
+      return;
+    }
+    const handleMouseMove = (event: MouseEvent) => {
+      setAttackMousePosition({ x: event.clientX, y: event.clientY });
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, [pendingAttack]);
 
   const handleCardHover = useCallback((card: CardData) => {
     if (hoverTimeoutRef.current !== undefined) {
@@ -745,6 +804,80 @@ function MultiplayerDuelFieldPage() {
         console.error('[MultiplayerDuelFieldPage] Failed to signal hand reveal exit:', err);
       },
     );
+  };
+
+  // --- Admit Defeat / Offer Draw ---
+
+  const handleAdmitDefeatClick = () => setShowAdmitDefeatConfirm(true);
+  const handleAdmitDefeatCancel = () => setShowAdmitDefeatConfirm(false);
+
+  const handleAdmitDefeatConfirm = () => {
+    setShowAdmitDefeatConfirm(false);
+    if (!duelId || !state.role) return;
+    setDoc(
+      doc(db, 'duels', duelId),
+      { matchConclusion: { type: 'defeatAdmitted', loserRole: state.role } },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to admit defeat:', err);
+    });
+  };
+
+  const handleOfferDrawClick = () => setShowOfferDrawConfirm(true);
+  const handleOfferDrawCancel = () => setShowOfferDrawConfirm(false);
+
+  const handleOfferDrawConfirm = () => {
+    setShowOfferDrawConfirm(false);
+    if (!duelId || !state.role) return;
+    setDoc(
+      doc(db, 'duels', duelId),
+      { matchConclusion: { type: 'drawOffered', offererRole: state.role } },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to offer draw:', err);
+    });
+  };
+
+  // Only ever shown to (and callable by) the player who was OFFERED the
+  // draw — see the dialog's own gating further down.
+  const handleAcceptDraw = () => {
+    if (!duelId) return;
+    setDoc(doc(db, 'duels', duelId), { matchConclusion: { type: 'drawAccepted' } }, { merge: true }).catch(
+      (err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to accept draw:', err);
+      },
+    );
+  };
+
+  const handleDeclineDraw = () => {
+    if (!duelId || matchConclusion?.type !== 'drawOffered') return;
+    setDoc(
+      doc(db, 'duels', duelId),
+      { matchConclusion: { type: 'drawDeclined', offererRole: matchConclusion.offererRole } },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to decline draw:', err);
+    });
+  };
+
+  // For the two PERMANENT outcomes (defeatAdmitted, drawAccepted) —
+  // matchConclusion itself is never cleared for these, so "OK" only
+  // ever needs to dismiss this client's own view of it, not write
+  // anything at all (see dismissedMatchConclusionKey's own comment).
+  const handleAcknowledgeMatchConclusion = () => setDismissedMatchConclusionKey(matchConclusionKey);
+
+  // Only for the OFFERER's own "declined" dialog — unlike the permanent
+  // outcomes above, a decline needs to actually clear matchConclusion
+  // back to null so the match resumes normally (buttons re-enabled, a
+  // fresh offer possible again). Dismisses locally too, in the same
+  // call, so the dialog disappears immediately rather than waiting on
+  // this write's own round trip back from Firestore.
+  const handleAcknowledgeDrawDeclined = () => {
+    setDismissedMatchConclusionKey(matchConclusionKey);
+    if (!duelId) return;
+    setDoc(doc(db, 'duels', duelId), { matchConclusion: null }, { merge: true }).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to acknowledge declined draw:', err);
+    });
   };
 
   // Turn-player-only, same guard duplicated in PhaseTracker itself (which
@@ -1278,6 +1411,23 @@ function MultiplayerDuelFieldPage() {
     handleEquipTarget(flipped ? opponentRole : state.role, index);
   };
 
+  // Resolves an attack onto a clicked opponent monster — DuelField's own
+  // onAttackTarget only ever fires for the opponent's (flipped) side to
+  // begin with (see PlayerFieldProps' own comment on why), so this
+  // needs no flipped/role resolution the way handleEquipTargetClick
+  // above does.
+  const handleAttackTargetClick = (targetIndex: number) => {
+    if (!pendingAttack) return;
+    const fromIndex = pendingAttack.index;
+    setPendingAttack(null);
+    applyMeUpdate((current) => ({
+      ...current,
+      activeAttack: { id: crypto.randomUUID(), fromIndex, toIndex: targetIndex },
+    }));
+  };
+
+  const handleAttackCancel = () => setPendingAttack(null);
+
   const handleHandToGrave = (instanceId: string) =>
     applyMeUpdate((current) => {
       const instance = current.hand.find((i) => i.instanceId === instanceId);
@@ -1478,7 +1628,22 @@ function MultiplayerDuelFieldPage() {
       `[handleFieldAction] clicked zoneType=${zoneType} index=${index} actionKey=${actionKey} instanceId=${clickedPlaced?.instanceId ?? '(none)'}`,
     );
 
-    if (actionKey === 'attack') return; // no combat system yet
+    if (actionKey === 'attack') {
+      // Skips the whole aiming/targeting flow entirely when there's
+      // nothing to target — resolves straight to a direct attack (see
+      // PublicPlayerState's own activeAttack, toIndex: null) rather than
+      // showing a targeting reticle with nowhere valid to click.
+      const opponentHasMonsters = opponent?.monsterZones.some((zone) => zone !== null) ?? false;
+      if (!opponentHasMonsters) {
+        applyMeUpdate((current) => ({
+          ...current,
+          activeAttack: { id: crypto.randomUUID(), fromIndex: index, toIndex: null },
+        }));
+      } else {
+        setPendingAttack({ index });
+      }
+      return;
+    }
 
     if (actionKey === 'view') {
       if (zoneType === 'monster') setViewingOwnStackIndex(index);
@@ -2719,6 +2884,28 @@ function MultiplayerDuelFieldPage() {
           </button>
         </div>
 
+        {/* Positioned via CSS (absolute, bottom-left of .content) — same
+            column as Exit above, at the bottom of the screen instead of
+            the top. */}
+        <div className="MultiplayerDuelFieldPage-matchActionsRow">
+          <button
+            type="button"
+            className="MultiplayerDuelFieldPage-matchActionButton"
+            disabled={isMatchOver}
+            onClick={handleAdmitDefeatClick}
+          >
+            Admit Defeat
+          </button>
+          <button
+            type="button"
+            className="MultiplayerDuelFieldPage-matchActionButton"
+            disabled={isMatchOver}
+            onClick={handleOfferDrawClick}
+          >
+            Offer Draw
+          </button>
+        </div>
+
         <div className="MultiplayerDuelFieldPage-fieldArea">
           {/* The shared coordinate origin DuelField's zones, Hand's
               cells, and CardLayer's rendered cards all agree on — see
@@ -2798,6 +2985,8 @@ function MultiplayerDuelFieldPage() {
               onMoveToOpponentTarget={handleMoveToOpponentTarget}
               isSelectingEquipTarget={pendingEquip !== null}
               onEquipTarget={handleEquipTargetClick}
+              isSelectingAttackTarget={pendingAttack !== null}
+              onAttackTarget={handleAttackTargetClick}
               onFieldInstanceHoverChange={setHoveredFieldInstanceId}
               onSelectCard={handleSelectCard}
             />
@@ -2839,6 +3028,8 @@ function MultiplayerDuelFieldPage() {
               onToggleRitualHandMaterial={handleRitualHandMaterialToggle}
               hoveredHandInstanceId={hoveredHandInstanceId}
               hoveredFieldInstanceId={hoveredFieldInstanceId}
+              pendingAttackIndex={pendingAttack?.index ?? null}
+              attackMousePosition={attackMousePosition}
               onCardHover={handleCardHover}
               onCardHoverEnd={handleCardHoverEnd}
             />
@@ -2923,6 +3114,68 @@ function MultiplayerDuelFieldPage() {
           />
         </div>
       </div>
+
+      {showAdmitDefeatConfirm && (
+        <ConfirmDialog
+          message="Are you sure you want to admit defeat?"
+          buttons={[
+            { label: 'Yes', onClick: handleAdmitDefeatConfirm },
+            { label: 'No', onClick: handleAdmitDefeatCancel },
+          ]}
+          onDismiss={handleAdmitDefeatCancel}
+        />
+      )}
+
+      {showOfferDrawConfirm && (
+        <ConfirmDialog
+          message="Are you sure you want to offer a draw?"
+          buttons={[
+            { label: 'Yes', onClick: handleOfferDrawConfirm },
+            { label: 'No', onClick: handleOfferDrawCancel },
+          ]}
+          onDismiss={handleOfferDrawCancel}
+        />
+      )}
+
+      {matchConclusion?.type === 'drawOffered' &&
+        matchConclusion.offererRole !== state.role && (
+          <ConfirmDialog
+            message="Your opponent has offered a draw"
+            buttons={[
+              { label: 'Accept', onClick: handleAcceptDraw },
+              { label: 'Decline', onClick: handleDeclineDraw },
+            ]}
+          />
+        )}
+
+      {matchConclusion?.type === 'drawDeclined' &&
+        matchConclusion.offererRole === state.role &&
+        matchConclusionKey !== dismissedMatchConclusionKey && (
+          <ConfirmDialog
+            message="The opponent has declined the draw. The duel will continue"
+            buttons={[{ label: 'OK', onClick: handleAcknowledgeDrawDeclined }]}
+          />
+        )}
+
+      {matchConclusion?.type === 'defeatAdmitted' &&
+        matchConclusionKey !== dismissedMatchConclusionKey && (
+          <ConfirmDialog
+            message={
+              matchConclusion.loserRole === state.role
+                ? 'You lose the duel'
+                : 'Your opponent has admitted defeat. You win the duel!'
+            }
+            buttons={[{ label: 'OK', onClick: handleAcknowledgeMatchConclusion }]}
+          />
+        )}
+
+      {matchConclusion?.type === 'drawAccepted' &&
+        matchConclusionKey !== dismissedMatchConclusionKey && (
+          <ConfirmDialog
+            message="The game has ended in a draw"
+            buttons={[{ label: 'OK', onClick: handleAcknowledgeMatchConclusion }]}
+          />
+        )}
 
       {pendingSummon && (
         <SummonPositionDialog
@@ -3044,6 +3297,15 @@ function MultiplayerDuelFieldPage() {
         <div className="MultiplayerDuelFieldPage-materialSelectionBanner">
           <span>Select a monster (yours or your opponent's) to equip this card to</span>
           <button type="button" onClick={handleEquipCancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {pendingAttack && (
+        <div className="MultiplayerDuelFieldPage-materialSelectionBanner">
+          <span>Select an opponent's monster to attack</span>
+          <button type="button" onClick={handleAttackCancel}>
             Cancel
           </button>
         </div>

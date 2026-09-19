@@ -308,7 +308,14 @@ export function computeCardPositions(
   opponent: OpponentDuelState | null,
 ): CardPositionEntry[] {
   const entries: CardPositionEntry[] = [
-    ...handEntries(me.hand, 100),
+    // 300, not 50/200/250/260/270 — a hand card (including its own
+    // hover-lift, see CardLayer's own HAND_HOVER_LIFT) should always
+    // render above every static field zone (Monster, Spell/Trap, Field
+    // Zone, Grave, Banished), never underneath it. Still comfortably
+    // below the animation tiers (in-transit/returning/shuffling cards
+    // start at 320) and the reveal zone (400), which should stay on top
+    // of a static hand card regardless.
+    ...handEntries(me.hand, 300),
     ...deckPileEntries(me.mainDeck, 'mainDeck', false, 50),
     ...deckPileEntries(me.extraDeck, 'extraDeck', false, 50),
     ...monsterZoneEntries(me.monsterZones, false, 200),
@@ -342,13 +349,16 @@ export function computeCardPositions(
       // the opponent's side: CardLayer's own animated elements existed,
       // but the actually-visible cards were a completely different,
       // non-animated set of <img> elements elsewhere on the page.
+      // Same 300 base as the player's own hand above, and for the same
+      // reason — the opponent's own hand should render above the field
+      // too, not underneath it.
       ...buildOpponentHiddenEntries(
         opponent.handCount,
         'opponent-hand',
         (index, count) => getOpponentHandSlot(count, index),
         180,
         HAND_CARD_SCALE,
-        100,
+        300,
       ),
     );
   }

@@ -18,6 +18,7 @@
 }
 
 .MultiplayerDuelFieldPage-content {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -158,6 +159,54 @@
 
 .MultiplayerDuelFieldPage-revealHandButton--active:hover {
   background: #8a2b2bee;
+}
+
+/* Positioned relative to .MultiplayerDuelFieldPage-content — the same
+   box .MultiplayerDuelFieldPage-topActions (the Exit button) lives in
+   — rather than inside playerHud on the right side of the screen. left:
+   0 lines its own left edge up with Exit's own (topActions has no
+   horizontal offset of its own either, just align-self: flex-start),
+   so the two sit in the same column without needing to know
+   sidePanel's own actual rendered width at all. */
+.MultiplayerDuelFieldPage-matchActionsRow {
+  position: absolute;
+  bottom: 42px;
+  left: 0;
+  /* Without this, .fieldArea (also position: relative, and later in
+     the DOM) wins the default stacking order and sits on top of this
+     row, intercepting every click aimed at the buttons underneath it —
+     even though they're still visually rendered. Same z-index as
+     playerHud/opponentHud, the other absolutely-positioned HUD
+     elements this one is conceptually grouped with. */
+  z-index: 100;
+  display: flex;
+  gap: 8px;
+}
+
+/* Same base look as Shuffle Hand/Reveal Hand's own buttons, matched
+   deliberately rather than a shared class (see those buttons' own
+   comment on why) — plus a disabled state, since these two go
+   permanently inert once the match is actually over. */
+.MultiplayerDuelFieldPage-matchActionButton {
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.MultiplayerDuelFieldPage-matchActionButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.MultiplayerDuelFieldPage-matchActionButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #16171dee;
 }
 
 .MultiplayerDuelFieldPage-status {
