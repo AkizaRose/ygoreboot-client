@@ -42,3 +42,4 @@ function ConfirmDialog({ message, buttons, onDismiss }: ConfirmDialogProps) {
 }
 
 export default ConfirmDialog;
+
