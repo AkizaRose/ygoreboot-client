@@ -121,6 +121,11 @@ function MultiplayerDuelFieldPage() {
     pendingPileRequests,
     handRevealExitedBy,
     matchConclusion,
+    matchWins,
+    duelNumber,
+    duelStartingRole,
+    matchOutcome,
+    startNextDuel,
   } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
 
   // Called unconditionally (hooks can't be conditional), with a
@@ -190,27 +195,36 @@ function MultiplayerDuelFieldPage() {
   // every Firestore snapshot regardless of which field actually
   // changed, so comparing object references directly would treat an
   // unrelated update (e.g. a life point change) as a "new" conclusion
-  // to show again. Both of the PERMANENT outcomes (defeatAdmitted,
-  // drawAccepted) rely on this — matchConclusion itself is never
-  // cleared for those, so without tracking dismissal separately, the
-  // dialog would reappear on every future render.
+  // to show again. Both of the PERMANENT-per-duel outcomes
+  // (defeatAdmitted, drawAccepted) rely on this — matchConclusion
+  // itself is never cleared for those, so without tracking dismissal
+  // separately, the dialog would reappear on every future render.
   const [dismissedMatchConclusionKey, setDismissedMatchConclusionKey] = useState<string | null>(
     null,
   );
-  const matchConclusionKey = matchConclusion ? JSON.stringify(matchConclusion) : null;
-  // The two PERMANENT outcomes only — a pending or declined draw offer
-  // does NOT end the match, so Admit Defeat/Offer Draw stay enabled
-  // through those (see this file's own handleDeclineDraw/
-  // handleAcknowledgeDrawDeclined, which resume the match normally).
-  const isMatchOver =
-    matchConclusion?.type === 'defeatAdmitted' || matchConclusion?.type === 'drawAccepted';
+  // duelNumber folded into the key so an identical-looking outcome
+  // (e.g. the same loserRole admits defeat again in a later duel) is
+  // never mistaken for one already dismissed.
+  const matchConclusionKey = matchConclusion ? `${duelNumber}:${JSON.stringify(matchConclusion)}` : null;
+  // Same idea as dismissedMatchConclusionKey above, for the WHOLE
+  // MATCH's own final outcome (see matchOutcomeKey's own use further
+  // down) — matchOutcome is permanent once set, so this is what lets
+  // "OK" on that dialog actually dismiss it.
+  const [dismissedMatchOutcomeKey, setDismissedMatchOutcomeKey] = useState<string | null>(null);
+  const matchOutcomeKey = matchOutcome ? JSON.stringify(matchOutcome) : null;
+  // The whole MATCH being over (a player has won 2 duels, or both reach
+  // 2 via a draw) — not merely the current duel having ended, since an
+  // undecided duel result is followed automatically by a fresh duel
+  // (see handleAcknowledgeMatchConclusion below).
+  const isMatchOver = matchOutcome !== null;
   // Shown once, briefly, before the actual field ever renders — see the
   // render guard further down. Starts true on every mount rather than
   // being tied to turnNumber === 1 specifically, since a fresh page load
   // re-runs useMultiplayerDuel's own initialization effect the same way
   // it currently re-shuffles a fresh starting hand on refresh — this
   // banner reappearing on refresh is consistent with that existing
-  // behavior, not a new one introduced here.
+  // behavior, not a new one introduced here. Also reused at the start of
+  // duel 2/3 (see resetLocalStateForNewDuel below).
   const [showFirstPlayerBanner, setShowFirstPlayerBanner] = useState(true);
   const hoverTimeoutRef = useRef<number | undefined>(undefined);
   // Tracks the most recently INTENDED state, updated synchronously by
@@ -276,11 +290,15 @@ function MultiplayerDuelFieldPage() {
   // turnPlayer first becomes known — before that, there's nothing to
   // announce yet (still waiting on the duel doc's first snapshot), so
   // the timer deliberately doesn't start until turnPlayer is non-null.
+  // Also keyed on duelNumber, not just turnPlayer, so this reliably
+  // re-fires at the start of duel 2/3 even in the (real, if uncommon)
+  // case where the next duel's own starting player happens to match
+  // whoever's turn it was when the previous duel ended.
   useEffect(() => {
     if (!turnPlayer) return;
     const timeoutId = window.setTimeout(() => setShowFirstPlayerBanner(false), 2500);
     return () => window.clearTimeout(timeoutId);
-  }, [turnPlayer]);
+  }, [turnPlayer, duelNumber]);
 
   // Deals the opening hand one card at a time (both start at 0 — see
   // buildInitialState's own comment) rather than it just being there
@@ -308,7 +326,10 @@ function MultiplayerDuelFieldPage() {
   // banner is up — without this gate, the whole opening hand would be
   // dealt invisibly before the player ever sees the field, defeating
   // the entire point of dealing it one card at a time in the first
-  // place.
+  // place. This also naturally re-fires for duel 2/3: startNextDuel's
+  // own fresh publicState resets openingHandDealt to false and hand to
+  // [], so once that snapshot arrives this effect picks the deal back
+  // up on its own, with no extra plumbing needed.
   useEffect(() => {
     if (showFirstPlayerBanner) return;
     const current = renderMeState ?? me;
@@ -814,9 +835,21 @@ function MultiplayerDuelFieldPage() {
   const handleAdmitDefeatConfirm = () => {
     setShowAdmitDefeatConfirm(false);
     if (!duelId || !state.role) return;
+    const loserRole = state.role;
+    const winnerRole: PlayerRole = loserRole === 'player1' ? 'player2' : 'player1';
+    const nextWins = { ...matchWins, [winnerRole]: matchWins[winnerRole] + 1 };
+    const matchDecided = nextWins[winnerRole] >= 2;
     setDoc(
       doc(db, 'duels', duelId),
-      { matchConclusion: { type: 'defeatAdmitted', loserRole: state.role } },
+      {
+        matchConclusion: { type: 'defeatAdmitted', loserRole },
+        matchWins: nextWins,
+        matchOutcome: matchDecided
+          ? { type: winnerRole === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch' }
+          : null,
+        // The loser of a decisive duel goes first next.
+        ...(matchDecided ? {} : { duelNumber: duelNumber + 1, duelStartingRole: loserRole }),
+      },
       { merge: true },
     ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to admit defeat:', err);
@@ -841,12 +874,31 @@ function MultiplayerDuelFieldPage() {
   // Only ever shown to (and callable by) the player who was OFFERED the
   // draw — see the dialog's own gating further down.
   const handleAcceptDraw = () => {
-    if (!duelId) return;
-    setDoc(doc(db, 'duels', duelId), { matchConclusion: { type: 'drawAccepted' } }, { merge: true }).catch(
-      (err) => {
-        console.error('[MultiplayerDuelFieldPage] Failed to accept draw:', err);
+    if (!duelId || !duelStartingRole) return;
+    const nextWins = { player1: matchWins.player1 + 1, player2: matchWins.player2 + 1 };
+    const matchOutcomeUpdate =
+      nextWins.player1 >= 2 && nextWins.player2 >= 2
+        ? ({ type: 'matchDraw' } as const)
+        : nextWins.player1 >= 2
+          ? ({ type: 'player1WinsMatch' } as const)
+          : nextWins.player2 >= 2
+            ? ({ type: 'player2WinsMatch' } as const)
+            : null;
+    // The player who went SECOND in the just-finished duel goes first
+    // in the next one.
+    const nextStartingRole: PlayerRole = duelStartingRole === 'player1' ? 'player2' : 'player1';
+    setDoc(
+      doc(db, 'duels', duelId),
+      {
+        matchConclusion: { type: 'drawAccepted' },
+        matchWins: nextWins,
+        matchOutcome: matchOutcomeUpdate,
+        ...(matchOutcomeUpdate ? {} : { duelNumber: duelNumber + 1, duelStartingRole: nextStartingRole }),
       },
-    );
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to accept draw:', err);
+    });
   };
 
   const handleDeclineDraw = () => {
@@ -860,11 +912,47 @@ function MultiplayerDuelFieldPage() {
     });
   };
 
-  // For the two PERMANENT outcomes (defeatAdmitted, drawAccepted) —
-  // matchConclusion itself is never cleared for these, so "OK" only
-  // ever needs to dismiss this client's own view of it, not write
-  // anything at all (see dismissedMatchConclusionKey's own comment).
-  const handleAcknowledgeMatchConclusion = () => setDismissedMatchConclusionKey(matchConclusionKey);
+  // Resets purely local, per-duel UI state for a fresh duel — everything
+  // server-driven (hand, field, life points, etc.) resets on its own once
+  // startNextDuel's own fresh state arrives, but these are local-only and
+  // would otherwise carry over stale from the duel that just ended.
+  const resetLocalStateForNewDuel = () => {
+    setShowFirstPlayerBanner(true);
+    lastAutoDrawnTurnRef.current = null;
+    setHoveredCard(null);
+    setHoveredHandInstanceId(null);
+    setHoveredFieldInstanceId(null);
+    setHandRevealed(false);
+    handRevealedRef.current = false;
+    setHandRevealDismissed(false);
+    setViewingOwnPile(null);
+    setViewingOpponentPile(null);
+    setViewingOwnStackIndex(null);
+    setViewingOpponentStackIndex(null);
+    setPendingAttack(null);
+    setAttackMousePosition(null);
+    setPendingSummon(null);
+    setPendingFusionSummon(null);
+    setPendingFusionPositionChoice(null);
+    setPendingEvolutionSummon(null);
+    setPendingRitualSummon(null);
+    setPendingMove(null);
+    setPendingEquip(null);
+  };
+
+  // For the two PERMANENT-per-DUEL outcomes (defeatAdmitted,
+  // drawAccepted) — matchConclusion itself is never cleared for these,
+  // so "OK" only ever needs to dismiss this client's own view of it. If
+  // the whole MATCH isn't over yet, this is also the moment this client
+  // starts its own next duel; if it IS over, there's nothing further to
+  // start — the match outcome dialog (see matchOutcomeKey below) takes
+  // over from here instead.
+  const handleAcknowledgeMatchConclusion = () => {
+    setDismissedMatchConclusionKey(matchConclusionKey);
+    if (matchOutcome) return;
+    resetLocalStateForNewDuel();
+    startNextDuel();
+  };
 
   // Only for the OFFERER's own "declined" dialog — unlike the permanent
   // outcomes above, a decline needs to actually clear matchConclusion
@@ -2765,7 +2853,8 @@ function MultiplayerDuelFieldPage() {
   // Shown once, before the field itself ever mounts — turnPlayer is
   // always known by this point (set as part of the same initial write
   // as everything else loading has already waited on above), so this is
-  // just "has the timeout in the effect above fired yet."
+  // just "has the timeout in the effect above fired yet." Also shown
+  // again at the start of duel 2/3 (see resetLocalStateForNewDuel).
   if (showFirstPlayerBanner && turnPlayer) {
     const firstPlayerName = turnPlayer === state.role ? currentUser?.displayName : opponent.username;
     return (
@@ -2773,6 +2862,7 @@ function MultiplayerDuelFieldPage() {
         <p className="MultiplayerDuelFieldPage-firstPlayerAnnouncement">
           {firstPlayerName} will go first
         </p>
+        <p className="MultiplayerDuelFieldPage-duelAnnouncementSubtext">Duel {duelNumber} of 3</p>
       </div>
     );
   }
@@ -2877,35 +2967,41 @@ function MultiplayerDuelFieldPage() {
         <CardDisplay card={hoveredCard} />
       </div>
 
+      <div className="MultiplayerDuelFieldPage-topActions">
+        <button type="button" onClick={() => navigate('/duel')}>
+          Exit
+        </button>
+      </div>
+
+      {/* Positioned via CSS (absolute, bottom-left of .content) — same
+      column as Exit above, at the bottom of the screen instead of
+      the top. */}
+      <div className="MultiplayerDuelFieldPage-matchActionsRow">
+        <button
+          type="button"
+          className="MultiplayerDuelFieldPage-matchActionButton"
+          disabled={isMatchOver}
+          onClick={handleAdmitDefeatClick}
+        >
+          Admit Defeat
+        </button>
+        <button
+          type="button"
+          className="MultiplayerDuelFieldPage-matchActionButton"
+          disabled={isMatchOver}
+          onClick={handleOfferDrawClick}
+        >
+          Offer Draw
+        </button>
+      </div>
+
+      <div className="MultiplayerDuelFieldPage-matchStatus">
+        Duel {duelNumber} of 3 — Wins: You{' '}
+        {state.role === 'player1' ? matchWins.player1 : matchWins.player2} · Opponent{' '}
+        {state.role === 'player1' ? matchWins.player2 : matchWins.player1}
+      </div>
+
       <div className="MultiplayerDuelFieldPage-content">
-        <div className="MultiplayerDuelFieldPage-topActions">
-          <button type="button" onClick={() => navigate('/duel')}>
-            Exit
-          </button>
-        </div>
-
-        {/* Positioned via CSS (absolute, bottom-left of .content) — same
-            column as Exit above, at the bottom of the screen instead of
-            the top. */}
-        <div className="MultiplayerDuelFieldPage-matchActionsRow">
-          <button
-            type="button"
-            className="MultiplayerDuelFieldPage-matchActionButton"
-            disabled={isMatchOver}
-            onClick={handleAdmitDefeatClick}
-          >
-            Admit Defeat
-          </button>
-          <button
-            type="button"
-            className="MultiplayerDuelFieldPage-matchActionButton"
-            disabled={isMatchOver}
-            onClick={handleOfferDrawClick}
-          >
-            Offer Draw
-          </button>
-        </div>
-
         <div className="MultiplayerDuelFieldPage-fieldArea">
           {/* The shared coordinate origin DuelField's zones, Hand's
               cells, and CardLayer's rendered cards all agree on — see
@@ -3174,6 +3270,25 @@ function MultiplayerDuelFieldPage() {
           <ConfirmDialog
             message="The game has ended in a draw"
             buttons={[{ label: 'OK', onClick: handleAcknowledgeMatchConclusion }]}
+          />
+        )}
+
+      {/* The whole MATCH's own final outcome — only appears once this
+          client has already acknowledged the just-finished duel's own
+          outcome dialog above (matchConclusionKey === dismissedMatchConclusionKey),
+          so the two never render on top of each other. */}
+      {matchOutcome &&
+        matchConclusionKey === dismissedMatchConclusionKey &&
+        matchOutcomeKey !== dismissedMatchOutcomeKey && (
+          <ConfirmDialog
+            message={
+              matchOutcome.type === 'matchDraw'
+                ? 'The match has ended in a draw.'
+                : matchOutcome.type === (state.role === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch')
+                  ? 'You win the match!'
+                  : 'Your opponent has won the match.'
+            }
+            buttons={[{ label: 'OK', onClick: () => setDismissedMatchOutcomeKey(matchOutcomeKey) }]}
           />
         )}
 

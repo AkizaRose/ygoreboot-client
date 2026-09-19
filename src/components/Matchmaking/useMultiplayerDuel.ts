@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { useAuth } from '../../auth/AuthContext';
@@ -236,20 +236,64 @@ interface DuelDoc {
   //     dialog (see handleAcknowledgeDrawDeclined) — the match resumes
   //     normally at that point, so this never lingers once
   //     acknowledged.
-  //   'defeatAdmitted' — loserRole admitted defeat. Permanent: the
-  //     match is over, and this is never cleared.
-  //   'drawAccepted' — the draw offer was accepted. Also permanent, for
-  //     the same reason.
+  //   'defeatAdmitted' — loserRole admitted defeat.
+  //   'drawAccepted' — the draw offer was accepted.
+  // Both defeatAdmitted and drawAccepted above are now PER-DUEL
+  // outcomes, not per-match — see matchOutcome below for the whole
+  // match's own, separate, permanent outcome. matchConclusion itself is
+  // never cleared for these two (dismissal is tracked client-side, see
+  // MultiplayerDuelFieldPage's own dismissedMatchConclusionKey), but the
+  // match keeps going (a fresh duel starts) unless matchOutcome also
+  // got set at the same time.
   // null the rest of the time (including after a decline is
   // acknowledged) — MultiplayerDuelFieldPage's own buttons are disabled
-  // only for the two permanent outcomes, matching the game genuinely
-  // being over specifically then, not merely a pending or declined
-  // offer.
+  // only once the whole MATCH is over (matchOutcome non-null), not
+  // merely because the current duel has ended.
   matchConclusion?:
     | { type: 'drawOffered'; offererRole: PlayerRole }
     | { type: 'drawDeclined'; offererRole: PlayerRole }
     | { type: 'defeatAdmitted'; loserRole: PlayerRole }
     | { type: 'drawAccepted' }
+    | null;
+  // Best-of-three match state — shared, top-level, and persists across
+  // every individual duel played within this same duel "room" (this
+  // whole app reuses one duelId per matchmaking pairing, so a "match" of
+  // up to 3 duels lives inside a single duels/{duelId} document rather
+  // than a separate collection). Only ONE client ever writes these at a
+  // time (the same single write that sets matchConclusion above — see
+  // MultiplayerDuelFieldPage's own handleAdmitDefeatConfirm/
+  // handleAcceptDraw), so there's no race the way there would be if
+  // both clients tried to increment these independently.
+  matchWins?: { player1: number; player2: number };
+  // Which duel of the match this is — starts at 1, incremented by the
+  // same single write that ends a duel and decides the match isn't over
+  // yet, at the same time as matchWins/duelStartingRole (see above).
+  // MultiplayerDuelFieldPage's own effect watches this to know when to
+  // rebuild and write a fresh duel for its own side (see startNextDuel
+  // below).
+  duelNumber?: number;
+  // Who goes first in the CURRENT duel — distinct from turnPlayer
+  // above, which changes as turns pass during the duel. Set once per
+  // duel: at the very first duel's own creation (identical to
+  // turnPlayer's own initial value there), and again by the same single
+  // write that starts each subsequent duel, computed from the
+  // just-finished duel's own outcome — the loser of a decisive duel
+  // goes first next, or (for a draw) whoever went SECOND in the
+  // just-finished duel goes first next (i.e. the opposite of this
+  // field's own previous value).
+  duelStartingRole?: PlayerRole;
+  // The WHOLE MATCH's own final outcome, once any player has won 2
+  // duels (or both reach 2 in the same duel via a draw) — null while
+  // the match is still undecided. Set by the same single write that
+  // ends the deciding duel. Unlike matchConclusion above (which
+  // describes just the most recent duel and gets superseded every
+  // duel), this is permanent once set — the match itself is over, and
+  // MultiplayerDuelFieldPage's own Admit Defeat/Offer Draw buttons stay
+  // disabled for good.
+  matchOutcome?:
+    | { type: 'player1WinsMatch' }
+    | { type: 'player2WinsMatch' }
+    | { type: 'matchDraw' }
     | null;
   // Every monster currently in transit to the OPPONENT's Monster Zone
   // (see MultiplayerDuelFieldPage's own handleMoveToOpponentTarget) — a
@@ -532,6 +576,25 @@ interface UseMultiplayerDuelResult {
     | { type: 'defeatAdmitted'; loserRole: PlayerRole }
     | { type: 'drawAccepted' }
     | null;
+  // --- Best-of-three match state — see DuelDoc's own comments for the
+  // full reasoning on each of these. ---
+  matchWins: { player1: number; player2: number };
+  duelNumber: number;
+  duelStartingRole: PlayerRole | null;
+  matchOutcome:
+    | { type: 'player1WinsMatch' }
+    | { type: 'player2WinsMatch' }
+    | { type: 'matchDraw' }
+    | null;
+  // Rebuilds and writes a brand-new duel (fresh shuffled deck, empty
+  // hand, full life points) for THIS client's own role only — safe for
+  // both clients to call independently, same "each client only ever
+  // writes its own slice" rule as everywhere else in this file. Called
+  // once per duel, after this player has acknowledged the previous
+  // duel's own outcome dialog, and only when the match itself isn't
+  // over (matchOutcome still null) — see MultiplayerDuelFieldPage's own
+  // handleAcknowledgeMatchConclusion.
+  startNextDuel: () => void;
 }
 
 function buildInitialState(
@@ -639,6 +702,11 @@ export function useMultiplayerDuel(
     const isPlayer1 = role === 'player1';
     const player1Uid = isPlayer1 ? currentUser.uid : opponentInfo.uid;
     const player2Uid = isPlayer1 ? opponentInfo.uid : currentUser.uid;
+    // Computed identically by both clients (see determineFirstPlayer's own
+    // comment) — same idempotent-merge safety as player1Uid/player2Uid
+    // above, not something that needs a coordinated write. Also doubles as
+    // duel 1's own duelStartingRole (see that field's own comment).
+    const firstPlayerRole = determineFirstPlayer(duelId, player1Uid, player2Uid);
 
     setDoc(
       doc(db, 'duels', duelId),
@@ -650,13 +718,14 @@ export function useMultiplayerDuel(
         player2Username: isPlayer1 ? opponentInfo.username : currentUser.displayName,
         player2AvatarId: isPlayer1 ? opponentInfo.avatarId : myAvatarId,
         createdAt: serverTimestamp(),
-        // Computed identically by both clients (see determineFirstPlayer's
-        // own comment) — same idempotent-merge safety as player1Uid/
-        // player2Uid above, not something that needs a coordinated write.
-        turnPlayer: determineFirstPlayer(duelId, player1Uid, player2Uid),
+        turnPlayer: firstPlayerRole,
         currentPhase: 'draw',
         turnEnding: false,
         turnNumber: 1,
+        matchWins: { player1: 0, player2: 0 },
+        duelNumber: 1,
+        duelStartingRole: firstPlayerRole,
+        matchOutcome: null,
         [role]: publicState,
       },
       { merge: true },
@@ -732,6 +801,29 @@ export function useMultiplayerDuel(
     return unsubscribe;
   }, [duelId, currentUser]);
 
+  // Rebuilds and writes a fresh duel for this client's own role — see
+  // UseMultiplayerDuelResult's own comment on startNextDuel. Deliberately
+  // NOT routed through MultiplayerDuelFieldPage's own applyMeUpdate: this
+  // is a hard reset, not an incremental change building on the previous
+  // duel — applyMeUpdate's own hand-shuffle/departure bookkeeping is
+  // meaningless here, since every card is leaving/entering as one
+  // transition, not a single move worth animating a "departure" for.
+  const startNextDuel = useCallback(() => {
+    if (!duelId || !role || !myDeckId || !currentUser) return;
+    const savedDeck = getSavedDeck(myDeckId);
+    if (!savedDeck) return;
+    const { publicState, privateState: freshPrivateState } = buildInitialState(
+      savedDeck.main,
+      savedDeck.extra,
+    );
+    setDoc(doc(db, 'duels', duelId), { [role]: publicState }, { merge: true }).catch((err) => {
+      console.error('[useMultiplayerDuel] Failed to start next duel (public state):', err);
+    });
+    setDoc(doc(db, 'duels', duelId, 'private', currentUser.uid), freshPrivateState).catch((err) => {
+      console.error('[useMultiplayerDuel] Failed to start next duel (private state):', err);
+    });
+  }, [duelId, role, myDeckId, currentUser, getSavedDeck]);
+
   let me: MyDuelState | null = null;
   let opponent: OpponentDuelState | null = null;
 
@@ -782,5 +874,10 @@ export function useMultiplayerDuel(
     pendingPileRequests: duelDoc?.pendingPileRequests ?? [],
     handRevealExitedBy: duelDoc?.handRevealExitedBy ?? null,
     matchConclusion: duelDoc?.matchConclusion ?? null,
+    matchWins: duelDoc?.matchWins ?? { player1: 0, player2: 0 },
+    duelNumber: duelDoc?.duelNumber ?? 1,
+    duelStartingRole: duelDoc?.duelStartingRole ?? null,
+    matchOutcome: duelDoc?.matchOutcome ?? null,
+    startNextDuel,
   };
 }

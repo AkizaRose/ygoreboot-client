@@ -27,7 +27,9 @@
 }
 
 .MultiplayerDuelFieldPage-topActions {
-  align-self: flex-start;
+  position: absolute;
+  bottom: 72px;
+  left: 0;
 }
 
 .MultiplayerDuelFieldPage-topActions button {
@@ -35,6 +37,19 @@
   font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
   padding: 2px 10px;
   cursor: pointer;
+}
+
+/* The best-of-three duel counter and win tally — sits directly under
+   Exit, in the same left-hand column, above the Admit Defeat/Offer Draw
+   row further down. */
+.MultiplayerDuelFieldPage-matchStatus {
+  position: absolute;
+  bottom: 6px;
+  left: 0;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 12px;
+  color: var(--text);
+  margin-top: 2px;
 }
 
 .MultiplayerDuelFieldPage-fieldArea {
@@ -170,7 +185,7 @@
    sidePanel's own actual rendered width at all. */
 .MultiplayerDuelFieldPage-matchActionsRow {
   position: absolute;
-  bottom: 42px;
+  bottom: 32px;
   left: 0;
   /* Without this, .fieldArea (also position: relative, and later in
      the DOM) wins the default stacking order and sits on top of this
@@ -236,6 +251,13 @@
    line. */
 .MultiplayerDuelFieldPage-firstPlayerAnnouncement {
   font-size: 28px;
+}
+
+/* The "Duel X of 3" line shown under the first-player announcement —
+   smaller and secondary to it. */
+.MultiplayerDuelFieldPage-duelAnnouncementSubtext {
+  font-size: 14px;
+  margin-top: 4px;
 }
 
 /* Floats above the field, centered, while either Fusion or Evolution
