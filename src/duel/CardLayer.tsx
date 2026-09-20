@@ -15,8 +15,8 @@ import type { CardInstance, PlacedCard } from '../types/CardInstance';
 import type { CardData } from '../types/Card';
 import CardImage from '../components/CardView/CardImage';
 import cardBackImg from '../assets/card/CardBack.png';
-import equipSpellOverlayImg from '../assets/ui/equipspelloverlay.png';
-import attackOverlayImg from '../assets/ui/attackoverlay.png';
+import equipSpellOverlayImg from '../assets/ui//duelfield/equipspelloverlay.png';
+import attackOverlayImg from '../assets/ui//duelfield/attackoverlay.png';
 import {
   CARD_NATIVE_WIDTH,
   CARD_NATIVE_HEIGHT,
