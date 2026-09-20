@@ -2,7 +2,7 @@
    comment) — this renders one row up, inside the opponent's own field
    row (DuelField.tsx's fieldRow), directly above it. */
 .TurnCounter {
-  grid-column: 7;
+  grid-column: 9;
   justify-self: center;
   align-self: center;
   z-index: 10;

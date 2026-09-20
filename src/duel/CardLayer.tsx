@@ -230,6 +230,20 @@ interface CardLayerProps {
   // whatever's underneath it, not here.
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
+  // Which best-of-three duel is currently in progress (see
+  // useMultiplayerDuel's own duelNumber) — the ONLY thing this component
+  // uses it for is detecting a hard duel reset (see isDuelReset further
+  // down): startNextDuel replaces the opponent's ENTIRE public state
+  // (hand, field, grave, banished, deck counts — everything) in one
+  // shot, all at once, under brand new instanceIds that share nothing
+  // with the previous duel's. Every diffing effect below is built to
+  // explain a single card's worth of change between two snapshots (a
+  // draw, a shuffle, one card moving to the grave, and so on) — fed a
+  // wholesale reset instead, they instead read as dozens of opponent
+  // cards simultaneously "disappearing" with the wrong explanation (see
+  // isDuelReset's own comment), which is what made the opponent's hand,
+  // field and grave all appear empty at the start of duels 2 and 3.
+  duelNumber?: number;
 }
 
 interface CardVisualPosition {
@@ -991,6 +1005,7 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     attackMousePosition = null,
     onCardHover,
     onCardHoverEnd,
+    duelNumber,
   },
   ref,
 ) {
@@ -1006,8 +1021,24 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
   // Deck) — neither has a real instanceId to key off at all, unlike
   // every other entry in returningCards.
   const anonymousSlideIdRef = useRef(0);
-  const previousOpponent = previousOpponentRef.current;
-  const previousEntries = previousEntriesRef.current;
+
+  // A hard duel reset (duelNumber just changed) is treated exactly like
+  // this component's very first mount: previousOpponent/previousEntries
+  // read as null/empty for THIS render, so every diffing effect below
+  // takes its own "nothing to compare against yet" branch instead of
+  // reading the previous duel's entire board as a pile of cards that
+  // mysteriously vanished. previousDuelNumberRef is deliberately read
+  // and written right here during render (not inside an effect): the
+  // ref has to already reflect the NEW duelNumber by the time
+  // previousOpponent/previousEntries are computed below, in this exact
+  // render — updating it inside a useEffect/useLayoutEffect would only
+  // take hold from the NEXT render onward, one render too late to stop
+  // this one from misreading the reset.
+  const previousDuelNumberRef = useRef(duelNumber);
+  const isDuelReset = duelNumber !== previousDuelNumberRef.current;
+  previousDuelNumberRef.current = duelNumber;
+  const previousOpponent = isDuelReset ? null : previousOpponentRef.current;
+  const previousEntries = isDuelReset ? [] : previousEntriesRef.current;
 
   // CardLayer normally lives inside boardStage and therefore uses board-space
   // coordinates. The opponent hand is deliberately rendered in a viewport
@@ -1062,6 +1093,31 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     AttackResolutionAnimation[]
   >([]);
   const [inTransitCards, setInTransitCards] = useState<InTransitCard[]>([]);
+
+  // Clears out any leftover in-flight animation from the duel that just
+  // ended (e.g. an attack or a card transfer that was still resolving
+  // the instant the duel's outcome was decided) so nothing from it lingers
+  // as a stray ghost card once the fresh duel's own state arrives. The
+  // version/attack-id refs those animations are keyed off also get reset
+  // here, rather than waiting for their own detection effects to notice —
+  // those compare against the FRESH duel's starting values on the very
+  // next run regardless, but resetting them explicitly means a value
+  // that happens to coincide with where duel 1 left off can never be
+  // mistaken for "no change" and skipped.
+  useEffect(() => {
+    if (!isDuelReset) return;
+    setReturningCards([]);
+    setInTransitCards([]);
+    setShufflingCards([]);
+    setDeckShuffleAnimations([]);
+    setAttackResolutionAnimations([]);
+    previousMeShuffleVersionRef.current = me?.handShuffleVersion ?? null;
+    previousOpponentShuffleVersionRef.current = opponent?.handShuffleVersion ?? null;
+    previousMeMainDeckShuffleVersionRef.current = me?.mainDeckShuffleVersion ?? null;
+    previousOpponentMainDeckShuffleVersionRef.current = opponent?.mainDeckShuffleVersion ?? null;
+    previousMeActiveAttackIdRef.current = me?.activeAttack?.id ?? null;
+    previousOpponentActiveAttackIdRef.current = opponent?.activeAttack?.id ?? null;
+  }, [isDuelReset, me, opponent]);
 
   useEffect(() => {
     if (previousOpponent && opponent) {

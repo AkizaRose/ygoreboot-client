@@ -1,12 +1,13 @@
 /* Sits where the old center dividing line used to be, horizontally
    aligned with the player's own Banished Zone column (see DuelField.tsx
-   — this renders at grid-column: 7 of that same row, matching exactly
-   how Banished Zone's own column is positioned there). Deliberately
-   wider than one 72px column — the arrows need room on either side of
-   the label — so this is allowed to overflow into the row's own 40px
-   gaps rather than being squeezed into a single column's width. */
+   — this renders at grid-column: 9 of that same row, matching exactly
+   how Banished Zone's own column is positioned there — DuelField.css's
+   own .DuelField-row grid is 9 columns wide). Deliberately wider than
+   one 72px column — the arrows need room on either side of the label —
+   so this is allowed to overflow into the row's own 40px gaps rather
+   than being squeezed into a single column's width. */
 .PhaseTracker {
-  grid-column: 7;
+  grid-column: 9;
   justify-self: center;
   align-self: center;
   display: flex;

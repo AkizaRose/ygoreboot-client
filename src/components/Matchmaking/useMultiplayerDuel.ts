@@ -633,8 +633,8 @@ function buildInitialState(
       handCount: hand.length,
       mainDeckCount: mainDeck.length,
       extraDeckCount: extraInstances.length,
-      monsterZones: [null, null, null],
-      spellTrapZones: [null, null, null],
+      monsterZones: [null, null, null, null, null],
+      spellTrapZones: [null, null, null, null, null],
       grave: [],
       banished: [],
       fieldZone: null,
@@ -671,6 +671,15 @@ export function useMultiplayerDuel(
   // would attempt to re-shuffle and re-write a fresh starting hand over
   // an already-started duel.
   const hasInitializedRef = useRef(false);
+
+  // retryTick exists purely to force the initialization write below and
+  // both onSnapshot subscriptions further down to tear down and
+  // re-attach from scratch — see the watchdog effect below those
+  // subscriptions for when and why that's needed. Bumping it is
+  // deliberately the ONLY thing that effect does; actually detecting
+  // "stuck" and deciding to retry lives in one place, not duplicated
+  // into each subscription.
+  const [retryTick, setRetryTick] = useState(0);
 
   // Initializes MY OWN side of the duel — safe to run regardless of
   // whether the other player already created the document, or does so
@@ -740,36 +749,24 @@ export function useMultiplayerDuel(
         setError('Could not start the duel. Please try again.');
       },
     );
-  }, [duelId, role, opponentInfo, myDeckId, currentUser, myAvatarId, decksLoading, getSavedDeck]);
+  }, [
+    duelId,
+    role,
+    opponentInfo,
+    myDeckId,
+    currentUser,
+    myAvatarId,
+    decksLoading,
+    getSavedDeck,
+    retryTick,
+  ]);
 
   useEffect(() => {
     if (!duelId) return;
     const unsubscribe = onSnapshot(
       doc(db, 'duels', duelId),
       (snapshot) => {
-        const data = snapshot.exists() ? (snapshot.data() as DuelDoc) : null;
-        // TEMPORARY DIAGNOSTIC — remove once the animation bug is
-        // confirmed fixed. Logs the RAW data this specific snapshot
-        // firing actually delivered — hasPendingWrites/fromCache tell us
-        // whether this is a local optimistic echo or a server-confirmed
-        // value, and the instanceId lists let us directly compare
-        // against what MultiplayerDuelFieldPage's own diagnostic
-        // reported as missing, rather than inferring it secondhand.
-        const summarize = (role: 'player1' | 'player2') => {
-          const p = data?.[role];
-          if (!p) return null;
-          return {
-            monsterZones: p.monsterZones.map((c) => c?.instanceId ?? null),
-            grave: p.grave.map((c) => c.instanceId),
-          };
-        };
-        console.log('[useMultiplayerDuel] duelDoc snapshot', {
-          hasPendingWrites: snapshot.metadata.hasPendingWrites,
-          fromCache: snapshot.metadata.fromCache,
-          player1: summarize('player1'),
-          player2: summarize('player2'),
-        });
-        setDuelDoc(data);
+        setDuelDoc(snapshot.exists() ? (snapshot.data() as DuelDoc) : null);
       },
       (err) => {
         // A silent failure here (no error callback at all) is exactly
@@ -784,7 +781,7 @@ export function useMultiplayerDuel(
       },
     );
     return unsubscribe;
-  }, [duelId]);
+  }, [duelId, retryTick]);
 
   useEffect(() => {
     if (!duelId || !currentUser) return;
@@ -799,7 +796,41 @@ export function useMultiplayerDuel(
       },
     );
     return unsubscribe;
-  }, [duelId, currentUser]);
+  }, [duelId, currentUser, retryTick]);
+
+  // Self-heals the "stuck on Waiting for both players to be ready"
+  // bug: an onSnapshot listener that quietly never receives the update
+  // it's waiting for (rather than actually erroring — the error
+  // callbacks above already cover the case where it fails outright)
+  // doesn't retry on its own, and previously the only fix was manually
+  // leaving and rejoining the duel, which works only because it forces
+  // a full remount — fresh listeners, and (since hasInitializedRef
+  // resets with it) a fresh init write too. This reproduces exactly
+  // that recovery automatically instead of requiring it: if role,
+  // opponentInfo and myDeckId are all present (so this genuinely SHOULD
+  // be loading normally, not stuck on missing session info) but
+  // `opponent` still hasn't shown up after a few seconds, bump
+  // retryTick to tear down and re-attach both listeners, and clear
+  // hasInitializedRef so this client's own write — safe and idempotent
+  // to redo, per that effect's own comment — goes out again too, in
+  // case IT was the one that silently never landed. Cancelled the
+  // moment opponent actually arrives, so this never fires during an
+  // ordinary, healthy wait for the other player to finish loading their
+  // own deck.
+  const opponentRoleForWatchdog: PlayerRole | null =
+    role === 'player1' ? 'player2' : role === 'player2' ? 'player1' : null;
+  const hasOpponentPublicState = Boolean(
+    opponentRoleForWatchdog && duelDoc?.[opponentRoleForWatchdog],
+  );
+  useEffect(() => {
+    if (!duelId || !role || !opponentInfo || !myDeckId) return;
+    if (hasOpponentPublicState) return;
+    const timeoutId = window.setTimeout(() => {
+      hasInitializedRef.current = false;
+      setRetryTick((tick) => tick + 1);
+    }, 6000);
+    return () => window.clearTimeout(timeoutId);
+  }, [duelId, role, opponentInfo, myDeckId, hasOpponentPublicState]);
 
   // Rebuilds and writes a fresh duel for this client's own role — see
   // UseMultiplayerDuelResult's own comment on startNextDuel. Deliberately
@@ -816,13 +847,36 @@ export function useMultiplayerDuel(
       savedDeck.main,
       savedDeck.extra,
     );
-    setDoc(doc(db, 'duels', duelId), { [role]: publicState }, { merge: true }).catch((err) => {
+    // duelStartingRole was already agreed on by both clients when the
+    // previous duel's outcome was written (matchConclusion's own single
+    // writer set it then, alongside duelNumber) — so both clients calling
+    // startNextDuel independently still compute the exact same values
+    // here and merging them twice is harmless, same as the rest of this
+    // object. Without this, turnPlayer/currentPhase/turnEnding/turnNumber
+    // would be left over from the PREVIOUS duel (startNextDuel used to
+    // only touch this client's own [role] slice), which is what caused
+    // duel 2/3 to get stuck on the "will go first" banner forever: the
+    // banner only clears once turnPlayer looks like a fresh duel actually
+    // started, which never happened while these were still duel 1's
+    // stale values.
+    const duelStartingRole = duelDoc?.duelStartingRole ?? role;
+    setDoc(
+      doc(db, 'duels', duelId),
+      {
+        [role]: publicState,
+        turnPlayer: duelStartingRole,
+        currentPhase: 'draw',
+        turnEnding: false,
+        turnNumber: 1,
+      },
+      { merge: true },
+    ).catch((err) => {
       console.error('[useMultiplayerDuel] Failed to start next duel (public state):', err);
     });
     setDoc(doc(db, 'duels', duelId, 'private', currentUser.uid), freshPrivateState).catch((err) => {
       console.error('[useMultiplayerDuel] Failed to start next duel (private state):', err);
     });
-  }, [duelId, role, myDeckId, currentUser, getSavedDeck]);
+  }, [duelId, role, myDeckId, currentUser, getSavedDeck, duelDoc]);
 
   let me: MyDuelState | null = null;
   let opponent: OpponentDuelState | null = null;

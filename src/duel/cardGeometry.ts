@@ -28,7 +28,7 @@ export const HAND_CELL_HEIGHT = CARD_NATIVE_HEIGHT * HAND_CARD_SCALE;
 
 // --- Grid layout (DuelField.css's .DuelField-row) ---
 const COLUMN_WIDTH = 72;
-const COLUMN_GAP = 40;
+const COLUMN_GAP = 36;
 const COLUMN_PITCH = COLUMN_WIDTH + COLUMN_GAP;
 const ROW_GAP = 6; // .DuelField-playerField's own gap, between fieldRow/deckRow
 const ROW_PITCH = ZONE_HEIGHT + ROW_GAP;
@@ -47,8 +47,25 @@ export type DeckZoneKind = 'extra' | 'spellTrap' | 'main';
 // duplicated rather than imported, so this module has no dependency on
 // the rendering components at all (the whole point is that geometry and
 // rendering become separate concerns).
-const FIELD_ZONE_KINDS: FieldZoneKind[] = ['field', 'monster', 'monster', 'monster', 'grave', 'banished'];
-const DECK_ZONE_KINDS: DeckZoneKind[] = ['extra', 'spellTrap', 'spellTrap', 'spellTrap', 'main'];
+const FIELD_ZONE_KINDS: FieldZoneKind[] = [
+  'field',
+  'monster',
+  'monster',
+  'monster',
+  'monster',
+  'monster',
+  'grave',
+  'banished',
+];
+const DECK_ZONE_KINDS: DeckZoneKind[] = [
+  'extra',
+  'spellTrap',
+  'spellTrap',
+  'spellTrap',
+  'spellTrap',
+  'spellTrap',
+  'main',
+];
 
 // Mirrors the exact column-building logic from DuelField.tsx's fieldRow/
 // deckRow JSX: a leading empty cell (conditionally, for fieldRow), then
@@ -93,7 +110,7 @@ function findColumn<T extends string>(columns: T[], kind: T, occurrence: number)
 // existing visual spacing above the board is preserved exactly as it
 // was, while every computed position still lands where the grid
 // actually is.
-const DUEL_FIELD_MARGIN_TOP = 24;
+const DUEL_FIELD_MARGIN_TOP = 48;
 
 function rowY(rowIndex: 0 | 1 | 2 | 3): number {
   const base = DUEL_FIELD_MARGIN_TOP;
@@ -132,7 +149,7 @@ export interface ZoneSlot {
   rotated180: boolean;
 }
 
-// index is only meaningful for 'monster'/'spellTrap' (0/1/2, left to
+// index is only meaningful for 'monster'/'spellTrap' (0-4, left to
 // right in the OWNING player's own natural view, same convention
 // DuelField.tsx already uses for onFieldAction's zoneType+index).
 export function getFieldZoneSlot(
@@ -142,13 +159,14 @@ export function getFieldZoneSlot(
 ): ZoneSlot {
   const columns = fieldRowColumns(flipped);
   // Reversing the zone-KIND sequence (fieldRowColumns above) isn't
-  // enough on its own — the slot INDEX within the 3 Monster Zones also
+  // enough on its own — the slot INDEX within the 5 Monster Zones also
   // needs reversing for the opponent, or their own slot 0 (adjacent to
   // THEIR Field Zone, from their own seat) ends up rendered adjacent to
-  // Grave instead, exactly backwards. Physically rotating a 3-slot row
+  // Grave instead, exactly backwards. Physically rotating a 5-slot row
   // 180° reverses which end is which: what was adjacent to one
-  // neighbor becomes adjacent to the other.
-  const occurrence = kind === 'monster' ? (flipped ? 2 - index : index) : 0;
+  // neighbor becomes adjacent to the other. 4, not 2, since the last
+  // valid index in a 5-slot row (0-4) is 4.
+  const occurrence = kind === 'monster' ? (flipped ? 4 - index : index) : 0;
   const col = findColumn(columns, kind, occurrence);
   const row = flipped ? 1 : 2;
   return {
@@ -186,8 +204,8 @@ export function getRevealZoneSlot(): ZoneSlot {
 export function getDeckZoneSlot(flipped: boolean, kind: DeckZoneKind, index = 0): ZoneSlot {
   const columns = deckRowColumns(flipped);
   // Same reasoning as getFieldZoneSlot's own occurrence above, for the
-  // 3 Spell/Trap Zones.
-  const occurrence = kind === 'spellTrap' ? (flipped ? 2 - index : index) : 0;
+  // 5 Spell/Trap Zones.
+  const occurrence = kind === 'spellTrap' ? (flipped ? 4 - index : index) : 0;
   const col = findColumn(columns, kind, occurrence);
   const row = flipped ? 0 : 3;
   return {
@@ -238,11 +256,13 @@ export const OPPONENT_STACK_OFFSETS: Record<
   extraDeck: { stepX: 0.2, stepY: -0.2, maxLayers: 10 },
 };
 
-// Total pixel width of DuelField's own grid (7 columns) — Hand centers
-// itself under this, same as the visual effect Hand.css's own
-// `margin: 8px auto` currently achieves by being a separate,
-// independently-centered page element.
-export const BOARD_WIDTH = 6 * COLUMN_PITCH + COLUMN_WIDTH;
+// Total pixel width of DuelField's own grid (9 columns: the widest row
+// is the player's own non-flipped field row — 1 leading empty cell plus
+// FIELD_ZONE_KINDS' own 8 entries, field + 5 Monster Zones + grave +
+// banished) — Hand centers itself under this, same as the visual effect
+// Hand.css's own `margin: 8px auto` currently achieves by being a
+// separate, independently-centered page element.
+export const BOARD_WIDTH = 8 * COLUMN_PITCH + COLUMN_WIDTH;
 // Hand.css's own `margin: 8px auto` top margin, reproduced as a fixed
 // offset now that Hand's vertical position is computed here instead of
 // coming from being a normal-flow sibling below DuelField.
@@ -263,7 +283,7 @@ const HAND_TOP_MARGIN = 12;
 // that needs the opponent's hand's real position, can share the exact
 // same value rather than each defining their own copy that could drift
 // apart.
-export const OPPONENT_HAND_TOP = -130;
+export const OPPONENT_HAND_TOP = -105;
 
 export function getHandSlot(handCount: number, index: number): ZoneSlot {
   const maxVisible = 6;

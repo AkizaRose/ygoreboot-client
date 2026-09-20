@@ -120,6 +120,8 @@ const FIELD_ZONES: FieldZoneConfig[] = [
   { label: 'Monster Zone', kind: 'monster' },
   { label: 'Monster Zone', kind: 'monster' },
   { label: 'Monster Zone', kind: 'monster' },
+  { label: 'Monster Zone', kind: 'monster' },
+  { label: 'Monster Zone', kind: 'monster' },
   { label: 'Grave', kind: 'grave' },
   { label: 'Banished Zone', kind: 'banished' },
 ];
@@ -133,6 +135,8 @@ interface DeckZoneConfig {
 
 const DECK_ZONES: DeckZoneConfig[] = [
   { label: 'Extra Deck', kind: 'extra' },
+  { label: 'Spell/Trap Zone', kind: 'spellTrap' },
+  { label: 'Spell/Trap Zone', kind: 'spellTrap' },
   { label: 'Spell/Trap Zone', kind: 'spellTrap' },
   { label: 'Spell/Trap Zone', kind: 'spellTrap' },
   { label: 'Spell/Trap Zone', kind: 'spellTrap' },
@@ -159,7 +163,7 @@ interface PlayerFieldProps {
   // real to put in a CardData[] for that side.
   mainDeckCount?: number;
   extraDeckCount?: number;
-  // The 3 Monster Zone / Spell-Trap Zone slots, left-to-right in the
+  // The 5 Monster Zone / Spell-Trap Zone slots, left-to-right in the
   // player's own (unreversed) view — index 0 is the leftmost. Only ever
   // passed for the player's side for now.
   monsterZones?: (PlacedCard | null)[];
@@ -415,7 +419,7 @@ function PlayerField({
           // 180° should produce. Same reasoning as cardGeometry.ts's own
           // getFieldZoneSlot, which needs the identical fix for the card
           // objects themselves to land in the same boxes these render.
-          const slotIndex = flipped ? 2 - monsterSlotIndex : monsterSlotIndex;
+          const slotIndex = flipped ? 4 - monsterSlotIndex : monsterSlotIndex;
           const placed = monsterZones[slotIndex] ?? undefined;
           // Position toggle only applies to face-up monsters — there's no
           // Set Monster yet, so faceDown is always false here in
@@ -673,7 +677,7 @@ function PlayerField({
         if (zone.kind === 'spellTrap') {
           spellTrapSlotIndex += 1;
           // Same reasoning as monsterSlotIndex's own fix above.
-          const slotIndex = flipped ? 2 - spellTrapSlotIndex : spellTrapSlotIndex;
+          const slotIndex = flipped ? 4 - spellTrapSlotIndex : spellTrapSlotIndex;
           const placed = spellTrapZones[slotIndex] ?? undefined;
           return (
             <FieldZone

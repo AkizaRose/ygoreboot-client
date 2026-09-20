@@ -8,7 +8,6 @@
   flex-direction: row;
   gap: 12px;
   padding: 6px;
-  justify-content: center;
   align-items: flex-start;
   overflow: hidden;
 }
@@ -17,10 +16,30 @@
   flex-shrink: 0;
 }
 
+/* Taken out of the row's flex flow and centered directly against
+   .MultiplayerDuelFieldPage itself (the fixed, exactly-1400px box the
+   page centers on screen) via left: 50% + a negative margin-left equal
+   to half its own width, rather than centered within its own remaining
+   share of the row after .sidePanel. Sharing row space with sidePanel
+   meant the duel field's true center point shifted right by roughly
+   half of sidePanel's own width + the row's gap — off-center compared
+   with the page as a whole, which is what this fixes.
+   top: 6px reproduces the same vertical position this had before (the
+   row's own align-items: flex-start plus padding: 6px), just expressed
+   directly instead of inherited from the flex layout.
+   Deliberately margin-left, NOT transform: translateX(-50%): a
+   transform on this element would make it the containing block for
+   every position: fixed descendant underneath it (per the CSS spec) —
+   including .MultiplayerDuelFieldPage-opponentHandLayer, whose whole
+   point is to stay fixed to the real viewport so the page's own
+   clipping can't cut off the opponent's hand. margin-left centers
+   equally well without that side effect. The actual pixel value is set
+   inline in MultiplayerDuelFieldPage.tsx (half of BOARD_WIDTH), so it
+   can't silently drift out of sync with the board's real width. */
 .MultiplayerDuelFieldPage-content {
-  position: relative;
-  flex: 1;
-  min-width: 0;
+  position: absolute;
+  top: 6px;
+  left: 50%;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -304,3 +323,5 @@
   pointer-events: none;
   z-index: 90;
 }
+</file>
+
