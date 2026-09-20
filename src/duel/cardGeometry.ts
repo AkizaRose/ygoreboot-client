@@ -11,6 +11,8 @@
 // Zone lands exactly where the existing, hand-tuned zone boxes already
 // are, rather than drifting to a slightly different spot.
 
+import { COLUMN_GAPS } from './columnGaps';
+
 // --- Field zone box size (FieldZone.tsx) ---
 export const ZONE_WIDTH = 72;
 export const ZONE_HEIGHT = 105;
@@ -28,8 +30,18 @@ export const HAND_CELL_HEIGHT = CARD_NATIVE_HEIGHT * HAND_CARD_SCALE;
 
 // --- Grid layout (DuelField.css's .DuelField-row) ---
 const COLUMN_WIDTH = 72;
-const COLUMN_GAP = 36;
-const COLUMN_PITCH = COLUMN_WIDTH + COLUMN_GAP;
+// The 8 gaps between the grid's 9 columns are individually controllable
+// (see columnGaps.ts) rather than one uniform value — COLUMN_X_OFFSETS
+// below turns that into a per-column cumulative left-edge position,
+// which is what every x calculation in this file actually uses.
+const COLUMN_COUNT = 9;
+const COLUMN_X_OFFSETS: number[] = (() => {
+  const offsets = [0];
+  for (let i = 1; i < COLUMN_COUNT; i++) {
+    offsets.push(offsets[i - 1] + COLUMN_WIDTH + COLUMN_GAPS[i - 1]);
+  }
+  return offsets;
+})();
 const ROW_GAP = 6; // .DuelField-playerField's own gap, between fieldRow/deckRow
 const ROW_PITCH = ZONE_HEIGHT + ROW_GAP;
 const SIDE_GAP = 24; // .DuelField's own gap, opponent block <-> tracker row <-> player block
@@ -104,12 +116,13 @@ function findColumn<T extends string>(columns: T[], kind: T, occurrence: number)
 // fieldRow) : (fieldRow, deckRow)`), then opponent's field row, then the
 // center line itself, then the player's field row, then the player's
 // deck row.
-// DuelField.css's own .DuelField rule has margin-top: 24px — the grid
-// actually renders 24px below whatever contains it, not flush with its
+// DuelField.css's own .DuelField rule has margin-top: 48px — the grid
+// actually renders 48px below whatever contains it, not flush with its
 // top edge. Baked in here (rather than removing the CSS margin) so the
 // existing visual spacing above the board is preserved exactly as it
 // was, while every computed position still lands where the grid
-// actually is.
+// actually is. Keep this in sync with DuelField.css's own margin-top if
+// that ever changes again.
 const DUEL_FIELD_MARGIN_TOP = 48;
 
 function rowY(rowIndex: 0 | 1 | 2 | 3): number {
@@ -170,7 +183,7 @@ export function getFieldZoneSlot(
   const col = findColumn(columns, kind, occurrence);
   const row = flipped ? 1 : 2;
   return {
-    x: col * COLUMN_PITCH,
+    x: COLUMN_X_OFFSETS[col],
     y: rowY(row as 0 | 1 | 2 | 3),
     width: ZONE_WIDTH,
     height: ZONE_HEIGHT,
@@ -209,7 +222,7 @@ export function getDeckZoneSlot(flipped: boolean, kind: DeckZoneKind, index = 0)
   const col = findColumn(columns, kind, occurrence);
   const row = flipped ? 0 : 3;
   return {
-    x: col * COLUMN_PITCH,
+    x: COLUMN_X_OFFSETS[col],
     y: rowY(row as 0 | 1 | 2 | 3),
     width: ZONE_WIDTH,
     height: ZONE_HEIGHT,
@@ -262,7 +275,7 @@ export const OPPONENT_STACK_OFFSETS: Record<
 // banished) — Hand centers itself under this, same as the visual effect
 // Hand.css's own `margin: 8px auto` currently achieves by being a
 // separate, independently-centered page element.
-export const BOARD_WIDTH = 8 * COLUMN_PITCH + COLUMN_WIDTH;
+export const BOARD_WIDTH = COLUMN_X_OFFSETS[COLUMN_COUNT - 1] + COLUMN_WIDTH;
 // Hand.css's own `margin: 8px auto` top margin, reproduced as a fixed
 // offset now that Hand's vertical position is computed here instead of
 // coming from being a normal-flow sibling below DuelField.
@@ -283,7 +296,7 @@ const HAND_TOP_MARGIN = 12;
 // that needs the opponent's hand's real position, can share the exact
 // same value rather than each defining their own copy that could drift
 // apart.
-export const OPPONENT_HAND_TOP = -105;
+export const OPPONENT_HAND_TOP = -110;
 
 export function getHandSlot(handCount: number, index: number): ZoneSlot {
   const maxVisible = 6;

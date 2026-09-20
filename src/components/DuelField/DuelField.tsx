@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import FieldZone, { type FieldZoneAction } from './FieldZone';
 import PhaseTracker from './PhaseTracker';
 import TurnCounter from './TurnCounter';
@@ -5,8 +6,28 @@ import type { TurnPhase } from '../Matchmaking/useMultiplayerDuel';
 import type { CardData } from '../../types/Card';
 import type { CardInstance, PlacedCard } from '../../types/CardInstance';
 import cardBackImg from '../../assets/card/CardBack.png';
-import { PLAYER_STACK_OFFSETS, OPPONENT_STACK_OFFSETS } from '../../duel/cardGeometry';
+import { PLAYER_STACK_OFFSETS, OPPONENT_STACK_OFFSETS, ZONE_WIDTH } from '../../duel/cardGeometry';
+import { COLUMN_GAPS } from '../../duel/columnGaps';
 import './DuelField.css';
+
+// Every .DuelField-row below shares this same computed grid — each
+// column is a fixed ZONE_WIDTH-wide track (matching FieldZone's own
+// fixed size; see FieldZone.css), widened by that column's own gap from
+// COLUMN_GAPS so each gap can be tuned independently instead of the grid
+// applying one uniform `gap` to every column. The row itself gets
+// `gap: 0`, and every FieldZone/emptyZone cell (which have a definite
+// 72px width) naturally falls back to sitting flush at the START of its
+// now-wider track, which is what leaves the extra width from
+// COLUMN_GAPS[i] to show up as empty space to the RIGHT of column i
+// instead — i.e. exactly where the gap between column i and i + 1
+// belongs. The final (9th) column doesn't need a trailing gap, since
+// there's no column after it.
+const DUEL_FIELD_ROW_GRID_STYLE: CSSProperties = {
+  gridTemplateColumns: [...COLUMN_GAPS.map((gap) => `${ZONE_WIDTH + gap}px`), `${ZONE_WIDTH}px`].join(
+    ' ',
+  ),
+  gap: 0,
+};
 
 // Re-exported so existing `import { type PlacedCard } from
 // './DuelField'` call sites keep working without changing their import.
@@ -362,7 +383,7 @@ function PlayerField({
   let spellTrapSlotIndex = -1;
 
   const fieldRow = (
-    <div className="DuelField-row">
+    <div className="DuelField-row" style={DUEL_FIELD_ROW_GRID_STYLE}>
       {/* Player only: shifts this whole row one column right relative to
           the opponent's (unshifted) row above/below it — equivalent to,
           and achieving the same result as, shifting the opponent's row
@@ -636,7 +657,7 @@ function PlayerField({
   );
 
   const deckRow = (
-    <div className="DuelField-row">
+    <div className="DuelField-row" style={DUEL_FIELD_ROW_GRID_STYLE}>
       {/* Both sides get exactly one leading empty cell here, for two
           different reasons that happen to need the same fix: the
           opponent's deck row needs it to align with its own (unshifted)
@@ -900,7 +921,7 @@ function DuelField({
           snapshot is still in flight) — an empty row still reserves the
           same vertical space either way, so nothing shifts once it does
           appear. */}
-      <div className="DuelField-row DuelField-phaseTrackerRow">
+      <div className="DuelField-row DuelField-phaseTrackerRow" style={DUEL_FIELD_ROW_GRID_STYLE}>
         {currentPhase && (
           <PhaseTracker
             currentPhase={currentPhase}

@@ -20,17 +20,23 @@
    widest row's own column count: 1 leading empty cell + field + 5
    Monster Zones + grave + banished = 8 zone entries, +1.)
 
-   Gap widened from 4px to 40px to make room for the Defense Position
-   rotated overlay on Monster Zones — that overlay overhangs each zone's
-   normal 80px width by ~18.5px on either side (a 117x80 rotated box vs
-   the zone's own 80x117), so a gap smaller than ~37px would let two
-   neighboring zones' overlays visually touch or overlap. Applied to
-   every row (not just the Monster Zone row) so all zones stay aligned
-   in the same columns as each other. */
+   grid-template-columns and gap are no longer set here — each of the 8
+   gaps between columns is now independently controllable (see
+   columnGaps.ts), so DuelField.tsx computes gridTemplateColumns itself
+   (widening each column's own track by that gap, with the row's own CSS
+   `gap` left at 0) and applies it as an inline style on every
+   .DuelField-row div, rather than this one static rule setting a single
+   uniform gap for all of them.
+
+   The individual gaps between columns holding a Monster Zone or
+   Spell/Trap Zone on at least one side need to stay at ~36px or more —
+   the Defense Position rotated overlay on those zones overhangs each
+   zone's normal 72px width by a good margin on either side (a rotated
+   105x72 box vs the zone's own 72x105), so a smaller gap there would let
+   two neighboring zones' overlays visually touch or overlap. See
+   columnGaps.ts's own comments for exactly which gaps those are. */
 .DuelField-row {
   display: grid;
-  grid-template-columns: repeat(9, 72px);
-  gap: 36px;
 }
 
 /* Applied alongside .DuelField-row (not instead of it) on the one row
