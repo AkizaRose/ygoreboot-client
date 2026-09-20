@@ -9,12 +9,12 @@
 
 .LifePointCounter-display {
   font-family: 'RoGSanSrfStd-UB';
-  font-size: 28px;
+  font-size: 24px;
   color: white;
   background: #16171dee;
   border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 6px;
-  padding: 6px 18px;
+  border-radius: 4px;
+  padding: 6px 8px;
   line-height: 1;
   cursor: pointer;
 }

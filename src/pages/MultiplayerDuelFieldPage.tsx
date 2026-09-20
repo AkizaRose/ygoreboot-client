@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { doc, setDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase/config';
@@ -10,13 +10,17 @@ import CardDisplay from '../components/CardDisplay/CardDisplay';
 import LifePointCounter from '../components/DuelField/LifePointCounter';
 import useAnimatedCount from '../components/DuelField/useAnimatedCount';
 import PlayerAvatarBox from '../components/Avatar/PlayerAvatarBox';
+import { useUserAvatar } from '../components/Avatar/useUserAvatar';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
 import StatAdjustDialog from '../components/DuelField/StatAdjustDialog';
 import ConfirmDialog from '../components/ConfirmDialog/ConfirmDialog';
+import SideDecking from '../components/SideDecking/SideDecking';
 import CardLayer, { type CardLayerHandle } from '../duel/CardLayer';
 import { computeCardPositions } from '../duel/cardPositions';
 import { BOARD_WIDTH, STAGE_HEIGHT } from '../duel/cardGeometry';
 import { getAvatarUrl } from '../components/Avatar/avatars';
+import { useSavedDecks } from '../components/DeckManager/useSavedDecks';
+import cardData from '../data/carddata.json';
 import {
   useMultiplayerDuel,
   TURN_PHASES,
@@ -28,6 +32,7 @@ import {
   type MyDuelState,
   type TurnPhase,
   type SharedCardVisualPosition,
+  type ChatMessage,
 } from '../components/Matchmaking/useMultiplayerDuel';
 import type { CardData } from '../types/Card';
 import type { CardInstance, PlacedCard } from '../types/CardInstance';
@@ -49,6 +54,19 @@ function findEmptyZoneSlot(zones: (PlacedCard | null)[]): number {
     if (zones[index] === null) return index;
   }
   return -1;
+}
+
+// Same rule DeckBuilder's own useDeck.ts enforces at deck-building time
+// (see that file's own isExtraDeckCard) — deliberately duplicated here
+// rather than imported, the same "no dependency between these two
+// otherwise-unrelated features" reasoning as cardGeometry.ts's own
+// duplicated zone-kind arrays. Used by Side Decking (see the "--- Side
+// Decking ---" section below) to keep a Side Deck card that isn't
+// Extra-Deck-legal from ever being swapped INTO the Extra Deck.
+function isExtraDeckCard(card: CardData): boolean {
+  return (
+    card.cardClass === 'Monster' && ['Fusion', 'Ritual', 'Evolution'].includes(card.cardSubclass ?? '')
+  );
 }
 
 
@@ -126,8 +144,29 @@ function MultiplayerDuelFieldPage() {
     duelNumber,
     duelStartingRole,
     matchOutcome,
+    myDoneSiding,
+    opponentDoneSiding,
+    chatMessages,
     startNextDuel,
   } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
+
+  // --- Side Decking (see the "--- Side Decking ---" section further
+  // down for the full feature) — getSavedDeck/cardById are needed here,
+  // at the top of the component, purely to resolve card IDs into
+  // CardData for the Side Decking screen; a second, independent
+  // useSavedDecks() subscription (useMultiplayerDuel already has its
+  // own, separate copy, used only for the very first duel's own initial
+  // shuffle) — both just read the same Firestore data, so there's no
+  // consistency concern in having two.
+  const { getSavedDeck } = useSavedDecks();
+  const savedDeck = state.myDeckId ? getSavedDeck(state.myDeckId) : null;
+  // Chat — this player's own avatar, for their own message bubbles (see
+  // the "--- Chat ---" section further down). The opponent's own
+  // messages resolve their avatar from opponent.avatarId instead, the
+  // same already-available field PlayerAvatarBox/the opponent HUD use.
+  const { avatarId: myAvatarId } = useUserAvatar();
+  const allCards = cardData as CardData[];
+  const cardById = useMemo(() => new Map(allCards.map((card) => [card.id, card])), [allCards]);
 
   // Called unconditionally (hooks can't be conditional), with a
   // fallback for the brief window before the first snapshot arrives and
@@ -839,6 +878,247 @@ function MultiplayerDuelFieldPage() {
     );
   };
 
+  // --- Chat ---
+  // Purely local: what's currently typed into the chat box, not yet
+  // sent. Cleared the moment a message actually sends (see
+  // handleSendChatMessage below) — the sent message itself then arrives
+  // back through chatMessages, the same as any other player's message,
+  // rather than this input's own value being treated as a local optimistic
+  // echo of it.
+  const [chatInput, setChatInput] = useState('');
+  // The scrollable message history box — auto-scrolled to the bottom
+  // whenever a new message arrives (see the effect below), so the most
+  // recent message is always the one in view rather than requiring a
+  // manual scroll every time.
+  const chatHistoryRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = chatHistoryRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chatMessages.length]);
+
+  // Appended via arrayUnion, not a plain merge write of the whole array
+  // — same reasoning as pendingControlTransfers/pendingCardReturns/
+  // pendingPileRequests elsewhere in this file (see DuelDoc's own
+  // comment on chatMessages): two messages sent close together, by
+  // either or both players, must never let the second silently
+  // overwrite the first before anyone's seen it. Trims and ignores an
+  // empty/whitespace-only send rather than adding a blank message
+  // bubble.
+  const handleSendChatMessage = () => {
+    const text = chatInput.trim();
+    if (!text || !duelId || !state.role) return;
+    setChatInput('');
+    const message: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: state.role,
+      text,
+      sentAt: Date.now(),
+    };
+    setDoc(doc(db, 'duels', duelId), { chatMessages: arrayUnion(message) }, { merge: true }).catch(
+      (err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to send chat message:', err);
+      },
+    );
+  };
+
+  // Enter sends (Shift+Enter would be the usual way to allow a newline
+  // instead, but the chat box here is a single-line input, not a
+  // textarea, so there's no newline case to special-case around).
+  const handleChatInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleSendChatMessage();
+    }
+  };
+
+  // --- Side Decking ---
+  // The player's own working Main/Side Deck lists for the whole MATCH
+  // (not just the current duel) — starts as the saved deck's own
+  // main/extra/side lists (see the initializing effect below), then
+  // carries forward, swap by swap, across every duel in this match.
+  // Deliberately NOT re-read from the saved deck at the start of each
+  // new duel (that would silently undo any siding already done) — only
+  // "Reset Deck" explicitly goes back to the saved deck's own lists.
+  // null until the saved deck itself has loaded.
+  const [matchMainIds, setMatchMainIds] = useState<number[] | null>(null);
+  const [matchExtraIds, setMatchExtraIds] = useState<number[] | null>(null);
+  const [matchSideIds, setMatchSideIds] = useState<number[] | null>(null);
+  // Indices into matchMainIds/matchExtraIds/matchSideIds (not card ids)
+  // — indices disambiguate multiple copies of the same card the same
+  // way DeckBuilder's own DeckSlots does.
+  //
+  // selectedMainIndices and selectedExtraIndices are kept mutually
+  // exclusive — never both non-empty at once (see toggleMainSelection/
+  // toggleExtraSelection below) — which is what actually enforces "can't
+  // swap a Main Deck card for an Extra Deck card": a single Swap Cards
+  // click only ever exchanges cards between Side and WHICHEVER ONE of
+  // Main/Extra currently has a selection (see
+  // handleSwapSideDeckCards below), so a Main card can only ever land
+  // back in Main, and an Extra card only ever back in Extra. Side
+  // Deck's own selection is a single shared pool either way — nothing
+  // about a Side Deck card itself says which of Main/Extra it's
+  // destined for, that's determined entirely by which of the other two
+  // has cards selected at swap time.
+  const [selectedMainIndices, setSelectedMainIndices] = useState<number[]>([]);
+  const [selectedExtraIndices, setSelectedExtraIndices] = useState<number[]>([]);
+  const [selectedSideIndices, setSelectedSideIndices] = useState<number[]>([]);
+
+  // Runs once, the first time the saved deck is actually available —
+  // guarded by matchMainIds still being null so this never re-fires and
+  // clobbers in-progress siding on a later render (savedDeck itself is a
+  // stable reference from useSavedDecks' own array once loaded, but
+  // there's no reason to depend on that staying true).
+  useEffect(() => {
+    if (!savedDeck || matchMainIds !== null) return;
+    setMatchMainIds(savedDeck.main);
+    setMatchExtraIds(savedDeck.extra);
+    setMatchSideIds(savedDeck.side);
+  }, [savedDeck, matchMainIds]);
+
+  // Drops any already-selected Side Deck card that ISN'T legal for the
+  // deck the Side Deck is now being matched against — e.g. selecting a
+  // Main Deck card commits this swap to the Main <-> Side channel, so
+  // any Side Deck card selected a moment ago that's actually
+  // Extra-Deck-only (Fusion/Ritual/Evolution) needs to drop out of the
+  // selection too, or it could end up swapped into the Main Deck.
+  // keepExtraEligible is true when filtering FOR the Extra channel
+  // (keep only Fusion/Ritual/Evolution), false when filtering for the
+  // Main channel (keep only everything else).
+  const pruneSideSelectionForChannel = (keepExtraEligible: boolean) => {
+    setSelectedSideIndices((prevSide) =>
+      prevSide.filter((i) => {
+        const id = matchSideIds?.[i];
+        const card = id !== undefined ? cardById.get(id) : undefined;
+        if (!card) return true;
+        return isExtraDeckCard(card) === keepExtraEligible;
+      }),
+    );
+  };
+
+  const toggleMainSelection = (index: number) => {
+    setSelectedMainIndices((prev) => {
+      const next = prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index];
+      // Selecting (not deselecting) a Main Deck card commits this
+      // swap to the Main <-> Side channel — clear out any Extra Deck
+      // selection so the two can never mix (see this state's own
+      // declaration comment above), and drop any already-selected Side
+      // Deck card that isn't legal in the Main Deck.
+      if (next.length > prev.length) {
+        setSelectedExtraIndices([]);
+        pruneSideSelectionForChannel(false);
+      }
+      return next;
+    });
+  };
+  const toggleExtraSelection = (index: number) => {
+    setSelectedExtraIndices((prev) => {
+      const next = prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index];
+      if (next.length > prev.length) {
+        setSelectedMainIndices([]);
+        pruneSideSelectionForChannel(true);
+      }
+      return next;
+    });
+  };
+  const toggleSideSelection = (index: number) => {
+    setSelectedSideIndices((prev) => {
+      if (prev.includes(index)) return prev.filter((i) => i !== index);
+      // Selecting a NEW Side Deck card — only allow it if it's legal
+      // for whichever of Main/Extra is currently the active swap
+      // channel (see toggleMainSelection/toggleExtraSelection above).
+      // Neither active yet (both empty) means nothing to check against,
+      // so any card can be the first one selected.
+      const id = matchSideIds?.[index];
+      const card = id !== undefined ? cardById.get(id) : undefined;
+      if (card) {
+        const cardIsExtraEligible = isExtraDeckCard(card);
+        if (selectedExtraIndices.length > 0 && !cardIsExtraEligible) return prev;
+        if (selectedMainIndices.length > 0 && cardIsExtraEligible) return prev;
+      }
+      return [...prev, index];
+    });
+  };
+
+  // The Swap Cards button is only ever clickable once an equal, nonzero
+  // number of cards is selected on the Side Deck and on WHICHEVER of
+  // Main/Extra currently has a selection — see SideDecking's own button
+  // for where this actually gates the click. Main and Extra are never
+  // both selected at once (see toggleMainSelection/toggleExtraSelection
+  // above), so at most one of these two clauses can ever be true.
+  const canSwapSideDeckCards =
+    (selectedMainIndices.length > 0 && selectedMainIndices.length === selectedSideIndices.length) ||
+    (selectedExtraIndices.length > 0 && selectedExtraIndices.length === selectedSideIndices.length);
+
+  const handleSwapSideDeckCards = () => {
+    if (!canSwapSideDeckCards || !matchMainIds || !matchExtraIds || !matchSideIds) return;
+    const sideSelectedSet = new Set(selectedSideIndices);
+    const sideMovingOut = selectedSideIndices.map((i) => matchSideIds[i]);
+
+    if (selectedMainIndices.length > 0) {
+      const mainSelectedSet = new Set(selectedMainIndices);
+      const mainMovingToSide = selectedMainIndices.map((i) => matchMainIds[i]);
+      setMatchMainIds([
+        ...matchMainIds.filter((_, i) => !mainSelectedSet.has(i)),
+        ...sideMovingOut,
+      ]);
+      setMatchSideIds([
+        ...matchSideIds.filter((_, i) => !sideSelectedSet.has(i)),
+        ...mainMovingToSide,
+      ]);
+    } else {
+      const extraSelectedSet = new Set(selectedExtraIndices);
+      const extraMovingToSide = selectedExtraIndices.map((i) => matchExtraIds[i]);
+      setMatchExtraIds([
+        ...matchExtraIds.filter((_, i) => !extraSelectedSet.has(i)),
+        ...sideMovingOut,
+      ]);
+      setMatchSideIds([
+        ...matchSideIds.filter((_, i) => !sideSelectedSet.has(i)),
+        ...extraMovingToSide,
+      ]);
+    }
+
+    setSelectedMainIndices([]);
+    setSelectedExtraIndices([]);
+    setSelectedSideIndices([]);
+  };
+
+  const handleResetSideDeck = () => {
+    if (!savedDeck) return;
+    setMatchMainIds(savedDeck.main);
+    setMatchExtraIds(savedDeck.extra);
+    setMatchSideIds(savedDeck.side);
+    setSelectedMainIndices([]);
+    setSelectedExtraIndices([]);
+    setSelectedSideIndices([]);
+  };
+
+  // Marks THIS player's own side of player1DoneSiding/player2DoneSiding
+  // — a plain top-level field per role (same convention as
+  // player1Selection/player2Selection), not one shared nested object,
+  // specifically so both clients can each write their own flag
+  // independently without racing to merge the same field (see
+  // DuelDoc's own comment on why pendingControlTransfers/
+  // pendingCardReturns need arrayUnion for the same underlying reason —
+  // two clients writing the same plain object field, one after the
+  // other, can silently clobber each other's half).
+  const handleDoneSidingClick = () => {
+    if (!duelId || !state.role) return;
+    const field = state.role === 'player1' ? 'player1DoneSiding' : 'player2DoneSiding';
+    setDoc(doc(db, 'duels', duelId), { [field]: true }, { merge: true }).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to mark done siding:', err);
+    });
+  };
+
+  // True during the window between one duel ending (without deciding
+  // the whole match) and the next one actually starting — see the
+  // render guard further down, which shows the Side Decking screen
+  // instead of the normal duel field for exactly this condition.
+  const isSidingPhase =
+    (matchConclusion?.type === 'defeatAdmitted' || matchConclusion?.type === 'drawAccepted') &&
+    !matchOutcome;
+
   // --- Admit Defeat / Offer Draw ---
 
   const handleAdmitDefeatClick = () => setShowAdmitDefeatConfirm(true);
@@ -859,8 +1139,19 @@ function MultiplayerDuelFieldPage() {
         matchOutcome: matchDecided
           ? { type: winnerRole === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch' }
           : null,
-        // The loser of a decisive duel goes first next.
-        ...(matchDecided ? {} : { duelNumber: duelNumber + 1, duelStartingRole: loserRole }),
+        // The loser of a decisive duel goes first next. Only reset the
+        // Side Decking done-flags when the match ISN'T over — a
+        // match-deciding duel skips siding entirely (isSidingPhase
+        // requires !matchOutcome), so there's no siding phase for these
+        // to gate in that case.
+        ...(matchDecided
+          ? {}
+          : {
+              duelNumber: duelNumber + 1,
+              duelStartingRole: loserRole,
+              player1DoneSiding: false,
+              player2DoneSiding: false,
+            }),
       },
       { merge: true },
     ).catch((err) => {
@@ -905,7 +1196,17 @@ function MultiplayerDuelFieldPage() {
         matchConclusion: { type: 'drawAccepted' },
         matchWins: nextWins,
         matchOutcome: matchOutcomeUpdate,
-        ...(matchOutcomeUpdate ? {} : { duelNumber: duelNumber + 1, duelStartingRole: nextStartingRole }),
+        // Same reasoning as handleAdmitDefeatConfirm's own copy of this
+        // — only reset the Side Decking done-flags when a siding phase
+        // is actually about to start (the match isn't over yet).
+        ...(matchOutcomeUpdate
+          ? {}
+          : {
+              duelNumber: duelNumber + 1,
+              duelStartingRole: nextStartingRole,
+              player1DoneSiding: false,
+              player2DoneSiding: false,
+            }),
       },
       { merge: true },
     ).catch((err) => {
@@ -966,14 +1267,26 @@ function MultiplayerDuelFieldPage() {
     setPendingRitualSummon(null);
     setPendingMove(null);
     setPendingEquip(null);
+    // Clears out any leftover Side Decking selections from the phase
+    // that just ended, so the NEXT siding phase (after the duel that's
+    // about to start) begins with a clean slate — matchMainIds/
+    // matchExtraIds/matchSideIds themselves are deliberately NOT reset
+    // here, since they need to persist across duels within the same
+    // match (see their own declaration comment).
+    setSelectedMainIndices([]);
+    setSelectedExtraIndices([]);
+    setSelectedSideIndices([]);
   };
 
   // Auto-advances straight into the next duel once one has just ended
-  // (defeatAdmitted/drawAccepted) and the MATCH itself isn't over yet —
-  // no confirmation dialog for this, on either client: a mid-match duel
-  // outcome doesn't need a player to click OK before the next duel can
-  // start, only the match's own final outcome does (see the matchOutcome
-  // dialog further down).
+  // (defeatAdmitted/drawAccepted), the MATCH itself isn't over yet, AND
+  // BOTH players have clicked "Done Siding" (see isSidingPhase/
+  // handleDoneSidingClick above) — no confirmation dialog for the duel
+  // outcome itself, on either client: a mid-match duel outcome doesn't
+  // need a player to click OK before Side Decking starts, only the
+  // match's own final outcome does (see the matchOutcome dialog further
+  // down). Siding itself, unlike the old immediate auto-advance, DOES
+  // gate starting the next duel — that's the whole point of the screen.
   //
   // autoAdvancedForDuelNumberRef guards against calling startNextDuel
   // more than once for the same transition. duelNumber is already
@@ -989,28 +1302,38 @@ function MultiplayerDuelFieldPage() {
   // below) had a chance to land — a duelNumber-keyed guard is what
   // actually stops that, not the clearing alone.
   //
-  // Clearing matchConclusion back to null (both clients do — safe,
-  // idempotent, same reasoning as other multi-writer fields elsewhere in
-  // this file) matters for a DIFFERENT reason: matchConclusion is
-  // otherwise never cleared for defeatAdmitted/drawAccepted at all, so
-  // without this it would still read as THIS duel's outcome all the way
-  // through the next one too — harmless today since nothing else reads
-  // it once matchOutcome is still null, but a landmine for anything that
-  // later checks matchConclusion for the CURRENT duel specifically.
+  // Clearing matchConclusion (and both players' own DoneSiding flags)
+  // back to null/false (both clients do — safe, idempotent, same
+  // reasoning as other multi-writer fields elsewhere in this file)
+  // matters for a DIFFERENT reason: matchConclusion is otherwise never
+  // cleared for defeatAdmitted/drawAccepted at all, so without this it
+  // would still read as THIS duel's outcome (and isSidingPhase would
+  // still read true) all the way through the next duel too.
+  //
+  // matchMainIds/matchExtraIds are passed straight through to
+  // startNextDuel as this client's own sided Main/Extra Deck for the
+  // upcoming duel — see useMultiplayerDuel's own startNextDuel for how
+  // those overrides are used instead of re-reading the saved deck's
+  // original Main/Extra Deck.
   const autoAdvancedForDuelNumberRef = useRef<number | null>(null);
   useEffect(() => {
     if (matchConclusion?.type !== 'defeatAdmitted' && matchConclusion?.type !== 'drawAccepted') return;
     if (matchOutcome) return;
     if (!duelId) return;
+    if (!myDoneSiding || !opponentDoneSiding) return;
     if (autoAdvancedForDuelNumberRef.current === duelNumber) return;
     autoAdvancedForDuelNumberRef.current = duelNumber;
     resetLocalStateForNewDuel();
-    startNextDuel();
-    setDoc(doc(db, 'duels', duelId), { matchConclusion: null }, { merge: true }).catch((err) => {
+    startNextDuel(matchMainIds ?? undefined, matchExtraIds ?? undefined);
+    setDoc(
+      doc(db, 'duels', duelId),
+      { matchConclusion: null, player1DoneSiding: false, player2DoneSiding: false },
+      { merge: true },
+    ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to clear matchConclusion after starting next duel:', err);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchConclusion, matchOutcome, duelId, duelNumber]);
+  }, [matchConclusion, matchOutcome, duelId, duelNumber, myDoneSiding, opponentDoneSiding]);
 
   // Only for the OFFERER's own "declined" dialog — unlike the permanent
   // outcomes above, a decline needs to actually clear matchConclusion
@@ -2925,6 +3248,118 @@ function MultiplayerDuelFieldPage() {
     );
   }
 
+  // Shown in place of the normal duel field between duels, whenever the
+  // duel that just ended didn't decide the whole match — see
+  // isSidingPhase's own declaration above. mainDeckCards/extraDeckCards/
+  // sideDeckCards resolve matchMainIds/matchExtraIds/matchSideIds
+  // (plain card ids) into real CardData via cardById, the same way
+  // DeckBuilderPage resolves a saved deck's own id lists.
+  if (isSidingPhase) {
+    const mainDeckCards = (matchMainIds ?? [])
+      .map((id) => cardById.get(id))
+      .filter((card): card is CardData => !!card);
+    const extraDeckCards = (matchExtraIds ?? [])
+      .map((id) => cardById.get(id))
+      .filter((card): card is CardData => !!card);
+    const sideDeckCards = (matchSideIds ?? [])
+      .map((id) => cardById.get(id))
+      .filter((card): card is CardData => !!card);
+    // Dims (and blocks clicking) whichever Side Deck cards aren't legal
+    // for the currently active swap channel — see toggleSideSelection's
+    // own comment for the actual enforcement; this is purely the visual
+    // side of the same rule, so the player can see up front which cards
+    // wouldn't do anything if clicked, rather than discovering it by
+    // clicking them. Empty (nothing dimmed) while neither Main nor
+    // Extra has a selection yet.
+    const sideDeckIneligibleIndices: number[] = [];
+    if (selectedExtraIndices.length > 0 || selectedMainIndices.length > 0) {
+      sideDeckCards.forEach((card, i) => {
+        const cardIsExtraEligible = isExtraDeckCard(card);
+        if (selectedExtraIndices.length > 0 && !cardIsExtraEligible) {
+          sideDeckIneligibleIndices.push(i);
+        } else if (selectedMainIndices.length > 0 && cardIsExtraEligible) {
+          sideDeckIneligibleIndices.push(i);
+        }
+      });
+    }
+    return (
+      <div className="MultiplayerDuelFieldPage MultiplayerDuelFieldPage--siding">
+        <div className="MultiplayerDuelFieldPage-sidePanel">
+          <CardDisplay card={hoveredCard} />
+          {/* Swap Cards/Reset Deck/Done Siding — positioned in the same
+              column as the Card Viewer, below it, exactly like Exit and
+              the Admit Defeat/Offer Draw row are positioned during a
+              normal duel (see MultiplayerDuelFieldPage-topActions/
+              -matchActionsRow further down). This whole block only ever
+              renders during this isSidingPhase return, so it only ever
+              appears during Side Decking. */}
+          <div className="SideDecking-sidePanelActions">
+            <p className="SideDecking-subtext">
+              {myDoneSiding
+                ? opponentDoneSiding
+                  ? 'Starting the next duel…'
+                  : 'Waiting for your opponent to finish siding…'
+                : 'Select an equal number of cards from your Side Deck and your Main Deck (or your Side Deck and your Extra Deck), then click Swap Cards.'}
+            </p>
+            <div className="SideDecking-actions">
+              <button
+                type="button"
+                className="SideDecking-actionButton"
+                disabled={!canSwapSideDeckCards || myDoneSiding}
+                onClick={handleSwapSideDeckCards}
+              >
+                Swap Cards
+              </button>
+              <button
+                type="button"
+                className="SideDecking-actionButton"
+                disabled={myDoneSiding}
+                onClick={handleResetSideDeck}
+              >
+                Reset Deck
+              </button>
+              <button
+                type="button"
+                className="SideDecking-doneButton"
+                disabled={myDoneSiding}
+                onClick={handleDoneSidingClick}
+              >
+                {myDoneSiding ? 'Done Siding ✓' : 'Done Siding'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Same Exit button, same top-left position, as the normal duel
+            field's own MultiplayerDuelFieldPage-topActions below —
+            duplicated here (rather than shared) since this whole return
+            replaces the normal field's markup entirely for as long as
+            isSidingPhase is true. */}
+        <div className="MultiplayerDuelFieldPage-topActions">
+          <button type="button" onClick={() => navigate('/duel')}>
+            Exit
+          </button>
+        </div>
+
+        <SideDecking
+          mainDeck={mainDeckCards}
+          extraDeck={extraDeckCards}
+          sideDeck={sideDeckCards}
+          selectedMainIndices={selectedMainIndices}
+          selectedExtraIndices={selectedExtraIndices}
+          selectedSideIndices={selectedSideIndices}
+          sideDeckIneligibleIndices={sideDeckIneligibleIndices}
+          onToggleMainCard={toggleMainSelection}
+          onToggleExtraCard={toggleExtraSelection}
+          onToggleSideCard={toggleSideSelection}
+          isDone={myDoneSiding}
+          onCardHover={handleCardHover}
+          onCardHoverEnd={handleCardHoverEnd}
+        />
+      </div>
+    );
+  }
+
   // The actual fix for the "card briefly vanishes" bug, combined with
   // renderMeState's own one-frame deferral fix for the "snaps instantly,
   // no transition" bug that fixing the first one introduced — see both
@@ -3050,6 +3485,27 @@ function MultiplayerDuelFieldPage() {
           onClick={handleOfferDrawClick}
         >
           Offer Draw
+        </button>
+      </div>
+
+      <div className="MultiplayerDuelFieldPage-handButtonColumn">
+        <button
+          type="button"
+          className={
+            handRevealed
+              ? 'MultiplayerDuelFieldPage-revealHandButton MultiplayerDuelFieldPage-revealHandButton--active'
+              : 'MultiplayerDuelFieldPage-revealHandButton'
+          }
+          onClick={handleToggleHandReveal}
+        >
+          {handRevealed ? 'Hide Hand' : 'Reveal Hand'}
+        </button>
+        <button
+          type="button"
+          className="MultiplayerDuelFieldPage-shuffleHandButton"
+          onClick={handleShuffleHand}
+        >
+          Shuffle Hand
         </button>
       </div>
 
@@ -3236,6 +3692,55 @@ function MultiplayerDuelFieldPage() {
       </div>
 
       <div className="MultiplayerDuelFieldPage-playerHud">
+        {/* Chat — positioned in this same right-hand column, in between
+            the two players' own usernames (this one, and the opponent's
+            own further up in MultiplayerDuelFieldPage-opponentHud): the
+            message history box sits directly above the input box, which
+            sits directly above this player's own username, all as
+            ordinary stacked children of this same bottom-anchored
+            column — rather than each being independently positioned
+            with its own computed offset, the column simply grows
+            upward from its fixed bottom edge as these two are added
+            above the content that was already here. */}
+        <div className="MultiplayerDuelFieldPage-chatHistory" ref={chatHistoryRef}>
+          {[...chatMessages]
+            .sort((a, b) => a.sentAt - b.sentAt)
+            .map((message) => {
+              const isMine = message.role === state.role;
+              const avatarUrl = getAvatarUrl(isMine ? myAvatarId : opponent.avatarId);
+              return (
+                <div
+                  key={message.id}
+                  className={[
+                    'MultiplayerDuelFieldPage-chatMessage',
+                    isMine
+                      ? 'MultiplayerDuelFieldPage-chatMessage--mine'
+                      : 'MultiplayerDuelFieldPage-chatMessage--opponent',
+                  ].join(' ')}
+                >
+                  <img src={avatarUrl} alt="" className="MultiplayerDuelFieldPage-chatAvatar" />
+                  <div
+                    className={[
+                      'MultiplayerDuelFieldPage-chatBubble',
+                      isMine
+                        ? 'MultiplayerDuelFieldPage-chatBubble--mine'
+                        : 'MultiplayerDuelFieldPage-chatBubble--opponent',
+                    ].join(' ')}
+                  >
+                    {message.text}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+        <input
+          type="text"
+          className="MultiplayerDuelFieldPage-chatInput"
+          placeholder="Type a message…"
+          value={chatInput}
+          onChange={(e) => setChatInput(e.target.value)}
+          onKeyDown={handleChatInputKeyDown}
+        />
         {/* Same username styling as the opponent's own, just reused here
             too — currentUser.displayName is already established
             elsewhere in the app (e.g. AccountPage) as where a user's own
@@ -3249,26 +3754,6 @@ function MultiplayerDuelFieldPage() {
             spot relative to it, rather than being just another item in
             the overall vertical stack above. */}
         <div className="MultiplayerDuelFieldPage-lpRow">
-          <div className="MultiplayerDuelFieldPage-handButtonColumn">
-            <button
-              type="button"
-              className={
-                handRevealed
-                  ? 'MultiplayerDuelFieldPage-revealHandButton MultiplayerDuelFieldPage-revealHandButton--active'
-                  : 'MultiplayerDuelFieldPage-revealHandButton'
-              }
-              onClick={handleToggleHandReveal}
-            >
-              {handRevealed ? 'Hide Hand' : 'Reveal Hand'}
-            </button>
-            <button
-              type="button"
-              className="MultiplayerDuelFieldPage-shuffleHandButton"
-              onClick={handleShuffleHand}
-            >
-              Shuffle Hand
-            </button>
-          </div>
           <LifePointCounter
             value={renderMe.lifePoints}
             onAdd={(amount) => handleLifePointChange(amount)}

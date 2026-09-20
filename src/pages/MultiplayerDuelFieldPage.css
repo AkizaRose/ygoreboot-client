@@ -14,6 +14,14 @@
 
 .MultiplayerDuelFieldPage-sidePanel {
   flex-shrink: 0;
+  /* Normally just the Card Viewer alone — during Side Decking, this also
+     holds the Swap Cards/Reset Deck/Done Siding block (see
+     SideDecking-sidePanelActions), stacked directly beneath it. A plain
+     column with a gap is enough for that; it's a no-op for the normal
+     duel field's own single child. */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* Taken out of the row's flex flow and centered directly against
@@ -86,19 +94,20 @@
    as a matching pair rather than sitting in different corners. */
 .MultiplayerDuelFieldPage-opponentHud {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 8px;
+  right: 4px;
   z-index: 100;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 10px;
+  gap: 4px;
 }
 
 .MultiplayerDuelFieldPage-hudUsername {
   font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
   font-size: 13px;
   color: var(--text);
+  line-height: 12px;
 }
 
 /* Overrides LifePointCounter-display's own :hover and cursor — those
@@ -118,13 +127,105 @@
 
 .MultiplayerDuelFieldPage-playerHud {
   position: absolute;
-  bottom: 12px;
-  right: 12px;
+  bottom: 8px;
+  right: 4px;
   z-index: 100;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 10px;
+  gap: 4px;
+}
+
+/* --- Chat ---
+   Both the history box and the input box below share this same fixed
+   width, so the two line up into one visually consistent column rather
+   than the history box's width just being whatever its longest message
+   happens to need. */
+.MultiplayerDuelFieldPage-chatHistory {
+  width: 210px;
+  height: 345px;
+  box-sizing: content-box;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 6px;
+  background: #00000000;
+}
+
+.MultiplayerDuelFieldPage-chatMessage {
+  display: flex;
+  /* Top-aligned, not centered — the avatar should stay pinned to the
+     first line of its own message even once that message wraps onto
+     several lines, rather than drifting to the vertical center of the
+     whole bubble. */
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0px;
+}
+
+/* Own messages: avatar top-left, message box to its right (the default
+   row direction already puts them in that order). Opponent's messages:
+   avatar top-right, message box to its left — row-reverse is simplest
+   way to flip just the ORDER without needing a second, mirrored set of
+   margin/alignment rules. */
+.MultiplayerDuelFieldPage-chatMessage--opponent {
+  flex-direction: row-reverse;
+}
+
+.MultiplayerDuelFieldPage-chatAvatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  display: block;
+}
+
+.MultiplayerDuelFieldPage-chatBubble {
+  min-width: 0px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-family: 'Yu-Gi-Oh! Matrix Book';
+  font-size: 12px;
+  color: white;
+  overflow-wrap: anywhere;
+  line-height: 16px;
+}
+
+/* Red/blue at 50% opacity, per request — the same red/blue used
+   elsewhere in this app to distinguish "mine" from "opponent's" (see
+   PlayerAvatarBox.css's own --myTurn/--opponentTurn border colors),
+   just as a translucent fill here instead of a border. */
+.MultiplayerDuelFieldPage-chatBubble--mine {
+  background: rgba(211, 47, 47, 0.25);
+  text-align: left;
+}
+
+.MultiplayerDuelFieldPage-chatBubble--opponent {
+  background: rgba(25, 118, 210, 0.25);
+  text-align: left;
+}
+
+.MultiplayerDuelFieldPage-chatInput {
+  width: 216px;
+  box-sizing: border-box;
+  font-family: 'Yu-Gi-Oh! Matrix Book';
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  color: white;
+}
+
+.MultiplayerDuelFieldPage-chatInput::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.MultiplayerDuelFieldPage-chatInput:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.6);
 }
 
 /* Row, not stacked — this is what puts the shuffle button to the LEFT
@@ -142,15 +243,19 @@
    button used to occupy, rather than either one becoming just another
    item in the overall vertical stack above. */
 .MultiplayerDuelFieldPage-handButtonColumn {
+  position: absolute;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  bottom: 8px;
+  right: 272px;
+  z-index: 9999;
 }
 
 .MultiplayerDuelFieldPage-shuffleHandButton {
   font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
   font-size: 12px;
-  padding: 6px 10px;
+  padding: 6px 6px;
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: #16171dee;
@@ -170,7 +275,7 @@
 .MultiplayerDuelFieldPage-revealHandButton {
   font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
   font-size: 12px;
-  padding: 6px 10px;
+  padding: 6px 6px;
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: #16171dee;
@@ -323,5 +428,3 @@
   pointer-events: none;
   z-index: 90;
 }
-</file>
-

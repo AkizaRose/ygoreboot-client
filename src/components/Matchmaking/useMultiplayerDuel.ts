@@ -282,6 +282,20 @@ interface DuelDoc {
   // just-finished duel goes first next (i.e. the opposite of this
   // field's own previous value).
   duelStartingRole?: PlayerRole;
+  // Side Decking — whether THIS role has clicked "Done Siding" for the
+  // siding phase currently in progress (see
+  // MultiplayerDuelFieldPage.tsx's own isSidingPhase/
+  // handleDoneSidingClick). Two separate top-level fields, not one
+  // shared nested object, deliberately — same convention as
+  // player1Selection/player2Selection above: each client only ever
+  // writes its OWN field, so there's no race between the two clients'
+  // writes the way there would be if both tried to merge into the same
+  // object field (see pendingControlTransfers' own comment on exactly
+  // that problem). Reset to false by the same single write that starts
+  // a new siding phase (setting matchConclusion to defeatAdmitted/
+  // drawAccepted) — see handleAdmitDefeatConfirm/handleAcceptDraw.
+  player1DoneSiding?: boolean;
+  player2DoneSiding?: boolean;
   // The WHOLE MATCH's own final outcome, once any player has won 2
   // duels (or both reach 2 in the same duel via a draw) — null while
   // the match is still undecided. Set by the same single write that
@@ -444,6 +458,40 @@ interface DuelDoc {
     // client is the one building the resulting PlacedCard.
     position?: 'attack' | 'defense';
   }[];
+  // Chat — the full message history for this duel "room," shared by
+  // both players and persisting across every duel in the match (this
+  // lives at the top level of the document, same as matchWins/
+  // duelNumber, not nested under either player's own public state).
+  // Same array-not-single-object reasoning as pendingControlTransfers/
+  // pendingCardReturns/pendingPileRequests above: two messages sent
+  // close together (either by the same player in quick succession, or
+  // by both players at once) must never let the second overwrite the
+  // first before either client has seen it — appended via arrayUnion
+  // (see MultiplayerDuelFieldPage's own handleSendChatMessage), never a
+  // plain merge write of the whole array. Optional/absent until the
+  // first message is ever sent, same as pendingControlTransfers et al.
+  // effectively are before their first entry (those are typed as plain
+  // arrays only because MultiplayerDuelFieldPage always has a `?? []`
+  // fallback ready at the read site — chatMessages does too, see
+  // UseMultiplayerDuelResult's own copy below).
+  chatMessages?: ChatMessage[];
+}
+
+// A single chat message — id is a fresh crypto.randomUUID() (same
+// convention as pendingControlTransfers/pendingCardReturns/
+// pendingPileRequests' own entries), used as this list's React key since
+// two different messages could otherwise share the same (role, sentAt)
+// in the (rare, but possible) case of a very fast double-send. sentAt is
+// a plain client-side Date.now() timestamp, not serverTimestamp() —
+// Firestore doesn't support server timestamps inside arrayUnion'd array
+// elements, only at a document's own top level — but this only needs to
+// sort messages into a reasonable order for display, not be
+// authoritative, so a client clock is good enough here.
+export interface ChatMessage {
+  id: string;
+  role: PlayerRole;
+  text: string;
+  sentAt: number;
 }
 
 // The exact visual position a card was rendered at, at a specific
@@ -586,6 +634,19 @@ interface UseMultiplayerDuelResult {
     | { type: 'player2WinsMatch' }
     | { type: 'matchDraw' }
     | null;
+  // Resolved straight from DuelDoc's own player1DoneSiding/
+  // player2DoneSiding, the same "mine"/"opponent" resolution
+  // mySelection/opponentSelection above already do — see DuelDoc's own
+  // comment on these two fields for the full reasoning.
+  myDoneSiding: boolean;
+  opponentDoneSiding: boolean;
+  // Resolved straight from DuelDoc's own chatMessages — see that field's
+  // own comment for the full reasoning. Not resolved into "mine"/
+  // "opponent" the way mySelection/opponentSelection are: each entry
+  // already carries its own role, and the chat UI needs to render both
+  // players' messages interleaved in one list anyway, not as two
+  // separate values.
+  chatMessages: ChatMessage[];
   // Rebuilds and writes a brand-new duel (fresh shuffled deck, empty
   // hand, full life points) for THIS client's own role only — safe for
   // both clients to call independently, same "each client only ever
@@ -594,7 +655,13 @@ interface UseMultiplayerDuelResult {
   // duel's own outcome dialog, and only when the match itself isn't
   // over (matchOutcome still null) — see MultiplayerDuelFieldPage's own
   // handleAcknowledgeMatchConclusion.
-  startNextDuel: () => void;
+  //
+  // mainIdsOverride/extraIdsOverride, when given, replace the saved
+  // deck's own Main/Extra Deck ids for this one duel — this is how Side
+  // Decking's swaps actually take effect (see MultiplayerDuelFieldPage's
+  // own matchMainIds/matchExtraIds and the auto-advance effect that
+  // calls this).
+  startNextDuel: (mainIdsOverride?: number[], extraIdsOverride?: number[]) => void;
 }
 
 function buildInitialState(
@@ -839,13 +906,13 @@ export function useMultiplayerDuel(
   // duel — applyMeUpdate's own hand-shuffle/departure bookkeeping is
   // meaningless here, since every card is leaving/entering as one
   // transition, not a single move worth animating a "departure" for.
-  const startNextDuel = useCallback(() => {
+  const startNextDuel = useCallback((mainIdsOverride?: number[], extraIdsOverride?: number[]) => {
     if (!duelId || !role || !myDeckId || !currentUser) return;
     const savedDeck = getSavedDeck(myDeckId);
     if (!savedDeck) return;
     const { publicState, privateState: freshPrivateState } = buildInitialState(
-      savedDeck.main,
-      savedDeck.extra,
+      mainIdsOverride ?? savedDeck.main,
+      extraIdsOverride ?? savedDeck.extra,
     );
     // duelStartingRole was already agreed on by both clients when the
     // previous duel's outcome was written (matchConclusion's own single
@@ -910,6 +977,9 @@ export function useMultiplayerDuel(
   const mySelection = (role && duelDoc?.[`${role}Selection`]) ?? null;
   const opponentSelection =
     (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}Selection`]) ?? null;
+  const myDoneSiding = (role && duelDoc?.[`${role}DoneSiding`]) ?? false;
+  const opponentDoneSiding =
+    (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}DoneSiding`]) ?? false;
 
   return {
     loading: !me || !opponent,
@@ -932,6 +1002,9 @@ export function useMultiplayerDuel(
     duelNumber: duelDoc?.duelNumber ?? 1,
     duelStartingRole: duelDoc?.duelStartingRole ?? null,
     matchOutcome: duelDoc?.matchOutcome ?? null,
+    myDoneSiding,
+    opponentDoneSiding,
+    chatMessages: duelDoc?.chatMessages ?? [],
     startNextDuel,
   };
 }

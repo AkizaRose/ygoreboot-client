@@ -1,0 +1,242 @@
+/* Renders inside the same fixed 1400x660 .MultiplayerDuelFieldPage box
+   the duel field itself uses (see
+   MultiplayerDuelFieldPage.css's own .MultiplayerDuelFieldPage--siding
+   modifier) — this fills whatever's left after the side panel, with its
+   own internal scrolling for the three card grids rather than the whole
+   page scrolling.
+
+   Styled to match DeckBuilder.css class-for-class wherever this screen's
+   own look is meant to be identical to the Deck Builder's (sections,
+   headers, counters, grid, cells) — deliberately duplicated rather than
+   importing DeckBuilder.css directly, the same "no dependency between
+   otherwise-unrelated features" reasoning used elsewhere in this project
+   (see e.g. MultiplayerDuelFieldPage.tsx's own duplicated
+   isExtraDeckCard). The one deliberately different thing about this
+   screen's own grid is the pulsing selected-card overlay, which
+   DeckBuilder's own drag-and-drop cells have no equivalent of. */
+.SideDecking {
+  flex: 1;
+  /* .MultiplayerDuelFieldPage's own align-items: flex-start would
+     otherwise size this to its content's natural height rather than the
+     page's own fixed 660px — stretch is what lets overflow-y below
+     actually have a bounded box to scroll within, instead of just
+     growing the whole page taller. */
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  max-width: 532px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.SideDecking-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.SideDecking-sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.SideDecking-heading {
+  font-size: 16px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: var(--text);
+  margin: 0;
+  user-select: none;
+}
+
+.SideDecking-categoryCounters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Duplicated from DeckBuilder.css (see this file's own top comment for
+   why) — CategoryCounter.tsx itself carries no CSS of its own, so
+   whichever stylesheet is actually loaded on the current page is what
+   gives it a look at all. */
+.CategoryCounter {
+  position: relative;
+  width: 26px;
+  height: 22px;
+}
+
+.CategoryCounter-icon {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.CategoryCounter-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: #fff;
+  pointer-events: none;
+}
+
+.SideDecking-grid {
+  display: grid;
+  gap: 4px;
+}
+
+.SideDecking-cell {
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+  border-radius: 2px;
+  /* A little breathing room for the selected outline below, so it
+     doesn't get clipped by the card image's own edges. */
+  box-sizing: content-box;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+/* An empty grid slot — same look as DeckBuilder-cell--empty, since a
+   Main Deck under 50 cards (or an Extra/Side Deck under its own cap)
+   always fills the rest of its grid with these, exactly the way
+   DeckBuilder's own DeckSlots does. */
+.SideDecking-cell--empty {
+  cursor: default;
+  background: #33333340;
+}
+
+/* Cyan to match DeckBuilder-cell--dragOver's own drop-target color —
+   this screen has no drag-and-drop of its own, but reusing the same
+   color keeps "something is currently targeted" consistent everywhere
+   cards are shown in a grid. */
+.SideDecking-cell--selected {
+  outline-color: #00fefe;
+}
+
+.SideDecking-cell--disabled {
+  cursor: default;
+}
+
+/* A Side Deck card that isn't legal to swap into the currently active
+   channel (Main or Extra) — see MultiplayerDuelFieldPage's own
+   sideDeckIneligibleIndices/isExtraDeckCard for the rule itself. Dimmed
+   rather than hidden, so the player can still see what's there; distinct
+   from --disabled (that's this player's whole screen going inert once
+   they've clicked Done Siding, not a per-card restriction). Only ever
+   applied to a not-currently-selected card — see SideDeckingGrid's own
+   isIneligible computation. */
+.SideDecking-cell--ineligible {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+/* The actual "selected" indicator — a solid white rectangle over the
+   whole card, oscillating between 0% and 50% opacity for as long as the
+   card stays selected. pointer-events: none so it never intercepts the
+   click that would otherwise toggle the card's own selection.
+
+   Every real card's overlay carries this animation ALL the time,
+   selected or not — only visibility (below) depends on selection.
+   visibility: hidden (rather than not rendering this element at all, or
+   hiding it via display: none) keeps the animation quietly running in
+   the background the whole time this screen is open, so the instant a
+   card IS selected, its pulse is already perfectly in phase with every
+   other selected card's — there's no restart, and so nothing to fall out
+   of sync. See SideDecking.tsx's own comment on this element for the
+   full reasoning. */
+.SideDecking-selectedOverlay {
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+  pointer-events: none;
+  visibility: hidden;
+  animation: SideDecking-selectedPulse 1s ease-in-out infinite;
+}
+
+.SideDecking-selectedOverlay--visible {
+  visibility: visible;
+}
+
+@keyframes SideDecking-selectedPulse {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.SideDecking-cardWrapper {
+  transform-origin: top left;
+}
+
+/* --- Side panel actions (Swap Cards / Reset Deck / Done Siding) ---
+   These no longer live inside the grid area above — see
+   MultiplayerDuelFieldPage's own siding-phase render, which places this
+   block in .MultiplayerDuelFieldPage-sidePanel, directly below the Card
+   Viewer, so it only ever appears during Side Decking (that whole
+   section of the page is swapped out for the normal duel field's own
+   sidePanel content otherwise). Stacked in a column, not the wide
+   horizontal row this used to be, since the side panel is a narrow
+   column, not the full remaining width of the page. */
+.SideDecking-sidePanelActions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.SideDecking-subtext {
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 12px;
+  color: var(--text);
+  margin: 0;
+}
+
+.SideDecking-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.SideDecking-actionButton,
+.SideDecking-doneButton {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 13px;
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.SideDecking-actionButton:hover:not(:disabled),
+.SideDecking-doneButton:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.SideDecking-actionButton:disabled,
+.SideDecking-doneButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Distinct color once clicked — same "visibly different from resting
+   state" idea as MultiplayerDuelFieldPage-revealHandButton--active. */
+.SideDecking-doneButton:disabled {
+  background: #1f5a2fee;
+  border-color: rgba(255, 255, 255, 0.4);
+  opacity: 1;
+  color: var(--text);
+}
