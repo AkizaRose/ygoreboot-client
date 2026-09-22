@@ -110,6 +110,41 @@
   line-height: 12px;
 }
 
+/* The avatar box, to the right, spanning the full height of the
+   username/LP counter stacked in .hudInfo to its left — used identically
+   by both opponentHud and playerHud, just with .hudInfo's own two
+   children in the opposite order between the two (LP counter above
+   username for the opponent, username above LP counter for the player's
+   own side), per the requested mockup. align-items: center rather than
+   stretch — the avatar box has its own fixed 64px height (see
+   PlayerAvatarBox.css), so this centers it against whatever height
+   hudInfo's own two stacked rows actually come out to, rather than
+   stretching the avatar itself to match. */
+.MultiplayerDuelFieldPage-hudRow {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+}
+
+/* Separate modifiers (rather than one shared align-items) so the two
+   sides' own vertical alignment can be controlled independently —
+   opponentHud's own row aligns its children to the start of the cross
+   axis, playerHud's own to the end. */
+.MultiplayerDuelFieldPage-hudRow--opponent {
+  align-items: flex-start;
+}
+
+.MultiplayerDuelFieldPage-hudRow--player {
+  align-items: flex-end;
+}
+
+.MultiplayerDuelFieldPage-hudInfo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
 /* Overrides LifePointCounter-display's own :hover and cursor — those
    exist there to signal "click to edit," which doesn't apply here (a
    player can never edit their opponent's life points), so this stays
@@ -207,8 +242,33 @@
   text-align: left;
 }
 
-.MultiplayerDuelFieldPage-chatInput {
+/* Automated system messages (e.g. "[Player] has admitted defeat") — see
+   ChatMessage's own comment on the 'system' role and renderChatMessage's
+   own use of this class. White at 30% opacity, per request, rather than
+   either player's own red/blue, so it reads as neither player's own
+   message. */
+.MultiplayerDuelFieldPage-chatBubble--system {
+  background: rgba(255, 255, 255, 0.3);
+  text-align: left;
+}
+
+/* Holds the chat input plus the two expression buttons beside it — the
+   row's total width matches what the input's own width used to be
+   (216px) before the buttons were added, so the chat column's overall
+   footprint hasn't changed; the input itself now flexes to fill
+   whatever's left after the two fixed-size buttons instead of owning a
+   fixed width of its own. */
+.MultiplayerDuelFieldPage-chatInputRow {
   width: 216px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.MultiplayerDuelFieldPage-chatInput {
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
   font-family: 'Yu-Gi-Oh! Matrix Book';
   font-size: 12px;
@@ -228,6 +288,134 @@
   border-color: rgba(255, 255, 255, 0.6);
 }
 
+/* The two emoji-style expression buttons next to the chat input — plain
+   image buttons, no button chrome of their own (background/border), so
+   they read as clickable icons rather than form controls. */
+.MultiplayerDuelFieldPage-expressionButton {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.MultiplayerDuelFieldPage-expressionButton img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.MultiplayerDuelFieldPage-expressionButton:hover {
+  opacity: 0.75;
+}
+
+/* The transient thumbs-up/thinking overlay itself — rendered as a child
+   of .PlayerAvatarBox (see that class's own position: relative, which
+   this is positioned against), for both the player's own avatar (via
+   PlayerAvatarBox's own overlay prop) and the opponent's (inserted
+   directly into their own avatar box markup, which uses the same
+   .PlayerAvatarBox class but isn't built through that component).
+   pointer-events: none so it never intercepts a click aimed at the
+   avatar box underneath it.
+
+   The whole grow-in/hold/shrink-out lifecycle is just one CSS animation,
+   timed to the same ~3 seconds MultiplayerDuelFieldPage's own
+   handleSendExpression clears the underlying Firestore field after —
+   see that function's own comment. Growing FROM/shrinking TO scale(0)
+   (not just an opacity fade) is the actual "grow"/"shrink" transition
+   requested — opacity is layered on top purely so it doesn't render as
+   a visible zero-size dot for an instant at the very start/end. */
+.MultiplayerDuelFieldPage-expressionOverlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  animation: MultiplayerDuelFieldPage-expressionPulse 3s ease-in-out forwards;
+}
+
+@keyframes MultiplayerDuelFieldPage-expressionPulse {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  12% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  85% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0);
+    opacity: 0;
+  }
+}
+
+.MultiplayerDuelFieldPage-expressionOverlayImage {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* Thumbs-up specifically, once it's grown to full size, keeps
+   oscillating between 80% and 100% of that size for as long as it stays
+   up — layered on top of (multiplied with) the outer envelope's own
+   grow/shrink scale above, since this animates the INNER img's own
+   transform, a separate element from the one the envelope animates.
+   animation-delay matches the envelope's own 12% grow point (12% of the
+   3s envelope = 0.36s) so the pulse only kicks in once thumbs-up has
+   actually finished growing in, not while it's still on the way up. */
+.MultiplayerDuelFieldPage-expressionOverlayImage--thumbsUp {
+  animation: MultiplayerDuelFieldPage-thumbsUpPulse 0.6s ease-in-out 0.36s infinite;
+}
+
+@keyframes MultiplayerDuelFieldPage-thumbsUpPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.8);
+  }
+}
+
+/* The 60-second disconnect countdown — fills the whole avatar box (same
+   position: absolute; inset: 0 technique as .expressionOverlay above,
+   relying on the same PlayerAvatarBox's own position: relative), dimming
+   the avatar underneath with a dark scrim so the number reads clearly
+   against it regardless of the avatar image's own colors. */
+.MultiplayerDuelFieldPage-disconnectCountdown {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  color: #ff5252;
+  font-family: 'Yu-Gi-Oh! Matrix Book';
+  font-size: 26px;
+  font-weight: bold;
+  pointer-events: none;
+}
+
+/* The die roll's own shared, centered display (see this page's own
+   activeDieRoll/dieRollSlot and DieRollDisplay in DieRoller.tsx) —
+   positioned absolutely against .MultiplayerDuelFieldPage-boardStage via
+   inline left/top/width/height (from getRevealZoneSlot()) rather than
+   fixed values here, since that's the exact same box the Hand's own
+   Reveal action and the Declare feature already share. z-index above
+   CardLayer's own highest tier (400, see cardPositions.ts's own
+   revealZoneEntry) so a simultaneous card reveal never covers it. */
+.MultiplayerDuelFieldPage-dieRollZone {
+  z-index: 410;
+}
+
 /* Row, not stacked — this is what puts the shuffle button to the LEFT
    of the LP counter specifically, at a fixed spot relative to it,
    rather than as just another item in the overall vertical stack
@@ -238,30 +426,34 @@
   gap: 8px;
 }
 
-/* Stacks Reveal Hand above Shuffle Hand — the pair together still sits
-   to the LEFT of the LP counter, at the same fixed spot the single
-   button used to occupy, rather than either one becoming just another
-   item in the overall vertical stack above. */
-.MultiplayerDuelFieldPage-handButtonColumn {
+/* Places Reveal Hand beside Shuffle Hand (side by side, not stacked —
+   see this page's own JSX, which now renders these two as a row) — the
+   pair together still sits to the LEFT of the LP counter, at the same
+   fixed spot the single button used to occupy, rather than either one
+   becoming just another item in the overall row above. */
+.MultiplayerDuelFieldPage-handButtonRow {
   position: absolute;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 4px;
   bottom: 8px;
   right: 272px;
   z-index: 9999;
 }
 
+/* Both buttons now render a single icon image (see MultiplayerDuelFieldPage-handButtonIcon
+   below) rather than a text label — padding/border/background here just
+   frame that icon in the same small dark square either button always
+   had. */
 .MultiplayerDuelFieldPage-shuffleHandButton {
-  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
-  font-size: 12px;
-  padding: 6px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: #16171dee;
-  color: var(--text);
   cursor: pointer;
-  white-space: nowrap;
 }
 
 .MultiplayerDuelFieldPage-shuffleHandButton:hover {
@@ -273,19 +465,28 @@
    without the other silently drifting along with it (same reasoning as
    PhaseTracker/TurnCounter's own styling elsewhere in this app). */
 .MultiplayerDuelFieldPage-revealHandButton {
-  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
-  font-size: 12px;
-  padding: 6px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: #16171dee;
-  color: var(--text);
   cursor: pointer;
-  white-space: nowrap;
 }
 
 .MultiplayerDuelFieldPage-revealHandButton:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* Shared by both buttons' own icon image — a fixed square, small enough
+   to sit comfortably in either button's own former text-label-sized
+   footprint. */
+.MultiplayerDuelFieldPage-handButtonIcon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
 }
 
 /* While active, a visibly different color from its own resting state —

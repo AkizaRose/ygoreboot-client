@@ -4,6 +4,8 @@ import { doc, setDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../auth/AuthContext';
 import DuelField from '../components/DuelField/DuelField';
+import { DieRollDisplay, ROLL_DURATION_MS } from '../components/DuelField/DieRoller';
+import { CoinFlipDisplay, FLIP_DURATION_MS } from '../components/DuelField/CoinFlipper';
 import Hand from '../components/DuelField/Hand';
 import DeckViewer from '../components/DuelField/DeckViewer';
 import CardDisplay from '../components/CardDisplay/CardDisplay';
@@ -17,7 +19,7 @@ import ConfirmDialog from '../components/ConfirmDialog/ConfirmDialog';
 import SideDecking from '../components/SideDecking/SideDecking';
 import CardLayer, { type CardLayerHandle } from '../duel/CardLayer';
 import { computeCardPositions } from '../duel/cardPositions';
-import { BOARD_WIDTH, STAGE_HEIGHT } from '../duel/cardGeometry';
+import { BOARD_WIDTH, STAGE_HEIGHT, getRevealZoneSlot } from '../duel/cardGeometry';
 import { getAvatarUrl } from '../components/Avatar/avatars';
 import { useSavedDecks } from '../components/DeckManager/useSavedDecks';
 import cardData from '../data/carddata.json';
@@ -27,13 +29,23 @@ import {
   encodeHandSelection,
   decodeHandSelection,
   OPENING_HAND_SIZE,
+  buildSystemChatMessage,
   type PlayerRole,
   type OpponentInfo,
   type MyDuelState,
   type TurnPhase,
   type SharedCardVisualPosition,
   type ChatMessage,
+  type ExpressionEvent,
+  type DieRollData,
+  type CoinFlipData,
 } from '../components/Matchmaking/useMultiplayerDuel';
+import thinkingIcon from '../assets/ui/duelfield/thinking.png';
+import thumbsUpIcon from '../assets/ui/duelfield/thumbs-up.png';
+import thinkingGif from '../assets/ui/duelfield/thinking.gif';
+import adminIcon from '../assets/ui/duelfield/admin.png';
+import revealHandIcon from '../assets/ui/duelfield/reveal_hand.png';
+import shuffleHandIcon from '../assets/ui/duelfield/shuffle_hand.png';
 import type { CardData } from '../types/Card';
 import type { CardInstance, PlacedCard } from '../types/CardInstance';
 import { shuffle } from '../utils/shuffle';
@@ -66,6 +78,158 @@ function findEmptyZoneSlot(zones: (PlacedCard | null)[]): number {
 function isExtraDeckCard(card: CardData): boolean {
   return (
     card.cardClass === 'Monster' && ['Fusion', 'Ritual', 'Evolution'].includes(card.cardSubclass ?? '')
+  );
+}
+
+// Renders the transient thumbs-up/thinking overlay for either avatar —
+// used for both the player's own (passed into PlayerAvatarBox's own
+// overlay prop) and the opponent's (inserted directly into their own
+// avatar box below, which isn't built through PlayerAvatarBox at all).
+// null renders nothing, so this can be called unconditionally at both
+// call sites. key={expression.id} is what makes a SECOND click of the
+// SAME expression type, before the first one's own grow/shrink
+// animation has finished playing, restart that animation from scratch —
+// without a fresh key here, React would just keep reusing the same
+// <img> element (identical src, identical class), and the
+// already-running CSS animation wouldn't replay.
+// Two nested elements, not one: the OUTER div owns the grow-then-shrink
+// envelope (positioned absolutely against the avatar box, per
+// MultiplayerDuelFieldPage-expressionOverlay's own comment), and the
+// INNER img owns thumbs-up's own extra "oscillate between 80% and 100%
+// size" pulse once it's grown in — two separate elements because a
+// single element can only ever have one `transform` in effect at a
+// time, so the envelope's grow/shrink scale and thumbs-up's own
+// pulsing scale can't both animate the same `transform` property
+// directly; nesting them multiplies the two scales together instead
+// (envelope * pulse), which is the actual combined effect wanted.
+// Thinking's own gif has no such pulse — see
+// MultiplayerDuelFieldPage-expressionOverlayImage--thumbsUp's own CSS
+// for why it's conditional on expression.type.
+// Renders one chat log entry — shared between the normal duel field's own
+// chat history and Side Decking's own identical copy of it (see that
+// return's own comment on why the two HUDs are duplicated rather than
+// shared), so the "mine"/"opponent"/"system" classification logic below
+// only ever has to be gotten right in one place.
+//
+// A 'system' message (see ChatMessage's own comment on that role) is
+// never "mine" — isMine only ever compares against an actual PlayerRole,
+// and 'system' !== myRole for either player — so it automatically falls
+// into the same avatar-right/bubble-left ORIENTATION as an opponent's
+// message, exactly as requested, while still getting its own distinct
+// avatar image (admin.png, not either player's own avatar) and its own
+// bubble color via the separate --system modifier below, rather than
+// being folded into the blue "opponent" styling.
+function renderChatMessage(
+  message: ChatMessage,
+  myRole: PlayerRole | undefined,
+  myAvatarId: string,
+  opponentAvatarId: string,
+) {
+  const isSystem = message.role === 'system';
+  const isMine = !isSystem && message.role === myRole;
+  const avatarUrl = isSystem ? adminIcon : getAvatarUrl(isMine ? myAvatarId : opponentAvatarId);
+  return (
+    <div
+      key={message.id}
+      className={[
+        'MultiplayerDuelFieldPage-chatMessage',
+        isMine
+          ? 'MultiplayerDuelFieldPage-chatMessage--mine'
+          : 'MultiplayerDuelFieldPage-chatMessage--opponent',
+      ].join(' ')}
+    >
+      <img src={avatarUrl} alt="" className="MultiplayerDuelFieldPage-chatAvatar" />
+      <div
+        className={[
+          'MultiplayerDuelFieldPage-chatBubble',
+          isSystem
+            ? 'MultiplayerDuelFieldPage-chatBubble--system'
+            : isMine
+              ? 'MultiplayerDuelFieldPage-chatBubble--mine'
+              : 'MultiplayerDuelFieldPage-chatBubble--opponent',
+        ].join(' ')}
+      >
+        {message.text}
+      </div>
+    </div>
+  );
+}
+
+function renderExpressionOverlay(expression: ExpressionEvent | null) {
+  if (!expression) return null;
+  const src = expression.type === 'thumbsUp' ? thumbsUpIcon : thinkingGif;
+  return (
+    <div key={expression.id} className="MultiplayerDuelFieldPage-expressionOverlay">
+      <img
+        src={src}
+        alt=""
+        className={
+          expression.type === 'thumbsUp'
+            ? 'MultiplayerDuelFieldPage-expressionOverlayImage MultiplayerDuelFieldPage-expressionOverlayImage--thumbsUp'
+            : 'MultiplayerDuelFieldPage-expressionOverlayImage'
+        }
+      />
+    </div>
+  );
+}
+
+// Kept in sync with the resolve-on-timeout effect further down, which is
+// what actually ends the match once this elapses — this constant is
+// purely the display's own idea of the countdown length, not something
+// that independently controls when the match actually resolves.
+const DISCONNECT_TIMEOUT_MS = 60_000;
+
+// Ticks down once a second, purely a DISPLAY of time already elapsed
+// against disconnectTimer's own startedAt (see DuelDoc's own comment on
+// that field) — this component doesn't decide anything itself, in
+// particular it does NOT resolve the match when it reaches 0 (see this
+// page's own resolve-on-timeout effect for that; both this component and
+// that effect independently derive the same remaining time from the same
+// startedAt, rather than one driving the other). Recomputes from
+// Date.now() - startedAt on every tick, rather than counting its own
+// local seconds down from 60, so a client that mounts partway through
+// (a page load, a remount) shows the CORRECT remaining time immediately
+// rather than restarting from a fresh 60.
+function DisconnectCountdown({ startedAt }: { startedAt: number }) {
+  const computeRemaining = () =>
+    Math.max(0, Math.ceil((startedAt + DISCONNECT_TIMEOUT_MS - Date.now()) / 1000));
+  const [remaining, setRemaining] = useState(computeRemaining);
+  useEffect(() => {
+    setRemaining(computeRemaining());
+    const intervalId = window.setInterval(() => {
+      setRemaining(computeRemaining());
+    }, 250);
+    return () => window.clearInterval(intervalId);
+    // computeRemaining intentionally not a dependency — it's a fresh
+    // closure every render (not memoized), and it only ever reads
+    // `startedAt`, which IS already a dependency here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startedAt]);
+  return <div className="MultiplayerDuelFieldPage-disconnectCountdown">{remaining}</div>;
+}
+
+// Renders the countdown over whichever avatar it belongs to — null
+// whenever no countdown is currently running, or it belongs to the
+// OTHER player's avatar (avatarRole is which player's own avatar box
+// THIS call is rendering into, e.g.
+// renderDisconnectCountdownOverlay(disconnectTimer, state.role) for this
+// player's own avatar box, opponentRole for the opponent's — so the
+// countdown only ever actually shows up over the DISCONNECTED player's
+// own avatar, on whichever client happens to be looking). Shared between
+// the normal duel field's own avatars and Side Decking's own duplicate
+// pair, same "written once, used everywhere it's needed" reasoning as
+// renderChatMessage/renderExpressionOverlay above.
+// key={disconnectTimer.startedAt} is what makes a SECOND disconnect
+// (after a first one that already ran to completion or was cancelled by
+// a reconnect) restart the visible countdown cleanly, rather than
+// DisconnectCountdown's own state carrying over from the first.
+function renderDisconnectCountdownOverlay(
+  disconnectTimer: { role: PlayerRole; startedAt: number } | null,
+  avatarRole: PlayerRole | null,
+) {
+  if (!disconnectTimer || !avatarRole || disconnectTimer.role !== avatarRole) return null;
+  return (
+    <DisconnectCountdown key={disconnectTimer.startedAt} startedAt={disconnectTimer.startedAt} />
   );
 }
 
@@ -106,6 +270,7 @@ function buildPublicState(me: MyDuelState, handRevealed: boolean) {
     handShuffleVersion: me.handShuffleVersion,
     mainDeckShuffleVersion: me.mainDeckShuffleVersion,
     openingHandDealt: me.openingHandDealt,
+    lastAutoDrawnTurn: me.lastAutoDrawnTurn,
     revealedCard: me.revealedCard,
     lastMainDeckReturnSide: me.lastMainDeckReturnSide,
     // Recomputed from the CURRENT hand on every single write, for as
@@ -135,6 +300,10 @@ function MultiplayerDuelFieldPage() {
     isMyTurn,
     mySelection,
     opponentSelection,
+    myDieRoll,
+    opponentDieRoll,
+    myCoinFlip,
+    opponentCoinFlip,
     pendingControlTransfers,
     pendingCardReturns,
     pendingPileRequests,
@@ -147,8 +316,22 @@ function MultiplayerDuelFieldPage() {
     myDoneSiding,
     opponentDoneSiding,
     chatMessages,
+    myExpression,
+    opponentExpression,
+    forfeitedBy,
+    disconnectTimer,
+    disconnectedBy,
     startNextDuel,
   } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
+
+  // Computed once here rather than inline at each of the several call
+  // sites that need it (the disconnect countdown overlay, the
+  // resolve-on-timeout effect below) — same value handleRevealedHandCardClick
+  // and several other handlers elsewhere in this file already compute
+  // ad hoc for their own one-off use, just given a single shared name
+  // here since this feature needs it in more than one place.
+  const opponentRole: PlayerRole | null =
+    state.role === 'player1' ? 'player2' : state.role === 'player2' ? 'player1' : null;
 
   // --- Side Decking (see the "--- Side Decking ---" section further
   // down for the full feature) — getSavedDeck/cardById are needed here,
@@ -229,6 +412,9 @@ function MultiplayerDuelFieldPage() {
   // either action actually writes anything to matchConclusion at all.
   const [showAdmitDefeatConfirm, setShowAdmitDefeatConfirm] = useState(false);
   const [showOfferDrawConfirm, setShowOfferDrawConfirm] = useState(false);
+  // Same idea, for the Exit button — see the "--- Exit / Forfeit ---"
+  // section further down for the actual forfeit write this guards.
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
   // Tracks which matchConclusion this client has already clicked OK on
   // (see handleAcknowledgeDrawDeclined), as a stable, derived key rather
   // than the raw object itself — duelDoc is rebuilt fresh from every
@@ -260,13 +446,32 @@ function MultiplayerDuelFieldPage() {
   const isMatchOver = matchOutcome !== null;
   // Shown once, briefly, before the actual field ever renders — see the
   // render guard further down. Starts true on every mount rather than
-  // being tied to turnNumber === 1 specifically, since a fresh page load
-  // re-runs useMultiplayerDuel's own initialization effect the same way
-  // it currently re-shuffles a fresh starting hand on refresh — this
-  // banner reappearing on refresh is consistent with that existing
-  // behavior, not a new one introduced here. Also reused at the start of
-  // duel 2/3 (see resetLocalStateForNewDuel below).
+  // being tied to turnNumber === 1 specifically, since this also gets
+  // reused at the start of duel 2/3 (see resetLocalStateForNewDuel
+  // below). A remount that's actually a RECONNECT to a duel already in
+  // progress (a refresh, or briefly closing and reopening the tab) — as
+  // opposed to a genuinely fresh join — skips it via the effect just
+  // below instead, now that useMultiplayerDuel's own initialization
+  // effect no longer overwrites an already-in-progress duel's state on
+  // remount (see that hook's own duelDoc?.[role] guard): reappearing
+  // here too, on top of that, would still make a reconnect look like the
+  // duel had restarted even though the underlying data hadn't.
   const [showFirstPlayerBanner, setShowFirstPlayerBanner] = useState(true);
+  // Runs once, the first time `me` is available after a mount — if the
+  // opening hand had already been dealt (only ever true for a duel
+  // that's already under way), this mount is a reconnect, not a fresh
+  // join, so the banner is dismissed immediately rather than making the
+  // player wait out its usual ~2.5s before seeing their own board again.
+  // A genuinely fresh duel has openingHandDealt still false at this
+  // point, so the banner behaves exactly as before for that case.
+  const hasCheckedReconnectBannerRef = useRef(false);
+  useEffect(() => {
+    if (hasCheckedReconnectBannerRef.current || !me) return;
+    hasCheckedReconnectBannerRef.current = true;
+    if (me.openingHandDealt) {
+      setShowFirstPlayerBanner(false);
+    }
+  }, [me]);
   const hoverTimeoutRef = useRef<number | undefined>(undefined);
   // Tracks the most recently INTENDED state, updated synchronously by
   // applyMeUpdate the instant it computes a new `next` — well before
@@ -408,39 +613,80 @@ function MultiplayerDuelFieldPage() {
 
   // Draws exactly one card at the start of the turn player's own turn —
   // including turn 1 for whoever goes first, not just turns claimed via
-  // "Start Turn". Keyed on turnNumber (via this ref) rather than firing
-  // whenever currentPhase === 'draw', so navigating back to Draw Phase
-  // later in the same turn doesn't draw again — this only ever fires
-  // once per genuinely NEW turnNumber this client has seen. Gated on
-  // !showFirstPlayerBanner so even turn 1's own draw happens once the
-  // field is actually visible and CardLayer is mounted to animate it,
-  // rather than invisibly while the announcement banner is still up.
-  // Also gated on BOTH players' own openingHandDealt — opponent's own
-  // is public, so this client can see whether the opponent has finished
-  // their opening draw even though it can't see the cards themselves.
-  // Without this, turn 1's own draw could interleave with the opening
-  // hand still being dealt (e.g. arriving as an out-of-place 6th card
-  // partway through), rather than opening hands finishing cleanly
-  // before any turn-based drawing begins. Checked via this flag, not a
-  // live hand.length/handCount comparison, for the same reason the
-  // opening-hand-draw effect above uses it instead of one too: a normal
-  // draw later in the game must never be blocked just because either
-  // player's hand size happens to be under OPENING_HAND_SIZE at that
-  // moment (e.g. after playing several cards) — only whether the
-  // ONE-TIME opening deal has ever completed matters here.
-  const lastAutoDrawnTurnRef = useRef<number | null>(null);
+  // "Start Turn". Keyed on turnNumber, via me.lastAutoDrawnTurn (a
+  // persisted, Firestore-backed field — see PublicPlayerState's own
+  // comment on it), rather than firing whenever currentPhase === 'draw',
+  // so navigating back to Draw Phase later in the same turn doesn't draw
+  // again — this only ever fires once per genuinely NEW turnNumber this
+  // client has seen.
+  //
+  // Previously this was guarded by a plain useRef instead of a persisted
+  // field, which broke on reconnect: refreshing or briefly closing and
+  // reopening the tab during your own turn reset the ref back to null on
+  // remount, with nothing to tell this effect "you already drew for this
+  // turn, before you left" apart from that ref — so it looked exactly
+  // like a fresh turn and fired a second, spurious draw the moment the
+  // player reconnected. Persisting the marker in the very same write as
+  // the draw itself (see the applyMeUpdate call below) closes that gap
+  // the same way openingHandDealt already does for its own equivalent
+  // problem.
+  //
+  // Gated on !showFirstPlayerBanner so even turn 1's own draw happens
+  // once the field is actually visible and CardLayer is mounted to
+  // animate it, rather than invisibly while the announcement banner is
+  // still up. Also gated on BOTH players' own openingHandDealt —
+  // opponent's own is public, so this client can see whether the
+  // opponent has finished their opening draw even though it can't see
+  // the cards themselves. Without this, turn 1's own draw could
+  // interleave with the opening hand still being dealt (e.g. arriving as
+  // an out-of-place 6th card partway through), rather than opening hands
+  // finishing cleanly before any turn-based drawing begins. Checked via
+  // this flag, not a live hand.length/handCount comparison, for the same
+  // reason the opening-hand-draw effect above uses it instead of one
+  // too: a normal draw later in the game must never be blocked just
+  // because either player's hand size happens to be under
+  // OPENING_HAND_SIZE at that moment (e.g. after playing several cards)
+  // — only whether the ONE-TIME opening deal has ever completed matters
+  // here.
   useEffect(() => {
     if (!isMyTurn || showFirstPlayerBanner) return;
     if (!me?.openingHandDealt || !opponent?.openingHandDealt) return;
-    if (lastAutoDrawnTurnRef.current === turnNumber) return;
-    lastAutoDrawnTurnRef.current = turnNumber;
-    handleDrawCard();
-    // handleDrawCard is intentionally not a dependency — it's redefined
-    // every render (not memoized), and the ref-based guard above already
-    // makes this effect idempotent per turnNumber regardless of exactly
-    // when within that render cycle it fires.
+    if (me.lastAutoDrawnTurn === turnNumber) return;
+    applyMeUpdate(
+      (current) => {
+        // Re-checked against the LATEST state (not the `me` closed over
+        // above), the same idempotency guarantee handleDrawCard's own
+        // callers rely on elsewhere — this is what keeps a second
+        // effect-fire before the first write has round-tripped back from
+        // ever drawing twice for the same turn.
+        if (current.lastAutoDrawnTurn === turnNumber) return current;
+        if (current.mainDeck.length === 0) {
+          return { ...current, lastAutoDrawnTurn: turnNumber };
+        }
+        const [drawnCard, ...restDeck] = current.mainDeck;
+        return {
+          ...current,
+          hand: [...current.hand, drawnCard],
+          mainDeck: restDeck,
+          lastAutoDrawnTurn: turnNumber,
+        };
+      },
+      { shuffleHand: false },
+    );
+    // applyMeUpdate is intentionally not a dependency — same reasoning as
+    // the opening-hand-draw effect above (it's redefined every render,
+    // not memoized), and the updater's own re-check against
+    // current.lastAutoDrawnTurn already makes this effect idempotent
+    // regardless of exactly when within a render cycle it fires.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMyTurn, turnNumber, showFirstPlayerBanner, me?.openingHandDealt, opponent?.openingHandDealt]);
+  }, [
+    isMyTurn,
+    turnNumber,
+    showFirstPlayerBanner,
+    me?.openingHandDealt,
+    opponent?.openingHandDealt,
+    me?.lastAutoDrawnTurn,
+  ]);
   // TEMPORARY DIAGNOSTIC ref — see its use further down, near
   // cardPositionEntries. Remove alongside that code once the animation
   // bug is confirmed fixed.
@@ -712,11 +958,139 @@ function MultiplayerDuelFieldPage() {
       return { ...current, hand: [...current.hand, drawnCard], mainDeck: restDeck };
     }, { shuffleHand: false });
 
-  const handleLifePointChange = (delta: number) =>
-    applyMeUpdate((current) => ({
-      ...current,
-      lifePoints: Math.max(0, current.lifePoints + delta),
-    }));
+  // The actual random result is generated HERE, once, at roll-start —
+  // not inside DieRollDisplay itself — and immediately written to this
+  // player's own DieRoll field (player1DieRoll/player2DieRoll), which is
+  // what lets BOTH clients animate and settle on the exact same roll:
+  // DieRollDisplay (in DuelField/DieRoller.tsx) derives its whole
+  // tumble-then-settle animation purely from this shared
+  // startedAt/rollId/result, and is rendered once, identically, for both
+  // clients, centered in the shared reveal zone (see this page's own
+  // activeDieRoll/dieRollSlot). The "[Player] rolled a
+  // [number]" chat message is deliberately delayed until the animation
+  // has actually finished (ROLL_DURATION_MS, imported from DieRoller so
+  // the two can never drift apart) rather than posted immediately —
+  // announcing the number in chat text the instant the roll starts would
+  // spoil the whole point of watching it tumble first, for both players.
+  // Cancelled/restarted on every new roll — same reasoning as
+  // expressionClearTimeoutRef above: without this, clicking Roll again
+  // before the FIRST roll's own clear had fired would let that stale
+  // timeout null out the field a moment after the second roll started,
+  // hiding it far too early.
+  const dieRollClearTimeoutRef = useRef<number | undefined>(undefined);
+
+  const handleRollDie = () => {
+    if (!duelId || !state.role) return;
+    const role = state.role;
+    if (dieRollClearTimeoutRef.current !== undefined) {
+      window.clearTimeout(dieRollClearTimeoutRef.current);
+    }
+    const result = 1 + Math.floor(Math.random() * 6);
+    const roll: DieRollData = { result, startedAt: Date.now(), rollId: crypto.randomUUID() };
+    const field = `${role}DieRoll`;
+    setDoc(doc(db, 'duels', duelId), { [field]: roll }, { merge: true }).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to start die roll:', err);
+    });
+    window.setTimeout(() => {
+      const message: ChatMessage = {
+        id: crypto.randomUUID(),
+        role,
+        text: `${currentUser?.displayName ?? 'A player'} rolled a ${result}`,
+        sentAt: Date.now(),
+      };
+      setDoc(doc(db, 'duels', duelId), { chatMessages: arrayUnion(message) }, { merge: true }).catch(
+        (err) => {
+          console.error('[MultiplayerDuelFieldPage] Failed to send die roll message:', err);
+        },
+      );
+    }, ROLL_DURATION_MS);
+    // Clears the die back to null (hiding it — both DuelField's own
+    // DieRollButton, which simply re-enables once its own roll field is
+    // null, and this page's own shared dieRollZone display, which simply
+    // stops rendering once neither side has an active roll) 3 seconds
+    // after the roll actually finishes settling, rather than leaving it
+    // showing indefinitely.
+    dieRollClearTimeoutRef.current = window.setTimeout(() => {
+      setDoc(doc(db, 'duels', duelId), { [field]: null }, { merge: true }).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to clear die roll:', err);
+      });
+      dieRollClearTimeoutRef.current = undefined;
+    }, ROLL_DURATION_MS + 3000);
+  };
+
+  // Mirrors handleRollDie above exactly — same shared-write-then-delayed-
+  // chat-message-then-auto-clear shape, just for a coin's two possible
+  // results instead of a die's six. See that function's own comments for
+  // the full reasoning; not repeated here since none of it differs.
+  const coinFlipClearTimeoutRef = useRef<number | undefined>(undefined);
+
+  const handleFlipCoin = () => {
+    if (!duelId || !state.role) return;
+    const role = state.role;
+    if (coinFlipClearTimeoutRef.current !== undefined) {
+      window.clearTimeout(coinFlipClearTimeoutRef.current);
+    }
+    const result: 'heads' | 'tails' = Math.random() < 0.5 ? 'heads' : 'tails';
+    const flip: CoinFlipData = { result, startedAt: Date.now(), flipId: crypto.randomUUID() };
+    const field = `${role}CoinFlip`;
+    setDoc(doc(db, 'duels', duelId), { [field]: flip }, { merge: true }).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to start coin flip:', err);
+    });
+    window.setTimeout(() => {
+      const message: ChatMessage = {
+        id: crypto.randomUUID(),
+        role,
+        text: `${currentUser?.displayName ?? 'A player'}'s coin landed on ${result}`,
+        sentAt: Date.now(),
+      };
+      setDoc(doc(db, 'duels', duelId), { chatMessages: arrayUnion(message) }, { merge: true }).catch(
+        (err) => {
+          console.error('[MultiplayerDuelFieldPage] Failed to send coin flip message:', err);
+        },
+      );
+    }, FLIP_DURATION_MS);
+    coinFlipClearTimeoutRef.current = window.setTimeout(() => {
+      setDoc(doc(db, 'duels', duelId), { [field]: null }, { merge: true }).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to clear coin flip:', err);
+      });
+      coinFlipClearTimeoutRef.current = undefined;
+    }, FLIP_DURATION_MS + 3000);
+  };
+
+  // appliedDelta is the ACTUAL change (which can differ from the
+  // requested `delta` — e.g. subtracting 500 from 300 only actually
+  // loses 300, since lifePoints is clamped to 0), captured by the
+  // updater below and read back afterward by extraFields, per
+  // applyMeUpdate's own comment on that pattern (the generic
+  // leave-zone handler uses the same trick). Declared here, outside the
+  // updater, since extraFields needs to see it after the updater has
+  // already run, not build its own separate copy of the clamping logic.
+  const handleLifePointChange = (delta: number) => {
+    if (delta === 0) return;
+    let appliedDelta = 0;
+    applyMeUpdate(
+      (current) => {
+        const nextLifePoints = Math.max(0, current.lifePoints + delta);
+        appliedDelta = nextLifePoints - current.lifePoints;
+        return { ...current, lifePoints: nextLifePoints };
+      },
+      {
+        extraFields: () => {
+          // Nothing actually changed (e.g. already at 0 and subtracting
+          // further) — no system message for a no-op change.
+          if (appliedDelta === 0) return undefined;
+          const verb = appliedDelta > 0 ? 'gained' : 'lost';
+          return {
+            chatMessages: arrayUnion(
+              buildSystemChatMessage(
+                `${currentUser?.displayName ?? 'A player'} has ${verb} ${Math.abs(appliedDelta)} Life Points`,
+              ),
+            ),
+          };
+        },
+      },
+    );
+  };
 
   // A deliberate, player-triggered shuffle — separate from the automatic
   // reshuffle that can happen when a card is added to the hand, but using
@@ -849,6 +1223,44 @@ function MultiplayerDuelFieldPage() {
     );
   };
 
+  // Whether the given instanceId is the current selection in either
+  // channel — Grave/Banished cards are always public knowledge (unlike
+  // hand cards), so unlike getSelectionColor's own real matching logic
+  // (in CardLayer.tsx) there's no hand-encoding case to decode here: the
+  // stored selection target for one of these IS just its real instanceId,
+  // compared directly.
+  const getPileSelectionColor = (instanceId: string): 'mine' | 'opponent' | null => {
+    if (mySelection === instanceId) return 'mine';
+    if (opponentSelection === instanceId) return 'opponent';
+    return null;
+  };
+
+  // Selecting a card in a Grave/Banished viewer (own OR opponent's,
+  // either player's zone — see the two DeckViewer call sites below) —
+  // drives the same red/blue outline as everywhere else via
+  // handleSelectCard's own mySelectionChannel/instanceId convention, and
+  // additionally announces the pick in chat, exactly like a real typed
+  // message (role: state.role, not 'system'). Only announced on the
+  // SELECT half of the click-to-toggle interaction, never on deselect —
+  // there's nothing worth announcing about a selection being cleared.
+  const handleSelectPileCard = (instanceId: string, cardName: string, zoneDescription: string) => {
+    if (!duelId || !state.role) return;
+    const next = mySelection === instanceId ? null : instanceId;
+    const fields: Record<string, unknown> = { [`${state.role}Selection`]: next };
+    if (next) {
+      const message: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: state.role,
+        text: `${currentUser?.displayName ?? 'A player'} selected ${cardName} in ${zoneDescription}`,
+        sentAt: Date.now(),
+      };
+      fields.chatMessages = arrayUnion(message);
+    }
+    setDoc(doc(db, 'duels', duelId), fields, { merge: true }).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to update pile selection:', err);
+    });
+  };
+
   // Clicking a card in the opponent's own revealed-hand viewer — reuses
   // the exact same select-card mechanism as everywhere else (see
   // handleSelectCard above), so it drives the same outline this app
@@ -930,6 +1342,55 @@ function MultiplayerDuelFieldPage() {
       event.preventDefault();
       handleSendChatMessage();
     }
+  };
+
+  // Disconnect/reconnect chat announcements used to live here as a
+  // client-side 'pagehide' listener, but that approach turned out to be
+  // unreliable in practice — a browser tears down in-flight network
+  // requests the instant a page actually unloads, so there's often not
+  // enough time left for the async Firestore write to escape before the
+  // connection is gone, and it could never catch a crash or a dropped
+  // network at all (neither fires any JS event to hook into). Replaced
+  // with a proper Realtime Database presence system — see
+  // useMultiplayerDuel's own "--- Presence ---" effects for the full
+  // reasoning; this page doesn't need to do anything for it directly,
+  // since chatMessages (which those effects write into) already flows
+  // through here via the normal chat rendering.
+
+  // --- Expressions ---
+  // Tracks the pending "clear this back to null" timer for THIS client's
+  // own most recent expression click, so a second click (of either
+  // expression) before the first one's own 3-second window has elapsed
+  // cancels and restarts that timer, rather than the first click's
+  // now-stale timeout firing partway through the second one's own
+  // animation and clearing it early.
+  const expressionClearTimeoutRef = useRef<number | undefined>(undefined);
+  const handleSendExpression = (type: ExpressionEvent['type']) => {
+    if (!duelId || !state.role) return;
+    if (expressionClearTimeoutRef.current !== undefined) {
+      window.clearTimeout(expressionClearTimeoutRef.current);
+    }
+    const field = `${state.role}Expression`;
+    setDoc(
+      doc(db, 'duels', duelId),
+      { [field]: { id: crypto.randomUUID(), type } },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to send expression:', err);
+    });
+    // Clears back to null ~3 seconds later — see
+    // MultiplayerDuelFieldPage-expressionOverlay's own CSS animation,
+    // which is timed to this same 3-second duration: the grow-then-hold-
+    // then-shrink keyframe animation finishes right around when this
+    // clears the field and the overlay element actually unmounts, so the
+    // shrink transition is already visually complete by then rather than
+    // the element just vanishing mid-animation.
+    expressionClearTimeoutRef.current = window.setTimeout(() => {
+      setDoc(doc(db, 'duels', duelId), { [field]: null }, { merge: true }).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to clear expression:', err);
+      });
+      expressionClearTimeoutRef.current = undefined;
+    }, 3000);
   };
 
   // --- Side Decking ---
@@ -1119,6 +1580,108 @@ function MultiplayerDuelFieldPage() {
     (matchConclusion?.type === 'defeatAdmitted' || matchConclusion?.type === 'drawAccepted') &&
     !matchOutcome;
 
+  // --- Exit / Forfeit ---
+  // Leaving via Exit, once confirmed, forfeits the match outright to the
+  // opponent — regardless of the current duel win tally — rather than
+  // simply navigating away and leaving the match's own outcome
+  // unresolved. forfeitedBy is a separate field from matchOutcome
+  // itself purely so the OPPONENT's own client can tell a forfeit apart
+  // from an ordinary match win and show the different "Your opponent
+  // has left the duel" message (see the match outcome dialog's own
+  // message logic further down) — matchOutcome alone is set to exactly
+  // the same shape a normal win already uses (winnerRole's own
+  // WinsMatch type), so every OTHER matchOutcome-driven effect in this
+  // file (Admit Defeat/Offer Draw going disabled, Side Decking's own
+  // isSidingPhase turning false, etc.) already treats a forfeit exactly
+  // like any other final match outcome, with no special-casing needed
+  // for those.
+  // Once the match is already decided — matchOutcome is set, whether
+  // from a normal 2-duel win, a draw, or an earlier forfeit — there's
+  // nothing left to forfeit, so Exit just leaves immediately, the same
+  // as it always did before this feature existed, rather than asking a
+  // question ("you forfeit the match") that's no longer true.
+  const handleExitClick = () => {
+    if (isMatchOver) {
+      navigate('/duel');
+      return;
+    }
+    setShowExitConfirm(true);
+  };
+  const handleExitCancel = () => setShowExitConfirm(false);
+  const handleExitConfirm = () => {
+    setShowExitConfirm(false);
+    if (duelId && state.role) {
+      const winnerRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
+      setDoc(
+        doc(db, 'duels', duelId),
+        {
+          forfeitedBy: state.role,
+          matchOutcome: { type: winnerRole === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch' },
+          // Belt-and-braces: if the OPPONENT happened to have an active
+          // disconnect countdown running against THEM at this exact
+          // moment (a genuinely rare double-edge-case), the match is
+          // being decided right now anyway via this forfeit, so there's
+          // nothing left for that countdown to resolve.
+          disconnectTimer: null,
+        },
+        { merge: true },
+      ).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to record forfeit:', err);
+      });
+    }
+    navigate('/duel');
+  };
+
+  // Ends the match immediately once a disconnect countdown (see DuelDoc's
+  // own comment on disconnectTimer) elapses without the disconnected
+  // player reconnecting — the DisconnectCountdown component above only
+  // ever DISPLAYS the remaining time; this is what actually decides the
+  // outcome once it reaches zero, independently deriving the same
+  // remaining time from the same disconnectTimer.startedAt.
+  //
+  // Only the STILL-CONNECTED client (disconnectTimer.role !== state.role)
+  // ever runs this — the disconnected player's own client obviously can't
+  // resolve anything while it's the one that's gone, and if THEY
+  // reconnect in time and are looking at this effect themselves, they
+  // must never be the one to declare themselves the loser.
+  //
+  // Depends on `disconnectTimer` itself (not just its startedAt), so a
+  // reconnect that clears it back to null — or a NEW disconnect that
+  // replaces it with a fresh startedAt — tears down whatever timeout was
+  // previously scheduled (the effect's own cleanup) before this body
+  // decides whether to schedule a new one, rather than an old, stale
+  // timeout still firing after the situation that started it is over.
+  // Also depends on `matchOutcome`: if the match gets decided some OTHER
+  // way (e.g. the opponent's own remaining client admits defeat) while
+  // this is still pending, that same cleanup-then-reevaluate cycle cancels
+  // this without it ever firing.
+  useEffect(() => {
+    if (!duelId || !state.role || !disconnectTimer || disconnectTimer.role === state.role) return;
+    if (matchOutcome) return;
+    const remainingMs = disconnectTimer.startedAt + DISCONNECT_TIMEOUT_MS - Date.now();
+    const timeoutId = window.setTimeout(() => {
+      const winnerRole = state.role as PlayerRole;
+      setDoc(
+        doc(db, 'duels', duelId),
+        {
+          matchOutcome: { type: winnerRole === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch' },
+          disconnectedBy: disconnectTimer.role,
+          disconnectTimer: null,
+        },
+        { merge: true },
+      ).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to resolve disconnect timeout:', err);
+      });
+      // Math.max(0, ...) — a countdown resumed after this client's own
+      // remount could already be past its own deadline by the time this
+      // effect first runs (e.g. this client was itself offline for a
+      // while and only just reconnected); firing immediately rather than
+      // scheduling a negative delay is the correct behavior for that
+      // case, not a bug to guard against differently.
+    }, Math.max(0, remainingMs));
+    return () => window.clearTimeout(timeoutId);
+  }, [duelId, state.role, disconnectTimer, matchOutcome]);
+
   // --- Admit Defeat / Offer Draw ---
 
   const handleAdmitDefeatClick = () => setShowAdmitDefeatConfirm(true);
@@ -1139,6 +1702,21 @@ function MultiplayerDuelFieldPage() {
         matchOutcome: matchDecided
           ? { type: winnerRole === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch' }
           : null,
+        // Belt-and-braces, same reasoning as handleExitConfirm's own
+        // copy of this: only clear it once the MATCH is actually over —
+        // a disconnect countdown belongs to a player, not a single duel,
+        // so it should keep running across an ordinary duel-to-duel
+        // transition (matchDecided false) rather than being wiped by it.
+        ...(matchDecided ? { disconnectTimer: null } : {}),
+        // Merged into this same write (via arrayUnion, same as every
+        // other chatMessages append) rather than a separate setDoc — see
+        // buildSystemChatMessage's own comment for why. currentUser is
+        // THIS client's own account, i.e. the player admitting defeat
+        // (loserRole), so their own displayName is exactly the name this
+        // message should name.
+        chatMessages: arrayUnion(
+          buildSystemChatMessage(`${currentUser?.displayName ?? 'A player'} has admitted defeat`),
+        ),
         // The loser of a decisive duel goes first next. Only reset the
         // Side Decking done-flags when the match ISN'T over — a
         // match-deciding duel skips siding entirely (isSidingPhase
@@ -1247,7 +1825,10 @@ function MultiplayerDuelFieldPage() {
     pendingLocalStateRef.current = null;
     setRenderMeState(null);
     setShowFirstPlayerBanner(true);
-    lastAutoDrawnTurnRef.current = null;
+    // No lastAutoDrawnTurnRef reset needed here anymore — the marker is
+    // now a persisted field (me.lastAutoDrawnTurn) that startNextDuel's
+    // own fresh publicState write already resets to null on its own, the
+    // same way openingHandDealt resets itself for a new duel.
     setHoveredCard(null);
     setHoveredHandInstanceId(null);
     setHoveredFieldInstanceId(null);
@@ -2071,6 +2652,60 @@ function MultiplayerDuelFieldPage() {
     );
   };
 
+  // --- Declare (card effect activation announcements) ---
+  // Posts "[Player] activated the effect of [card name]" as if the
+  // player had typed it themselves — role: state.role, NOT 'system' —
+  // so it renders through renderChatMessage's ordinary "mine" styling
+  // exactly like a real typed message. See handleSendChatMessage above
+  // for the identical write shape this mirrors.
+  const sendDeclareMessage = (cardName: string) => {
+    if (!duelId || !state.role) return;
+    const message: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: state.role,
+      text: `${currentUser?.displayName ?? 'A player'} activated the effect of ${cardName}`,
+      sentAt: Date.now(),
+    };
+    setDoc(doc(db, 'duels', duelId), { chatMessages: arrayUnion(message) }, { merge: true }).catch(
+      (err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to send declare message:', err);
+      },
+    );
+  };
+
+  // Which Grave/Banished pile card (if any) is currently being declared
+  // — purely a local, client-side display concern (like hoveredInstanceId
+  // elsewhere), not synced through Firestore: it just tells DuelField's
+  // pile rendering below to temporarily treat this one instanceId as the
+  // top of its pile, reverting after DECLARE_PILE_HOLD_MS. See
+  // handleGraveCardAction/handleBanishedCardAction's own 'declare' case.
+  const [declaredPileCard, setDeclaredPileCard] = useState<{
+    pile: 'grave' | 'banished';
+    instanceId: string;
+  } | null>(null);
+  const DECLARE_PILE_HOLD_MS = 1000;
+
+  // The hand's own "Declare" action — announces the effect, then sends
+  // the card through the reveal zone and back exactly like Reveal (same
+  // 2-second hold), per the user's own "in the same way that happens for
+  // the 'Reveal' option" instruction.
+  const handleHandDeclare = (instanceId: string) => {
+    const instance = (latestMeRef.current ?? me)?.hand.find((i) => i.instanceId === instanceId);
+    if (instance) sendDeclareMessage(instance.card.name);
+    moveCardViaRevealZone(
+      (current) => {
+        const inst = current.hand.find((i) => i.instanceId === instanceId);
+        if (!inst) return null;
+        return {
+          instance: inst,
+          next: { ...current, hand: current.hand.filter((i) => i.instanceId !== instanceId) },
+        };
+      },
+      'hand',
+      2000,
+    );
+  };
+
   // --- Field actions ---
 
   // Every card-departure/state-change action for Monster/Spell-Trap/
@@ -2116,6 +2751,13 @@ function MultiplayerDuelFieldPage() {
 
     if (actionKey === 'view') {
       if (zoneType === 'monster') setViewingOwnStackIndex(index);
+      return;
+    }
+
+    if (actionKey === 'declare') {
+      // Only ever offered face-up (see getPlacedCardActions), so
+      // clickedPlaced's card is always public knowledge already.
+      if (clickedPlaced) sendDeclareMessage(clickedPlaced.card.name);
       return;
     }
 
@@ -2750,6 +3392,10 @@ function MultiplayerDuelFieldPage() {
       ['Fusion', 'Ritual', 'Evolution'].includes(card.cardSubclass ?? '');
     const isMainDeckMonster = card.cardClass === 'Monster' && !isExtraDeckMonster;
 
+    // Declare is appended below regardless of card class — announcing an
+    // effect activation makes sense for any card already in the Grave.
+    const DECLARE = { key: 'declare', label: 'Declare' };
+
     if (isMainDeckMonster) {
       return [
         { key: 'toHand', label: 'To Hand' },
@@ -2757,6 +3403,7 @@ function MultiplayerDuelFieldPage() {
         { key: 'stackTop', label: 'To T. Deck' },
         { key: 'stackBottom', label: 'To B. Deck' },
         { key: 'specialSummon', label: 'S. Summon' },
+        DECLARE,
       ];
     }
     if (isExtraDeckMonster) {
@@ -2766,6 +3413,7 @@ function MultiplayerDuelFieldPage() {
         { key: 'stackTop', label: 'To T. Deck' },
         { key: 'stackBottom', label: 'To B. Deck' },
         { key: 'specialSummon', label: 'S. Summon' },
+        DECLARE,
       ];
     }
     if (card.cardClass === 'Spell' || card.cardClass === 'Trap') {
@@ -2775,6 +3423,7 @@ function MultiplayerDuelFieldPage() {
         { key: 'stackTop', label: 'To T. Deck' },
         { key: 'stackBottom', label: 'To B. Deck' },
         { key: 'toSpellTrapZone', label: 'To S/T Zone' },
+        DECLARE,
       ];
     }
     return [];
@@ -2784,6 +3433,17 @@ function MultiplayerDuelFieldPage() {
     if (!me) return;
     const instance = me.grave.find((i) => i.instanceId === instanceId);
     if (!instance) return;
+
+    if (actionKey === 'declare') {
+      sendDeclareMessage(instance.card.name);
+      setDeclaredPileCard({ pile: 'grave', instanceId });
+      window.setTimeout(() => {
+        setDeclaredPileCard((current) =>
+          current?.pile === 'grave' && current.instanceId === instanceId ? null : current,
+        );
+      }, DECLARE_PILE_HOLD_MS);
+      return;
+    }
 
     if (actionKey === 'specialSummon') {
       if (findEmptyZoneSlot(me.monsterZones) === -1) return;
@@ -2871,6 +3531,9 @@ function MultiplayerDuelFieldPage() {
       ['Fusion', 'Ritual', 'Evolution'].includes(card.cardSubclass ?? '');
     const isMainDeckMonster = card.cardClass === 'Monster' && !isExtraDeckMonster;
 
+    // Same reasoning as getGraveCardActions' own DECLARE.
+    const DECLARE = { key: 'declare', label: 'Declare' };
+
     if (isMainDeckMonster) {
       return [
         { key: 'toHand', label: 'To Hand' },
@@ -2878,6 +3541,7 @@ function MultiplayerDuelFieldPage() {
         { key: 'stackTop', label: 'To T. Deck' },
         { key: 'stackBottom', label: 'To B. Deck' },
         { key: 'specialSummon', label: 'S. Summon' },
+        DECLARE,
       ];
     }
     if (isExtraDeckMonster) {
@@ -2887,6 +3551,7 @@ function MultiplayerDuelFieldPage() {
         { key: 'stackTop', label: 'To T. Deck' },
         { key: 'stackBottom', label: 'To B. Deck' },
         { key: 'specialSummon', label: 'S. Summon' },
+        DECLARE,
       ];
     }
     if (card.cardClass === 'Spell' || card.cardClass === 'Trap') {
@@ -2896,6 +3561,7 @@ function MultiplayerDuelFieldPage() {
         { key: 'stackTop', label: 'To T. Deck' },
         { key: 'stackBottom', label: 'To B. Deck' },
         { key: 'toSpellTrapZone', label: 'To S/T Zone' },
+        DECLARE,
       ];
     }
     return [];
@@ -2904,6 +3570,16 @@ function MultiplayerDuelFieldPage() {
   const handleBanishedCardAction = (instanceId: string, actionKey: string) => {
     if (!me) return;
     const instance = me.banished.find((i) => i.instanceId === instanceId);
+    if (instance && actionKey === 'declare') {
+      sendDeclareMessage(instance.card.name);
+      setDeclaredPileCard({ pile: 'banished', instanceId });
+      window.setTimeout(() => {
+        setDeclaredPileCard((current) =>
+          current?.pile === 'banished' && current.instanceId === instanceId ? null : current,
+        );
+      }, DECLARE_PILE_HOLD_MS);
+      return;
+    }
     if (!instance) return;
 
     if (actionKey === 'specialSummon') {
@@ -3336,10 +4012,47 @@ function MultiplayerDuelFieldPage() {
             replaces the normal field's markup entirely for as long as
             isSidingPhase is true. */}
         <div className="MultiplayerDuelFieldPage-topActions">
-          <button type="button" onClick={() => navigate('/duel')}>
+          <button type="button" onClick={handleExitClick}>
             Exit
           </button>
         </div>
+
+        {showExitConfirm && (
+          <ConfirmDialog
+            message="If you leave, you forfeit the match. Are you sure?"
+            buttons={[
+              { label: 'Yes', onClick: handleExitConfirm },
+              { label: 'No', onClick: handleExitCancel },
+            ]}
+            onDismiss={handleExitCancel}
+          />
+        )}
+
+        {/* The opponent having left/forfeited can happen even while this
+            client is still on the Side Decking screen — isSidingPhase
+            itself already turns false the instant matchOutcome is set
+            (see that const's own declaration), so ordinarily this
+            branch would never render at the same time as a resolved
+            matchOutcome. The one moment it still can is the render
+            where duelDoc has JUST updated with both matchOutcome and
+            forfeitedBy at once — belt-and-braces here rather than
+            relying on a guaranteed-single-field-at-a-time update. */}
+        {matchOutcome && matchOutcomeKey !== dismissedMatchOutcomeKey && (
+          <ConfirmDialog
+            message={
+              disconnectedBy && disconnectedBy !== state.role
+                ? 'Your opponent has disconnected. You win the match!'
+                : forfeitedBy && forfeitedBy !== state.role
+                  ? 'Your opponent has left the duel. You win the match!'
+                  : matchOutcome.type === 'matchDraw'
+                    ? 'The match has ended in a draw.'
+                    : matchOutcome.type === (state.role === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch')
+                      ? 'You win the match!'
+                      : 'Your opponent has won the match.'
+            }
+            buttons={[{ label: 'OK', onClick: () => setDismissedMatchOutcomeKey(matchOutcomeKey) }]}
+          />
+        )}
 
         <SideDecking
           mainDeck={mainDeckCards}
@@ -3356,6 +4069,94 @@ function MultiplayerDuelFieldPage() {
           onCardHover={handleCardHover}
           onCardHoverEnd={handleCardHoverEnd}
         />
+
+        {/* Both HUDs (avatar, LP display, username, chat, expressions) —
+            identical markup to the normal duel field's own further down,
+            duplicated here rather than shared because this whole return
+            replaces the normal field's markup entirely for as long as
+            isSidingPhase is true, the same "duplicated, not shared"
+            reasoning as the Exit button and its own confirmation dialogs
+            above. Requested so players can keep chatting (and see life
+            points/avatars) between duels, not just during them — both
+            .MultiplayerDuelFieldPage-opponentHud/-playerHud are
+            position: absolute against this same
+            .MultiplayerDuelFieldPage root (see that class's own CSS), so
+            they overlay correctly here exactly as they do over the
+            normal field, regardless of where in this return they're
+            written. `me` is used directly here rather than `renderMe`
+            (that alias isn't computed until after this early return) —
+            fine since nothing during Side Decking triggers the
+            optimistic card-move animation renderMe exists to smooth
+            over. */}
+        <div className="MultiplayerDuelFieldPage-opponentHud">
+          <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--opponent">
+            <div className="MultiplayerDuelFieldPage-hudInfo">
+              <div className="LifePointCounter-display MultiplayerDuelFieldPage-opponentLpDisplay">
+                {opponentDisplayLifePoints}
+              </div>
+              <span className="MultiplayerDuelFieldPage-hudUsername">{opponent.username}</span>
+            </div>
+            <div className="PlayerAvatarBox">
+              <img src={getAvatarUrl(opponent.avatarId)} alt="" className="PlayerAvatarBox-image" />
+              {renderExpressionOverlay(opponentExpression)}
+              {renderDisconnectCountdownOverlay(disconnectTimer, opponentRole)}
+            </div>
+          </div>
+        </div>
+
+        <div className="MultiplayerDuelFieldPage-playerHud">
+          <div className="MultiplayerDuelFieldPage-chatHistory" ref={chatHistoryRef}>
+            {[...chatMessages]
+              .sort((a, b) => a.sentAt - b.sentAt)
+              .map((message) => renderChatMessage(message, state.role, myAvatarId, opponent.avatarId))}
+          </div>
+          <div className="MultiplayerDuelFieldPage-chatInputRow">
+            <input
+              type="text"
+              className="MultiplayerDuelFieldPage-chatInput"
+              placeholder="Type a message…"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={handleChatInputKeyDown}
+            />
+            <button
+              type="button"
+              className="MultiplayerDuelFieldPage-expressionButton"
+              onClick={() => handleSendExpression('thumbsUp')}
+            >
+              <img src={thumbsUpIcon} alt="Thumbs up" />
+            </button>
+            <button
+              type="button"
+              className="MultiplayerDuelFieldPage-expressionButton"
+              onClick={() => handleSendExpression('thinking')}
+            >
+              <img src={thinkingIcon} alt="Thinking" />
+            </button>
+          </div>
+          <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--player">
+            <div className="MultiplayerDuelFieldPage-hudInfo">
+              <span className="MultiplayerDuelFieldPage-hudUsername">
+                {currentUser?.displayName}
+              </span>
+              <div className="MultiplayerDuelFieldPage-lpRow">
+                <LifePointCounter
+                  value={me.lifePoints}
+                  onAdd={(amount) => handleLifePointChange(amount)}
+                  onSubtract={(amount) => handleLifePointChange(-amount)}
+                />
+              </div>
+            </div>
+            <PlayerAvatarBox
+              overlay={
+                <>
+                  {renderExpressionOverlay(myExpression)}
+                  {renderDisconnectCountdownOverlay(disconnectTimer, state.role ?? null)}
+                </>
+              }
+            />
+          </div>
+        </div>
       </div>
     );
   }
@@ -3369,6 +4170,64 @@ function MultiplayerDuelFieldPage() {
   // this is always what rendering uses, never the raw `me`.
   const renderMe = renderMeState ?? me;
 
+  // Display-only reordering for the Grave/Banished "Declare" animation —
+  // moves the declared card to the END of the array passed to DuelField,
+  // which is what that component always renders as the TOP of the pile
+  // (see its own `pile[pile.length - 1]` topCard logic) — for
+  // DECLARE_PILE_HOLD_MS, then reverts. The real grave/banished arrays
+  // (and their actual stored order) are never touched; this only affects
+  // what gets rendered.
+  //
+  // Deliberately plain consts, NOT useMemo — this whole block sits after
+  // the `if (loading || !me || !opponent) return ...` early return above,
+  // so any hook called here would only run on SOME renders (never on the
+  // very first, still-loading one) and never on others, violating the
+  // Rules of Hooks (hook call count/order must be identical on every
+  // render) and crashing the page entirely with a "Rendered more hooks
+  // than during the previous render" error the instant real duel data
+  // arrived. These piles are never more than a few dozen cards, so
+  // recomputing on every render (instead of memoizing) costs nothing
+  // worth guarding against.
+  const declareReorderedPile = (pile: CardInstance[], kind: 'grave' | 'banished'): CardInstance[] => {
+    if (!declaredPileCard || declaredPileCard.pile !== kind) return pile;
+    const idx = pile.findIndex((c) => c.instanceId === declaredPileCard.instanceId);
+    if (idx === -1) return pile;
+    return [...pile.slice(0, idx), ...pile.slice(idx + 1), pile[idx]];
+  };
+  const displayGrave = declareReorderedPile(renderMe.grave, 'grave');
+  const displayBanished = declareReorderedPile(renderMe.banished, 'banished');
+
+  // Whichever roll (mine or the opponent's) is currently active — shown
+  // once, centered in the shared reveal zone below, identically to both
+  // players, rather than the old per-side split (own button showed the
+  // animation / opponent saw a small badge next to their avatar). If
+  // both happen to be active at the same time (nothing stops both
+  // players rolling within the same few hundred ms of each other), the
+  // more recently started one wins, simply so there's only ever one die
+  // on screen at once rather than two overlapping.
+  // Same idea, now generalized across FOUR possible sources instead of
+  // two (mine/opponent's die roll, mine/opponent's coin flip) — the coin
+  // flip added below shares this exact same reveal-zone slot with the
+  // die roll (per the user's own request), so at most one of the two
+  // kinds can ever be showing at once; whichever of the (up to 4) active
+  // events started most recently wins, same "only one thing on screen
+  // at once" reasoning as before.
+  type ActiveRandomEvent =
+    | { kind: 'die'; data: DieRollData }
+    | { kind: 'coin'; data: CoinFlipData };
+  const randomEventCandidates: ActiveRandomEvent[] = [
+    ...(myDieRoll ? [{ kind: 'die' as const, data: myDieRoll }] : []),
+    ...(opponentDieRoll ? [{ kind: 'die' as const, data: opponentDieRoll }] : []),
+    ...(myCoinFlip ? [{ kind: 'coin' as const, data: myCoinFlip }] : []),
+    ...(opponentCoinFlip ? [{ kind: 'coin' as const, data: opponentCoinFlip }] : []),
+  ];
+  const activeRandomEvent = randomEventCandidates.reduce<ActiveRandomEvent | null>(
+    (latest, candidate) =>
+      !latest || candidate.data.startedAt >= latest.data.startedAt ? candidate : latest,
+    null,
+  );
+  const randomEventSlot = activeRandomEvent ? getRevealZoneSlot() : null;
+
   // The opponent's hand now has real geometry (getOpponentHandSlot, in
   // cardGeometry.ts) and renders through CardLayer like every other
   // card — no filtering needed anymore. It used to be excluded here and
@@ -3377,7 +4236,19 @@ function MultiplayerDuelFieldPage() {
   // hand-shuffle animation had no visible effect on the opponent's
   // side: CardLayer's own animated elements existed but weren't the
   // actual visible cards.
-  const cardPositionEntries = computeCardPositions(renderMe, opponent);
+  // computeCardPositions is what actually draws each card's own
+  // position/zIndex (via CardLayer) — DuelField's own playerGrave/
+  // playerBanished props (above) only feed its zone label's top-card
+  // image/count, which was NOT what needed reordering for the Declare
+  // pile animation. The real per-card positions come from here, reading
+  // grave/banished straight off whatever `me`-shaped object is passed
+  // in — so the declared-card reorder has to be applied to THIS input
+  // too, via a shallow copy, rather than only to the props DuelField
+  // itself receives.
+  const cardPositionEntries = computeCardPositions(
+    { ...renderMe, grave: displayGrave, banished: displayBanished },
+    opponent,
+  );
 
   // TEMPORARY DIAGNOSTIC — remove once the animation bug is confirmed
   // fixed. Whether me/opponent are literally the SAME object reference
@@ -3461,10 +4332,21 @@ function MultiplayerDuelFieldPage() {
       </div>
 
       <div className="MultiplayerDuelFieldPage-topActions">
-        <button type="button" onClick={() => navigate('/duel')}>
+        <button type="button" onClick={handleExitClick}>
           Exit
         </button>
       </div>
+
+      {showExitConfirm && (
+        <ConfirmDialog
+          message="If you leave, you forfeit the match. Are you sure?"
+          buttons={[
+            { label: 'Yes', onClick: handleExitConfirm },
+            { label: 'No', onClick: handleExitCancel },
+          ]}
+          onDismiss={handleExitCancel}
+        />
+      )}
 
       {/* Positioned via CSS (absolute, bottom-left of .content) — same
       column as Exit above, at the bottom of the screen instead of
@@ -3488,7 +4370,7 @@ function MultiplayerDuelFieldPage() {
         </button>
       </div>
 
-      <div className="MultiplayerDuelFieldPage-handButtonColumn">
+      <div className="MultiplayerDuelFieldPage-handButtonRow">
         <button
           type="button"
           className={
@@ -3497,15 +4379,21 @@ function MultiplayerDuelFieldPage() {
               : 'MultiplayerDuelFieldPage-revealHandButton'
           }
           onClick={handleToggleHandReveal}
+          title={handRevealed ? 'Hide Hand' : 'Reveal Hand'}
         >
-          {handRevealed ? 'Hide Hand' : 'Reveal Hand'}
+          <img
+            src={revealHandIcon}
+            alt={handRevealed ? 'Hide Hand' : 'Reveal Hand'}
+            className="MultiplayerDuelFieldPage-handButtonIcon"
+          />
         </button>
         <button
           type="button"
           className="MultiplayerDuelFieldPage-shuffleHandButton"
           onClick={handleShuffleHand}
+          title="Shuffle Hand"
         >
-          Shuffle Hand
+          <img src={shuffleHandIcon} alt="Shuffle Hand" className="MultiplayerDuelFieldPage-handButtonIcon" />
         </button>
       </div>
 
@@ -3544,10 +4432,14 @@ function MultiplayerDuelFieldPage() {
               playerExtraDeck={renderMe.extraDeck.map((c) => c.card)}
               playerMonsterZones={renderMe.monsterZones}
               playerSpellTrapZones={renderMe.spellTrapZones}
-              playerGrave={renderMe.grave}
-              playerBanished={renderMe.banished}
+              playerGrave={displayGrave}
+              playerBanished={displayBanished}
               playerFieldZone={renderMe.fieldZone}
               onDrawCard={handleDrawCard}
+              myDieRoll={myDieRoll}
+              onRollDie={handleRollDie}
+              myCoinFlip={myCoinFlip}
+              onFlipCoin={handleFlipCoin}
               onCardHover={handleCardHover}
               onCardHoverEnd={handleCardHoverEnd}
               onFieldAction={handleFieldAction}
@@ -3621,6 +4513,7 @@ function MultiplayerDuelFieldPage() {
               onStackTop={handleHandStackTop}
               onStackBottom={handleHandStackBottom}
               onReveal={handleHandReveal}
+              onDeclare={handleHandDeclare}
             />
 
             {/* Renders every card in cardPositionEntries on top of
@@ -3651,6 +4544,40 @@ function MultiplayerDuelFieldPage() {
               onCardHoverEnd={handleCardHoverEnd}
               duelNumber={duelNumber}
             />
+
+            {/* The die roll / coin flip itself — centered in the same
+                shared reveal zone the Hand's own "Reveal" action and the
+                Declare feature use (see getRevealZoneSlot's own
+                comment), positioned absolutely against this same
+                boardStage rather than going through CardLayer's own
+                cardPositionEntries pipeline (neither is a
+                CardInstance/PlacedCard, so neither has anything to hand
+                that pipeline). pointerEvents: 'none' since this is
+                purely a display — the actual buttons live on the board
+                itself (see DuelField's own deckRow). Rendered last
+                (after CardLayer) so it's never covered by any card art
+                beneath it. activeRandomEvent already picks at most ONE
+                of the two kinds to show at a time (see its own
+                comment), so this never needs to render both together. */}
+            {activeRandomEvent && randomEventSlot && (
+              <div
+                className="MultiplayerDuelFieldPage-dieRollZone"
+                style={{
+                  position: 'absolute',
+                  left: randomEventSlot.x,
+                  top: randomEventSlot.y,
+                  width: randomEventSlot.width,
+                  height: randomEventSlot.height,
+                  pointerEvents: 'none',
+                }}
+              >
+                {activeRandomEvent.kind === 'die' ? (
+                  <DieRollDisplay roll={activeRandomEvent.data} />
+                ) : (
+                  <CoinFlipDisplay flip={activeRandomEvent.data} />
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -3658,37 +4585,48 @@ function MultiplayerDuelFieldPage() {
 
 
       <div className="MultiplayerDuelFieldPage-opponentHud">
-        {/* Reuses LifePointCounter-display's own steady-state styling,
-            reused directly. A plain, non-interactive div rather than
-            LifePointCounter itself: a player can never edit their
-            opponent's life points, only see them. opponentDisplayLifePoints
-            (see useAnimatedCount) counts steadily toward the real value
-            rather than jumping straight to it, the same as the
-            player's own counter. */}
-        <div className="LifePointCounter-display MultiplayerDuelFieldPage-opponentLpDisplay">
-          {opponentDisplayLifePoints}
+        {/* Avatar box on the right, spanning the full height of the
+            username/LP counter stacked to its left — mirrored from the
+            player's own hudRow below: the opponent's LP counter comes
+            FIRST (top) and their username SECOND (bottom), the reverse
+            of the player's own order, per the requested mockup. */}
+        <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--opponent">
+          <div className="MultiplayerDuelFieldPage-hudInfo">
+            {/* Reuses LifePointCounter-display's own steady-state
+                styling, reused directly. A plain, non-interactive div
+                rather than LifePointCounter itself: a player can never
+                edit their opponent's life points, only see them.
+                opponentDisplayLifePoints (see useAnimatedCount) counts
+                steadily toward the real value rather than jumping
+                straight to it, the same as the player's own counter. */}
+            <div className="LifePointCounter-display MultiplayerDuelFieldPage-opponentLpDisplay">
+              {opponentDisplayLifePoints}
+            </div>
+            <span className="MultiplayerDuelFieldPage-hudUsername">{opponent.username}</span>
+          </div>
+          {/* Reuses PlayerAvatarBox's own CSS classes directly (already
+              globally available — this page already imports that
+              component elsewhere) rather than a separately-styled
+              approximation, so this is genuinely the same size/appearance,
+              not just a close match. The blue turn-color border is the
+              opponent-side counterpart to PlayerAvatarBox's own --myTurn
+              variant — applied directly here rather than through that
+              component, since this is the one place the opponent's own
+              avatar renders (see PlayerAvatarBox.tsx's own comment on
+              why it only ever needs the "mine" variant itself). */}
+          <div
+            className={[
+              'PlayerAvatarBox',
+              !isMyTurn && 'PlayerAvatarBox--opponentTurn',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            <img src={getAvatarUrl(opponent.avatarId)} alt="" className="PlayerAvatarBox-image" />
+            {renderExpressionOverlay(opponentExpression)}
+            {renderDisconnectCountdownOverlay(disconnectTimer, opponentRole)}
+          </div>
         </div>
-        {/* Reuses PlayerAvatarBox's own CSS classes directly (already
-            globally available — this page already imports that
-            component elsewhere) rather than a separately-styled
-            approximation, so this is genuinely the same size/appearance,
-            not just a close match. The blue turn-color border is the
-            opponent-side counterpart to PlayerAvatarBox's own --myTurn
-            variant — applied directly here rather than through that
-            component, since this is the one place the opponent's own
-            avatar renders (see PlayerAvatarBox.tsx's own comment on
-            why it only ever needs the "mine" variant itself). */}
-        <div
-          className={[
-            'PlayerAvatarBox',
-            !isMyTurn && 'PlayerAvatarBox--opponentTurn',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-        >
-          <img src={getAvatarUrl(opponent.avatarId)} alt="" className="PlayerAvatarBox-image" />
-        </div>
-        <span className="MultiplayerDuelFieldPage-hudUsername">{opponent.username}</span>
       </div>
 
       <div className="MultiplayerDuelFieldPage-playerHud">
@@ -3705,59 +4643,67 @@ function MultiplayerDuelFieldPage() {
         <div className="MultiplayerDuelFieldPage-chatHistory" ref={chatHistoryRef}>
           {[...chatMessages]
             .sort((a, b) => a.sentAt - b.sentAt)
-            .map((message) => {
-              const isMine = message.role === state.role;
-              const avatarUrl = getAvatarUrl(isMine ? myAvatarId : opponent.avatarId);
-              return (
-                <div
-                  key={message.id}
-                  className={[
-                    'MultiplayerDuelFieldPage-chatMessage',
-                    isMine
-                      ? 'MultiplayerDuelFieldPage-chatMessage--mine'
-                      : 'MultiplayerDuelFieldPage-chatMessage--opponent',
-                  ].join(' ')}
-                >
-                  <img src={avatarUrl} alt="" className="MultiplayerDuelFieldPage-chatAvatar" />
-                  <div
-                    className={[
-                      'MultiplayerDuelFieldPage-chatBubble',
-                      isMine
-                        ? 'MultiplayerDuelFieldPage-chatBubble--mine'
-                        : 'MultiplayerDuelFieldPage-chatBubble--opponent',
-                    ].join(' ')}
-                  >
-                    {message.text}
-                  </div>
-                </div>
-              );
-            })}
+            .map((message) => renderChatMessage(message, state.role, myAvatarId, opponent.avatarId))}
         </div>
-        <input
-          type="text"
-          className="MultiplayerDuelFieldPage-chatInput"
-          placeholder="Type a message…"
-          value={chatInput}
-          onChange={(e) => setChatInput(e.target.value)}
-          onKeyDown={handleChatInputKeyDown}
-        />
-        {/* Same username styling as the opponent's own, just reused here
-            too — currentUser.displayName is already established
-            elsewhere in the app (e.g. AccountPage) as where a user's own
-            username lives. */}
-        <span className="MultiplayerDuelFieldPage-hudUsername">
-          {currentUser?.displayName}
-        </span>
-        <PlayerAvatarBox isMyTurn={isMyTurn} />
-        {/* A row, not stacked with the rest of this column — the button
-            sits to the LEFT of the LP counter specifically, at a fixed
-            spot relative to it, rather than being just another item in
-            the overall vertical stack above. */}
-        <div className="MultiplayerDuelFieldPage-lpRow">
-          <LifePointCounter
-            value={renderMe.lifePoints}
-            onAdd={(amount) => handleLifePointChange(amount)}
-            onSubtract={(amount) => handleLifePointChange(-amount)}
+        {/* The chat input, plus the two expression buttons next to it —
+            clicking either briefly overlays that image on top of this
+            player's own avatar box (see PlayerAvatarBox's own overlay
+            prop below), visible to both players (see
+            renderExpressionOverlay's own comment for how the opponent's
+            side of this works). */}
+        <div className="MultiplayerDuelFieldPage-chatInputRow">
+          <input
+            type="text"
+            className="MultiplayerDuelFieldPage-chatInput"
+            placeholder="Type a message…"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={handleChatInputKeyDown}
+          />
+          <button
+            type="button"
+            className="MultiplayerDuelFieldPage-expressionButton"
+            onClick={() => handleSendExpression('thumbsUp')}
+          >
+            <img src={thumbsUpIcon} alt="Thumbs up" />
+          </button>
+          <button
+            type="button"
+            className="MultiplayerDuelFieldPage-expressionButton"
+            onClick={() => handleSendExpression('thinking')}
+          >
+            <img src={thinkingIcon} alt="Thinking" />
+          </button>
+        </div>
+        {/* Avatar box on the right, spanning the full height of the
+            username/LP counter stacked to its left — username FIRST
+            (top), LP counter SECOND (bottom), per the requested mockup
+            (the opponent's own hudRow above uses the reverse order). */}
+        <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--player">
+          <div className="MultiplayerDuelFieldPage-hudInfo">
+            {/* Same username styling as the opponent's own, just reused
+                here too — currentUser.displayName is already
+                established elsewhere in the app (e.g. AccountPage) as
+                where a user's own username lives. */}
+            <span className="MultiplayerDuelFieldPage-hudUsername">
+              {currentUser?.displayName}
+            </span>
+            <div className="MultiplayerDuelFieldPage-lpRow">
+              <LifePointCounter
+                value={renderMe.lifePoints}
+                onAdd={(amount) => handleLifePointChange(amount)}
+                onSubtract={(amount) => handleLifePointChange(-amount)}
+              />
+            </div>
+          </div>
+          <PlayerAvatarBox
+            isMyTurn={isMyTurn}
+            overlay={
+              <>
+                {renderExpressionOverlay(myExpression)}
+                {renderDisconnectCountdownOverlay(disconnectTimer, state.role ?? null)}
+              </>
+            }
           />
         </div>
       </div>
@@ -3812,15 +4758,26 @@ function MultiplayerDuelFieldPage() {
           match IS over, the match outcome dialog just below is the only
           acknowledgement that's actually needed. */}
 
-      {/* The whole MATCH's own final outcome. */}
+      {/* The whole MATCH's own final outcome — disconnectedBy/forfeitedBy
+          each override the normal win/lose/draw wording with their own
+          specific message when this client is the one who benefited from
+          a disconnect timeout or a forfeit respectively (see
+          handleExitConfirm's own comment on why forfeitedBy is a
+          separate field from matchOutcome itself, and DuelDoc's own
+          comment on disconnectedBy for why it's a distinct field from
+          forfeitedBy rather than reusing it). */}
       {matchOutcome && matchOutcomeKey !== dismissedMatchOutcomeKey && (
           <ConfirmDialog
             message={
-              matchOutcome.type === 'matchDraw'
-                ? 'The match has ended in a draw.'
-                : matchOutcome.type === (state.role === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch')
-                  ? 'You win the match!'
-                  : 'Your opponent has won the match.'
+              disconnectedBy && disconnectedBy !== state.role
+                ? 'Your opponent has disconnected. You win the match!'
+                : forfeitedBy && forfeitedBy !== state.role
+                  ? 'Your opponent has left the duel. You win the match!'
+                  : matchOutcome.type === 'matchDraw'
+                    ? 'The match has ended in a draw.'
+                    : matchOutcome.type === (state.role === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch')
+                      ? 'You win the match!'
+                      : 'Your opponent has won the match.'
             }
             buttons={[{ label: 'OK', onClick: () => setDismissedMatchOutcomeKey(matchOutcomeKey) }]}
           />
@@ -3966,9 +4923,17 @@ function MultiplayerDuelFieldPage() {
             viewingOwnPile === 'main'
               ? renderMe.mainDeck
               : viewingOwnPile === 'grave'
-                ? renderMe.grave
+                ? // Grave/Banished append their most recently added card
+                  // to the END of the array (the LAST element is the top
+                  // of the pile — see cardPositions.ts's own comment on
+                  // this). Reversed here so the viewer grid's natural
+                  // left-to-right/top-to-bottom order matches, top of
+                  // pile shown first instead of last. Main/Extra Deck
+                  // need no such reversal — they PREPEND instead, so
+                  // index 0 is already their own top card.
+                  [...renderMe.grave].reverse()
                 : viewingOwnPile === 'banished'
-                  ? renderMe.banished
+                  ? [...renderMe.banished].reverse()
                   : renderMe.extraDeck
           }
           onClose={handleCloseOwnPile}
@@ -3992,15 +4957,55 @@ function MultiplayerDuelFieldPage() {
                   ? handleBanishedCardAction
                   : handleExtraDeckCardAction
           }
+          // Click-to-select + its own chat announcement — only for
+          // Grave/Banished (per the feature request), never Main/Extra
+          // Deck, whose contents aren't public knowledge either player
+          // should be pointing at by name.
+          onCardClick={
+            viewingOwnPile === 'grave'
+              ? (instanceId) => {
+                  const inst = renderMe.grave.find((c) => c.instanceId === instanceId);
+                  if (inst) handleSelectPileCard(instanceId, inst.card.name, 'their Grave');
+                }
+              : viewingOwnPile === 'banished'
+                ? (instanceId) => {
+                    const inst = renderMe.banished.find((c) => c.instanceId === instanceId);
+                    if (inst) handleSelectPileCard(instanceId, inst.card.name, 'their Banished Zone');
+                  }
+                : undefined
+          }
+          getSelectionColor={
+            viewingOwnPile === 'grave' || viewingOwnPile === 'banished'
+              ? getPileSelectionColor
+              : undefined
+          }
         />
       )}
 
       {viewingOpponentPile && (
         <DeckViewer
-          cards={viewingOpponentPile === 'grave' ? opponent.grave : opponent.banished}
+          cards={
+            viewingOpponentPile === 'grave'
+              ? [...opponent.grave].reverse()
+              : [...opponent.banished].reverse()
+          }
           onClose={() => setViewingOpponentPile(null)}
           onCardHover={handleCardHover}
           onCardHoverEnd={handleCardHoverEnd}
+          onCardClick={
+            viewingOpponentPile === 'grave'
+              ? (instanceId) => {
+                  const inst = opponent.grave.find((c) => c.instanceId === instanceId);
+                  if (inst) handleSelectPileCard(instanceId, inst.card.name, `${opponent.username}'s Grave`);
+                }
+              : (instanceId) => {
+                  const inst = opponent.banished.find((c) => c.instanceId === instanceId);
+                  if (inst) {
+                    handleSelectPileCard(instanceId, inst.card.name, `${opponent.username}'s Banished Zone`);
+                  }
+                }
+          }
+          getSelectionColor={getPileSelectionColor}
           getCardActions={
             viewingOpponentPile === 'grave' ? getOpponentGraveCardActions : getOpponentBanishedCardActions
           }

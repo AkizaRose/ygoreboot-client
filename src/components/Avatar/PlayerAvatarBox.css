@@ -5,6 +5,11 @@
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: #16171dee;
   overflow: hidden;
+  /* Establishes the containing block for the expression overlay's own
+     position: absolute (see MultiplayerDuelFieldPage-expressionOverlay)
+     — a no-op for every other use of this component/class, which never
+     has an absolutely-positioned child to begin with. */
+  position: relative;
 }
 
 /* Same red/blue distinction as PhaseTracker's own turn-color coding —

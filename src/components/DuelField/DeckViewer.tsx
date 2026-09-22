@@ -43,6 +43,14 @@ interface DeckViewerProps {
   // deliberately separate props, not bundled together the way
   // getCardActions/onCardAction are).
   onCardClick?: (instanceId: string) => void;
+
+  // Optional per-card selection outline — same 'mine' (red)/'opponent'
+  // (blue) convention as CardLayer's own getSelectionColor/selectionColor
+  // (see that file), just re-implemented here as its own small inset
+  // box-shadow rather than shared code, since these cards render through
+  // a completely separate path (a plain grid of CardImage elements, not
+  // CardLayer's individually-positioned/animated ones).
+  getSelectionColor?: (instanceId: string) => 'mine' | 'opponent' | null;
 }
 
 function DeckViewer({
@@ -53,6 +61,7 @@ function DeckViewer({
   getCardActions,
   onCardAction,
   onCardClick,
+  getSelectionColor,
 }: DeckViewerProps) {
   // Which card (by instanceId) currently shows its context menu.
   const [hoveredInstanceId, setHoveredInstanceId] = useState<string | null>(null);
@@ -153,6 +162,7 @@ function DeckViewer({
         style={{ gridTemplateColumns: `repeat(${COLUMNS}, max-content)` }}
       >
         {cards.map(({ instanceId, card }) => {
+          const selectionColor = getSelectionColor?.(instanceId) ?? null;
           return (
             <div
               key={instanceId}
@@ -202,6 +212,27 @@ function DeckViewer({
               >
                 <CardImage card={card} />
               </div>
+              {/* Same 'mine' (red)/'opponent' (blue) inset outline
+                  CardLayer draws for a selected field/hand card (see
+                  DeckViewerProps' own getSelectionColor comment) — scaled
+                  down (1px inset/border, vs. CardLayer's 3px) to stay
+                  legible at this grid's own much smaller thumbnail size.
+                  Sits outside .DeckViewer-cardWrapper's own scale
+                  transform (a sibling, not nested inside it) so this
+                  border always renders at a crisp, constant 1-2px
+                  regardless of SCALE, rather than being scaled down along
+                  with it into an ~0px hairline. */}
+              {selectionColor && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 1,
+                    pointerEvents: 'none',
+                    boxShadow: `inset 0 0 0 2px ${selectionColor === 'mine' ? '#e53935' : '#1e88e5'}`,
+                    borderRadius: 2,
+                  }}
+                />
+              )}
             </div>
           );
         })}

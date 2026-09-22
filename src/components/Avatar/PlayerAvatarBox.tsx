@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useUserAvatar } from './useUserAvatar';
 import { getAvatarUrl } from './avatars';
 import './PlayerAvatarBox.css';
@@ -14,14 +15,25 @@ interface PlayerAvatarBoxProps {
   // avatar (rendered inline in MultiplayerDuelFieldPage instead) has
   // its own separate opponent-colored class for the same reason.
   isMyTurn?: boolean;
+  // An optional expression overlay (thumbs-up/thinking) rendered on top
+  // of the avatar image — see MultiplayerDuelFieldPage's own
+  // MultiplayerDuelFieldPage-expressionOverlay for what this actually
+  // is. Passed in as a fully-built element rather than this component
+  // knowing anything about expressions itself, the same "caller owns
+  // the content, this component just owns the box" split as everywhere
+  // else this kind of slot is used in this app. Omitted (undefined)
+  // anywhere this component renders with nothing to overlay — e.g.
+  // AccountPage, which has no expression feature of its own at all.
+  overlay?: ReactNode;
 }
 
-function PlayerAvatarBox({ isMyTurn = false }: PlayerAvatarBoxProps) {
+function PlayerAvatarBox({ isMyTurn = false, overlay }: PlayerAvatarBoxProps) {
   const { avatarId } = useUserAvatar();
 
   return (
     <div className={['PlayerAvatarBox', isMyTurn && 'PlayerAvatarBox--myTurn'].filter(Boolean).join(' ')}>
       <img src={getAvatarUrl(avatarId)} alt="Your avatar" className="PlayerAvatarBox-image" />
+      {overlay}
     </div>
   );
 }

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../firebase/config';
+import { doc, onSnapshot, setDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
+import {
+  ref,
+  onValue as onRtdbValue,
+  onDisconnect,
+  set as setRtdbValue,
+  serverTimestamp as rtdbServerTimestamp,
+} from 'firebase/database';
+import { db, rtdb } from '../../firebase/config';
 import { useAuth } from '../../auth/AuthContext';
 import { useUserAvatar } from '../Avatar/useUserAvatar';
 import { useSavedDecks } from '../DeckManager/useSavedDecks';
@@ -106,6 +113,19 @@ interface PublicPlayerState {
   // normal draw) any time hand size happens to cross that threshold
   // again later in the game.
   openingHandDealt: boolean;
+  // Which turnNumber this player last received their automatic
+  // start-of-turn draw for (see MultiplayerDuelFieldPage's own
+  // turn-start draw effect) — null before the very first one. This is
+  // what that effect actually checks now, in place of the in-memory ref
+  // it used to use: a ref resets to null on every remount (a refresh, or
+  // briefly closing and reopening the tab), which meant reconnecting
+  // during your own turn — after already having drawn for it — looked
+  // identical to "haven't drawn for this turn yet" and fired a second,
+  // spurious draw. Persisting this alongside the draw itself, in the
+  // very same write, survives exactly the remount that broke the ref,
+  // the same "put it in Firestore, not a ref" fix openingHandDealt
+  // above already uses for its own equivalent problem.
+  lastAutoDrawnTurn: number | null;
   // A hand card temporarily moved here by the hand's own "Reveal"
   // action (see MultiplayerDuelFieldPage's own handleHandReveal) —
   // renders in a shared, neutral, centered zone (see cardGeometry.ts's
@@ -204,6 +224,24 @@ interface DuelDoc {
   // all — only its owner and position are ever knowable to anyone else.
   player1Selection?: string | null;
   player2Selection?: string | null;
+  // Each player's own last die roll — a shared/synced field (rather
+  // than local-only component state) specifically so BOTH clients can
+  // animate the same tumble and settle on the same result at the same
+  // time, not just the rolling player's own screen (see
+  // MultiplayerDuelFieldPage's own handleRollDie and DieRoller, in
+  // DuelField/). Two independent slots, one per player, same convention
+  // as player1Selection/player2Selection above — each player's own last
+  // roll keeps showing on their own side of the board until THEY roll
+  // again, regardless of what the other player does with theirs.
+  player1DieRoll?: DieRollData | null;
+  player2DieRoll?: DieRollData | null;
+  // Each player's own last coin flip — same shared/synced-field
+  // convention as player1DieRoll/player2DieRoll above, and for the same
+  // reason: both clients need to animate the same flip and land on the
+  // same result at the same time (see MultiplayerDuelFieldPage's own
+  // handleFlipCoin and CoinFlipper, in DuelField/).
+  player1CoinFlip?: CoinFlipData | null;
+  player2CoinFlip?: CoinFlipData | null;
   // Set by the VIEWING player's own client when they close the Hand
   // Viewer opened by the other player's own "Reveal Hand" (see
   // PublicPlayerState's own revealedHand and MultiplayerDuelFieldPage's
@@ -309,6 +347,46 @@ interface DuelDoc {
     | { type: 'player2WinsMatch' }
     | { type: 'matchDraw' }
     | null;
+  // Set by a player's own client when they click Exit and confirm they
+  // want to forfeit — the SAME single write that also sets matchOutcome
+  // above to a normal win for the OTHER role (see
+  // MultiplayerDuelFieldPage's own handleExitConfirm), so every other
+  // matchOutcome-driven effect in this app (Admit Defeat/Offer Draw
+  // going disabled, Side Decking's own isSidingPhase turning false,
+  // etc.) already treats a forfeit like any other final match outcome
+  // with no changes needed. This field exists purely so the OPPONENT's
+  // own client can additionally tell a forfeit apart from an ordinary
+  // win and show a different message for it. Never cleared back to null
+  // — like matchOutcome, this is permanent once set; the match is over
+  // for good at that point.
+  forfeitedBy?: PlayerRole | null;
+  // A 60-second "your opponent will lose by default if they don't come
+  // back" countdown — set by the STILL-CONNECTED player's own client the
+  // moment it observes the OPPONENT's presence go offline (see the
+  // "--- Presence ---" effects below), cleared by that same client
+  // either if the disconnected player's presence comes back online
+  // before the countdown elapses, or once it elapses and the
+  // still-connected client resolves the match (see
+  // MultiplayerDuelFieldPage's own resolve-on-timeout effect). role
+  // names WHICH player disconnected — read by BOTH clients (whichever
+  // one is currently looking at that role's own avatar box renders the
+  // countdown over it; see renderDisconnectCountdownOverlay), not just
+  // the still-connected one. startedAt is a plain client Date.now()
+  // timestamp, not serverTimestamp() — same reasoning as ChatMessage's
+  // own sentAt: it needs to be read back synchronously so elapsed/
+  // remaining time can be computed locally (including correctly resuming
+  // an in-progress countdown after either client's own remount, rather
+  // than restarting it from 60). null whenever no countdown is currently
+  // running.
+  disconnectTimer?: { role: PlayerRole; startedAt: number } | null;
+  // Set once the disconnect countdown above actually elapses without the
+  // disconnected player reconnecting — same "permanent once set, names
+  // who to blame, doesn't touch matchConclusion" shape as forfeitedBy
+  // above (a disconnect timeout ends the whole MATCH immediately, same
+  // as an explicit forfeit, skipping siding entirely), just with its own
+  // separate field so the outcome dialog can tell the two apart and show
+  // a different message for each.
+  disconnectedBy?: PlayerRole | null;
   // Every monster currently in transit to the OPPONENT's Monster Zone
   // (see MultiplayerDuelFieldPage's own handleMoveToOpponentTarget) — a
   // handoff, same idea as turnEnding/Start Turn above: a client can only
@@ -458,6 +536,23 @@ interface DuelDoc {
     // client is the one building the resulting PlacedCard.
     position?: 'attack' | 'defense';
   }[];
+  // Expression overlays — a brief thumbs-up/thinking image shown over a
+  // player's own avatar box, visible to BOTH players (mine and the
+  // opponent's — see MultiplayerDuelFieldPage's own playerHud/
+  // opponentHud rendering), triggered by the two emoji-style buttons
+  // next to the chat input. Same "each client only ever writes its own
+  // field" convention as player1Selection/player1DoneSiding above — the
+  // initiating client alone is responsible for clearing this back to
+  // null again, ~3 seconds later (see MultiplayerDuelFieldPage's own
+  // handleSendExpression), which is safe since nothing else ever reads
+  // or needs to clear this but that same client's own later write. A
+  // plain object, not an array — unlike chatMessages/
+  // pendingControlTransfers/etc. above, there's no "in flight, not yet
+  // handled" concern here two rapid writes could lose: only the
+  // initiating client itself ever writes its own field, one write at a
+  // time, so nothing else could ever race it.
+  player1Expression?: ExpressionEvent | null;
+  player2Expression?: ExpressionEvent | null;
   // Chat — the full message history for this duel "room," shared by
   // both players and persisting across every duel in the match (this
   // lives at the top level of the document, same as matchWins/
@@ -487,11 +582,75 @@ interface DuelDoc {
 // elements, only at a document's own top level — but this only needs to
 // sort messages into a reasonable order for display, not be
 // authoritative, so a client clock is good enough here.
+// A single die roll, shared via DuelDoc's own player1DieRoll/
+// player2DieRoll so both clients can animate and settle on it together
+// — see those fields' own comment, and DieRoller (in DuelField/) which
+// derives its whole animation purely from startedAt/rollId, never local
+// state of its own. rollId exists purely so a NEW roll (even one that
+// happens to land on the same result number as the last one) is always
+// recognizable as a distinct event — startedAt alone would already be
+// enough to detect that in practice, but a dedicated id makes the
+// "is this a new roll" check explicit rather than relying on timestamp
+// inequality.
+export interface DieRollData {
+  result: number;
+  startedAt: number;
+  rollId: string;
+}
+
+// Same shape/reasoning as DieRollData above, one level simpler (only two
+// possible results instead of six) — see CoinFlipper (in DuelField/),
+// which derives its whole flip animation purely from startedAt/flipId,
+// never local state of its own.
+export interface CoinFlipData {
+  result: 'heads' | 'tails';
+  startedAt: number;
+  flipId: string;
+}
+
 export interface ChatMessage {
   id: string;
-  role: PlayerRole;
+  // 'system' marks an automated message the app itself sends into the
+  // chat log when a notable match event happens (e.g. a player admitting
+  // defeat, a Life Point change, a disconnect/reconnect) — see
+  // buildSystemChatMessage below. Not tied to either player's own role,
+  // so the chat rendering can tell it apart from something either player
+  // actually typed and give it its own distinct avatar/color rather than
+  // folding it into "opponent"'s.
+  role: PlayerRole | 'system';
   text: string;
   sentAt: number;
+}
+
+// Builds an automated, role: 'system' chat entry for a notable match
+// event — same shape/id convention as an ordinary player-typed
+// ChatMessage (see MultiplayerDuelFieldPage's own handleSendChatMessage),
+// just with 'system' in place of a PlayerRole, which is what
+// renderChatMessage there uses to give it its own distinct avatar/color
+// rather than rendering as either player's own message. Exported (rather
+// than kept private to this file) since callers on both sides live in
+// MultiplayerDuelFieldPage.tsx (admitting defeat, an LP change,
+// disconnecting) AND in this file's own init effect below (reconnecting)
+// — one shared builder, so every system message is constructed
+// identically regardless of which file triggers it. Callers merge the
+// result into the SAME setDoc call as whatever field write triggered it
+// (via arrayUnion, same as every other chatMessages write) rather than
+// issuing a separate write — the message then always arrives atomically
+// with the event it's announcing, not as a distinct, potentially
+// out-of-order update.
+export function buildSystemChatMessage(text: string): ChatMessage {
+  return { id: crypto.randomUUID(), role: 'system', text, sentAt: Date.now() };
+}
+
+// A transient expression overlay event — id is a fresh
+// crypto.randomUUID() per click (same convention as ChatMessage's own
+// id above), used as the overlay <img>'s own React key so a SECOND
+// click of the same expression, before the first one's own 3-second
+// animation has finished, still restarts the grow/shrink animation from
+// scratch rather than React reusing the same element.
+export interface ExpressionEvent {
+  id: string;
+  type: 'thumbsUp' | 'thinking';
 }
 
 // The exact visual position a card was rendered at, at a specific
@@ -543,6 +702,7 @@ export interface MyDuelState {
   handShuffleVersion: number;
   mainDeckShuffleVersion: number;
   openingHandDealt: boolean;
+  lastAutoDrawnTurn: number | null;
   revealedCard: PlacedCard | null;
   lastMainDeckReturnSide: 'top' | 'bottom' | null;
   activeAttack: { id: string; fromIndex: number; toIndex: number | null } | null;
@@ -577,6 +737,16 @@ interface UseMultiplayerDuelResult {
   // the two raw fields is mine" itself. null means nothing selected.
   mySelection: string | null;
   opponentSelection: string | null;
+  // Resolved from player1DieRoll/player2DieRoll the same way
+  // mySelection/opponentSelection are — see DuelDoc's own comment on
+  // those two fields.
+  myDieRoll: DieRollData | null;
+  opponentDieRoll: DieRollData | null;
+  // Resolved from player1CoinFlip/player2CoinFlip the same way
+  // myDieRoll/opponentDieRoll are — see DuelDoc's own comment on those
+  // two fields.
+  myCoinFlip: CoinFlipData | null;
+  opponentCoinFlip: CoinFlipData | null;
   // Raw, unresolved (not "mine"/"opponent") — the caller checks each
   // entry's own toRole, since either client might be the recipient of
   // any given entry depending on who initiated that move. Every entry
@@ -647,6 +817,26 @@ interface UseMultiplayerDuelResult {
   // players' messages interleaved in one list anyway, not as two
   // separate values.
   chatMessages: ChatMessage[];
+  // Resolved from DuelDoc's own player1Expression/player2Expression, the
+  // same "mine"/"opponent" resolution mySelection/opponentSelection
+  // above already do — see DuelDoc's own comment on these two fields for
+  // the full reasoning.
+  myExpression: ExpressionEvent | null;
+  opponentExpression: ExpressionEvent | null;
+  // Resolved straight from DuelDoc's own forfeitedBy — see that field's
+  // own comment for the full reasoning. Not resolved into "mine"/
+  // "opponent" the way mySelection/opponentSelection are: the caller
+  // needs to know WHICH role forfeited (to tell a self-forfeit apart
+  // from an opponent forfeit), not just whether it was "me."
+  forfeitedBy: PlayerRole | null;
+  // Resolved straight from DuelDoc's own disconnectTimer/disconnectedBy
+  // — see those fields' own comments for the full reasoning. Not
+  // resolved into "mine"/"opponent" here either, same reasoning as
+  // forfeitedBy above: a caller rendering an avatar box needs to know
+  // WHICH role's avatar to overlay the countdown on, and the outcome
+  // dialog needs to tell a self-disconnect apart from an opponent one.
+  disconnectTimer: { role: PlayerRole; startedAt: number } | null;
+  disconnectedBy: PlayerRole | null;
   // Rebuilds and writes a brand-new duel (fresh shuffled deck, empty
   // hand, full life points) for THIS client's own role only — safe for
   // both clients to call independently, same "each client only ever
@@ -709,6 +899,7 @@ function buildInitialState(
       handShuffleVersion: 0,
       mainDeckShuffleVersion: 0,
       openingHandDealt: false,
+      lastAutoDrawnTurn: null,
       revealedCard: null,
       lastMainDeckReturnSide: null,
       revealedHand: null,
@@ -729,8 +920,33 @@ export function useMultiplayerDuel(
   const { getSavedDeck, loading: decksLoading } = useSavedDecks();
 
   const [duelDoc, setDuelDoc] = useState<DuelDoc | null>(null);
+  // A ref mirror of duelDoc, kept in sync by the effect right below —
+  // needed by the opponent-presence-watching effect further down, whose
+  // own onValue listener is deliberately only ever (re)attached when
+  // duelId/opponentInfo change (see that effect's own comment), NOT on
+  // every duelDoc update. Its callback closure would otherwise see a
+  // stale duelDoc from whenever the listener was first attached, rather
+  // than the CURRENT matchOutcome/disconnectTimer it needs to check
+  // against at the moment a presence transition actually fires. Same
+  // "ref mirror for a value a listener closure needs fresh, without
+  // making that value a dependency that would tear the listener down
+  // and reattach it" trick as MultiplayerDuelFieldPage's own
+  // latestMeRef.
+  const duelDocRef = useRef<DuelDoc | null>(null);
+  useEffect(() => {
+    duelDocRef.current = duelDoc;
+  }, [duelDoc]);
   const [privateState, setPrivateState] = useState<PrivatePlayerState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // True from the moment the FIRST duels/{duelId} snapshot has arrived
+  // (whether or not the document exists yet) — see the initialization
+  // effect below, which needs this to tell "this role's public state
+  // genuinely doesn't exist yet" apart from "we simply haven't checked
+  // yet." Deliberately never reset back to false (not even on a
+  // retryTick-driven re-subscribe below) — once this client has seen
+  // the doc's real content at least once, it stays known for the rest
+  // of this mount's lifetime.
+  const [hasReceivedDuelSnapshot, setHasReceivedDuelSnapshot] = useState(false);
 
   // Guards the initialization write below against firing more than
   // once for this mount — the effect's own dependencies (decksLoading in
@@ -758,11 +974,44 @@ export function useMultiplayerDuel(
   // order the two writes actually land in, the end result is the same
   // either way — see firestore.rules for how this is enforced
   // server-side too, not just assumed here.
+  //
+  // Only ever writes a FRESH starting state when this role has no
+  // public state in the doc at all yet (see the duelDoc?.[role] guard
+  // below) — this is what actually fixes reconnecting (a refresh, or
+  // briefly closing and reopening the tab) wiping a player's own hand/
+  // field/life points back to a brand new duel: this effect reruns on
+  // every remount (hasInitializedRef is a ref, so it starts fresh every
+  // time too), and previously had no way to tell "genuinely joining for
+  // the first time" apart from "reconnecting mid-duel" — it just always
+  // rebuilt and overwrote a fresh shuffled state either way. Now it
+  // waits for the first real snapshot of the doc (hasReceivedDuelSnapshot)
+  // before deciding, and if this role's own public state already exists
+  // there — whichever duel of the match it's currently on — leaves it,
+  // and the private hand/deck subcollection, completely untouched.
   useEffect(() => {
     if (!duelId || !role || !opponentInfo || !myDeckId || !currentUser || !currentUser.displayName)
       return;
     if (decksLoading) return;
     if (hasInitializedRef.current) return;
+    if (!hasReceivedDuelSnapshot) return;
+
+    if (duelDoc?.[role]) {
+      // Reconnecting to a duel already in progress — nothing to
+      // initialize, just stop this effect from ever attempting to on
+      // this mount.
+      //
+      // NOT where the "has reconnected" chat message gets posted — see
+      // the presence effect further down for that. This remount-based
+      // signal only catches a graceful reconnect (a refresh, or briefly
+      // closing and reopening the tab); the presence effect catches
+      // every case this does PLUS a genuine dropped connection or a
+      // crashed tab, and — since it's the OPPONENT's own client that
+      // observes the transition and posts the message (see that
+      // effect's own comment) — this client announcing its own
+      // reconnect here as well would just double it up.
+      hasInitializedRef.current = true;
+      return;
+    }
 
     const savedDeck = getSavedDeck(myDeckId);
     if (!savedDeck) {
@@ -826,7 +1075,120 @@ export function useMultiplayerDuel(
     decksLoading,
     getSavedDeck,
     retryTick,
+    hasReceivedDuelSnapshot,
+    duelDoc,
   ]);
+
+  // --- Presence (disconnect/reconnect chat announcements) ---
+  //
+  // Firestore has no server-side notion of a client disconnecting — a
+  // dropped connection just goes quiet, with nothing running on the
+  // server to notice or react to it. A client-side 'pagehide' listener
+  // (tried first, before this) only catches a GRACEFUL departure
+  // (closing the tab, refreshing, navigating away) and even then isn't
+  // reliable: the browser tears down in-flight network requests the
+  // moment the page actually unloads, so there's often not enough time
+  // left for the async Firestore write to reach the server before the
+  // connection is gone — the message just silently never arrives. It
+  // also can't catch a crash, a killed process, or a dropped network at
+  // all, since none of those fire any JS event on this end to hook into
+  // in the first place.
+  //
+  // Realtime Database's onDisconnect() solves this properly because it's
+  // the RTDB SERVER itself, not this client's own JS, that notices the
+  // connection is gone (via its own heartbeat) and then carries out a
+  // write that was registered in advance — it fires for every one of the
+  // cases above, crash and dropped network included, not just a graceful
+  // unload. This is the ONE thing this app uses Realtime Database for;
+  // everything else still lives in Firestore.
+  //
+  // Each client only ever announces its OWN presence (uid-keyed, not
+  // duel-specific — a player is connected to Firebase or they aren't,
+  // independent of which duel they're currently in) via this effect, and
+  // separately WATCHES the opponent's (see the next effect below) to
+  // post the actual chat message. The disconnecting client can never
+  // write its own "I've disconnected" message after the fact — by
+  // definition its own JS has already stopped running by the time
+  // anyone would notice — so it's always the other client, watching,
+  // that has to be the one to post it. That split also means there's no
+  // double-write to guard against: each client reacts only to the
+  // OTHER's presence, never its own.
+  useEffect(() => {
+    if (!duelId || !role || !currentUser) return;
+    const myPresenceRef = ref(rtdb, `presence/${currentUser.uid}`);
+    // .info/connected fires true/false as this CLIENT's own connection to
+    // the Realtime Database itself goes up and down (a browser tab reuses
+    // one shared RTDB connection regardless of how many onValue listeners
+    // are attached) — re-registering onDisconnect() every time it comes
+    // back true is required, not just done once: onDisconnect() is
+    // armed for the CURRENT connection only, and doesn't survive that
+    // connection dropping and a new one being established (e.g. a brief
+    // network blip that recovers on its own).
+    const unsubscribe = onRtdbValue(ref(rtdb, '.info/connected'), (snapshot) => {
+      if (snapshot.val() !== true) return;
+      onDisconnect(myPresenceRef)
+        .set({ online: false, lastChanged: rtdbServerTimestamp() })
+        .then(() => {
+          setRtdbValue(myPresenceRef, { online: true, lastChanged: rtdbServerTimestamp() });
+        })
+        .catch((err) => {
+          console.error('[useMultiplayerDuel] Failed to register presence:', err);
+        });
+    });
+    return () => unsubscribe();
+  }, [duelId, role, currentUser]);
+
+  // previousOpponentOnlineRef starts at null every time this effect
+  // (re)attaches, so the very first presence value this client ever
+  // observes for this opponent — whatever it happens to be — just seeds
+  // the ref rather than being treated as a "just changed" transition;
+  // only a value that differs from a PREVIOUSLY OBSERVED one counts as
+  // an actual disconnect/reconnect worth announcing. Without this guard,
+  // simply opening the duel and reading the opponent's already-online
+  // presence for the first time would look identical to them having just
+  // reconnected.
+  const previousOpponentOnlineRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!duelId || !role || !opponentInfo) return;
+    const opponentRole: PlayerRole = role === 'player1' ? 'player2' : 'player1';
+    previousOpponentOnlineRef.current = null;
+    const opponentPresenceRef = ref(rtdb, `presence/${opponentInfo.uid}`);
+    const unsubscribe = onRtdbValue(opponentPresenceRef, (snapshot) => {
+      const online = snapshot.val()?.online === true;
+      const previous = previousOpponentOnlineRef.current;
+      previousOpponentOnlineRef.current = online;
+      if (previous === null || previous === online) return;
+
+      const fields: Record<string, unknown> = {
+        chatMessages: arrayUnion(
+          buildSystemChatMessage(
+            `${opponentInfo.username} has ${online ? 'reconnected' : 'disconnected'}`,
+          ),
+        ),
+      };
+      // Start/clear the 60-second disconnect countdown alongside the
+      // chat announcement, in this same write — see DuelDoc's own
+      // comment on disconnectTimer for the full reasoning. Reads
+      // duelDocRef (not duelDoc directly — this effect only re-attaches
+      // on duelId/opponentInfo changes, so a plain closure over duelDoc
+      // would go stale) to avoid starting a fresh countdown toward a
+      // match that's already decided, and to avoid clearing some
+      // unrelated countdown that isn't actually this opponent's own.
+      const currentDuelDoc = duelDocRef.current;
+      if (!online) {
+        if (!currentDuelDoc?.matchOutcome) {
+          fields.disconnectTimer = { role: opponentRole, startedAt: Date.now() };
+        }
+      } else if (currentDuelDoc?.disconnectTimer?.role === opponentRole) {
+        fields.disconnectTimer = null;
+      }
+
+      setDoc(doc(db, 'duels', duelId), fields, { merge: true }).catch((err) => {
+        console.error('[useMultiplayerDuel] Failed to post presence chat message:', err);
+      });
+    });
+    return () => unsubscribe();
+  }, [duelId, role, opponentInfo]);
 
   useEffect(() => {
     if (!duelId) return;
@@ -834,6 +1196,7 @@ export function useMultiplayerDuel(
       doc(db, 'duels', duelId),
       (snapshot) => {
         setDuelDoc(snapshot.exists() ? (snapshot.data() as DuelDoc) : null);
+        setHasReceivedDuelSnapshot(true);
       },
       (err) => {
         // A silent failure here (no error callback at all) is exactly
@@ -980,6 +1343,15 @@ export function useMultiplayerDuel(
   const myDoneSiding = (role && duelDoc?.[`${role}DoneSiding`]) ?? false;
   const opponentDoneSiding =
     (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}DoneSiding`]) ?? false;
+  const myExpression = (role && duelDoc?.[`${role}Expression`]) ?? null;
+  const opponentExpression =
+    (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}Expression`]) ?? null;
+  const myDieRoll = (role && duelDoc?.[`${role}DieRoll`]) ?? null;
+  const opponentDieRoll =
+    (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}DieRoll`]) ?? null;
+  const myCoinFlip = (role && duelDoc?.[`${role}CoinFlip`]) ?? null;
+  const opponentCoinFlip =
+    (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}CoinFlip`]) ?? null;
 
   return {
     loading: !me || !opponent,
@@ -993,6 +1365,10 @@ export function useMultiplayerDuel(
     isMyTurn,
     mySelection,
     opponentSelection,
+    myDieRoll,
+    opponentDieRoll,
+    myCoinFlip,
+    opponentCoinFlip,
     pendingControlTransfers: duelDoc?.pendingControlTransfers ?? [],
     pendingCardReturns: duelDoc?.pendingCardReturns ?? [],
     pendingPileRequests: duelDoc?.pendingPileRequests ?? [],
@@ -1005,6 +1381,11 @@ export function useMultiplayerDuel(
     myDoneSiding,
     opponentDoneSiding,
     chatMessages: duelDoc?.chatMessages ?? [],
+    myExpression,
+    opponentExpression,
+    forfeitedBy: duelDoc?.forfeitedBy ?? null,
+    disconnectTimer: duelDoc?.disconnectTimer ?? null,
+    disconnectedBy: duelDoc?.disconnectedBy ?? null,
     startNextDuel,
   };
 }

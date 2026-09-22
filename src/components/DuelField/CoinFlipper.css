@@ -1,0 +1,55 @@
+.CoinFlipper-button {
+  width: 72px;
+  height: 105px;
+  box-sizing: border-box;
+  background: #33333340;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  cursor: pointer;
+}
+.CoinFlipper-button:hover:not(:disabled) {
+  background: #4a4a4a55;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.CoinFlipper-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.CoinFlipper-buttonIcon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* The shared, center-of-board display (see CoinFlipDisplay) — sized to
+   whatever box its caller gives it (MultiplayerDuelFieldPage's own
+   reveal-zone overlay), same convention as DieRoller-display/
+   DieRoller-displayInner (see that file's own comment on why the inner
+   wrapper needs its own explicit 100% size — this mirrors it exactly,
+   for the same reason: CoinFlipper-face's own percentage width below
+   needs a definite-size containing block to resolve against). */
+.CoinFlipper-display {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.CoinFlipper-displayInner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.CoinFlipper-face {
+  width: 55%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 50%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}

@@ -1,5 +1,7 @@
 import type { CSSProperties } from 'react';
 import FieldZone, { type FieldZoneAction } from './FieldZone';
+import { DieRollButton, type DieRollData } from './DieRoller';
+import { CoinFlipButton, type CoinFlipData } from './CoinFlipper';
 import PhaseTracker from './PhaseTracker';
 import TurnCounter from './TurnCounter';
 import type { TurnPhase } from '../Matchmaking/useMultiplayerDuel';
@@ -55,6 +57,12 @@ const EXTRA_DECK_MONSTER_FIELD_ACTIONS: FieldZoneAction[] = [
 
 const MOVE_ACTION: FieldZoneAction = { key: 'move', label: 'Move' };
 
+// Announces "[Player] activated the effect of [card name]" in chat.
+// Only ever offered for FACE-UP cards (see getPlacedCardActions below) —
+// a face-down card's identity isn't public knowledge yet, so there's
+// nothing to declare.
+const DECLARE_ACTION: FieldZoneAction = { key: 'declare', label: 'Declare' };
+
 function isExtraDeckMonster(card: CardData): boolean {
   return (
     card.cardClass === 'Monster' &&
@@ -76,12 +84,13 @@ function getPlacedCardActions(
       : STANDARD_FIELD_CARD_ACTIONS;
   const withMove = includeMove ? [...base, MOVE_ACTION] : base;
   if (faceDown) {
+    // No Declare here — a face-down card's identity isn't public yet.
     return [{ key: 'activate', label: 'Activate' }, ...withMove];
   }
   if (card && card.cardClass !== 'Monster') {
-    return [{ key: 'set', label: 'Set' }, ...withMove];
+    return [{ key: 'set', label: 'Set' }, ...withMove, DECLARE_ACTION];
   }
-  return withMove;
+  return [...withMove, DECLARE_ACTION];
 }
 
 // The pile count label used to sit at a fixed spot on the zone itself,
@@ -201,6 +210,22 @@ interface PlayerFieldProps {
   fieldZone?: PlacedCard | null;
   // Only ever wired up on the player's (non-flipped) side.
   onDrawCard?: () => void;
+  // Renders a DieRoller button in the empty field-zone-sized slot to the
+  // left of the player's own Field Zone (see fieldRow below) — only ever
+  // wired up on the player's (non-flipped) side, same as onDrawCard
+  // above. myDieRoll is the shared/synced roll data DieRoller itself
+  // animates from (see that component's own comment on why); onRollDie
+  // is just the click trigger that asks the caller to start a brand new
+  // one (it computes the actual result and writes it, since that write
+  // is also what makes the SAME roll visible to the opponent).
+  myDieRoll?: DieRollData | null;
+  onRollDie?: () => void;
+  // Same convention/placement as myDieRoll/onRollDie above — renders a
+  // CoinFlipButton directly underneath the DieRollButton, in the same
+  // deckRow slot (see deckRow below), only ever wired up on the
+  // player's (non-flipped) side.
+  myCoinFlip?: CoinFlipData | null;
+  onFlipCoin?: () => void;
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
   // Zone type + slot index identify exactly which card the action
@@ -333,6 +358,10 @@ function PlayerField({
   banished = [],
   fieldZone = null,
   onDrawCard,
+  myDieRoll,
+  onRollDie,
+  myCoinFlip,
+  onFlipCoin,
   onCardHover,
   onCardHoverEnd,
   onFieldAction,
@@ -735,6 +764,21 @@ function PlayerField({
         }
         return <FieldZone key={i} label={zone.label} />;
       })}
+      {/* The one genuinely unoccupied cell left in the whole grid: this
+          row's own leading empty cell (above) plus DECK_ZONES' 7 entries
+          only ever fill columns 0-7, leaving this 9th/last column
+          (directly beneath this player's own Banished Zone — fieldRow's
+          own last column — and to the right of their Main Deck,
+          DECK_ZONES' own last entry) with nothing ever rendered into it.
+          Only added on the player's own (non-flipped) side — same
+          restriction onRollDie always had; the opponent's deckRow simply
+          leaves this column empty, as it always has. */}
+      {!flipped && (
+        <div className="DuelField-emptyZone DuelField-emptyZone--stacked">
+          {onRollDie && <DieRollButton roll={myDieRoll ?? null} onRoll={onRollDie} />}
+          {onFlipCoin && <CoinFlipButton flip={myCoinFlip ?? null} onFlip={onFlipCoin} />}
+        </div>
+      )}
     </div>
   );
 
@@ -764,6 +808,10 @@ interface DuelFieldProps {
   playerBanished?: CardInstance[];
   playerFieldZone?: PlacedCard | null;
   onDrawCard?: () => void;
+  myDieRoll?: DieRollData | null;
+  onRollDie?: () => void;
+  myCoinFlip?: CoinFlipData | null;
+  onFlipCoin?: () => void;
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
   onFieldAction?: (zoneType: 'monster' | 'spellTrap' | 'field', index: number, actionKey: string) => void;
@@ -841,6 +889,10 @@ function DuelField({
   playerBanished = [],
   playerFieldZone = null,
   onDrawCard,
+  myDieRoll,
+  onRollDie,
+  myCoinFlip,
+  onFlipCoin,
   onCardHover,
   onCardHoverEnd,
   onFieldAction,
@@ -942,6 +994,10 @@ function DuelField({
         banished={playerBanished}
         fieldZone={playerFieldZone}
         onDrawCard={onDrawCard}
+        myDieRoll={myDieRoll}
+        onRollDie={onRollDie}
+        myCoinFlip={myCoinFlip}
+        onFlipCoin={onFlipCoin}
         onCardHover={onCardHover}
         onCardHoverEnd={onCardHoverEnd}
         currentPhase={currentPhase}

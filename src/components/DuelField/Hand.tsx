@@ -47,6 +47,10 @@ function getHandActions(card: CardData): HandAction[] {
     { key: 'stackTop', label: 'To T. Deck' },
     { key: 'stackBottom', label: 'To B. Deck' },
     { key: 'reveal', label: 'Reveal' },
+    // Announces "[Player] activated the effect of [card name]" in chat
+    // and, like Reveal, briefly sends the card through the reveal zone
+    // and back — see handleHandDeclare in MultiplayerDuelFieldPage.
+    { key: 'declare', label: 'Declare' },
   );
 
   return actions;
@@ -74,6 +78,7 @@ interface HandProps {
   onStackTop: (instanceId: string) => void;
   onStackBottom: (instanceId: string) => void;
   onReveal: (instanceId: string) => void;
+  onDeclare: (instanceId: string) => void;
 }
 
 function Hand({
@@ -89,6 +94,7 @@ function Hand({
   onStackTop,
   onStackBottom,
   onReveal,
+  onDeclare,
 }: HandProps) {
   // Which hand card (by instanceId) currently shows its context menu —
   // a separate concern from the CardDisplay hover callbacks above,
@@ -154,6 +160,9 @@ function Hand({
         break;
       case 'reveal':
         onReveal(instanceId);
+        break;
+      case 'declare':
+        onDeclare(instanceId);
         break;
     }
     setHoveredInstanceId(null);
