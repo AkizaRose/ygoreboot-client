@@ -1,5 +1,8 @@
+/* No min-height: 100vh here anymore — this page's own natural size now
+   needs to be honest/fixed (not viewport-relative) so ViewportScaler can
+   measure and scale it correctly; viewport centering is handled once, for
+   every page, by ViewportScaler's own stage instead. */
 .AuthPage {
-  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;

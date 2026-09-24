@@ -53,10 +53,10 @@
    turn and blue when it's the other player's, without either side
    needing to be told which color means what. */
 .PhaseTracker-label {
-  min-width: 80px;
+  width: 65px;
   text-align: center;
   font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
-  font-size: 13px;
+  font-size: 10px;
   padding: 3px 3px;
   border-radius: 2px;
   border: 1px solid rgba(255, 255, 255, 0.3);

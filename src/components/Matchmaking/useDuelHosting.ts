@@ -5,6 +5,8 @@ import { db } from '../../firebase/config';
 import { useAuth } from '../../auth/AuthContext';
 import { useUserAvatar } from '../Avatar/useUserAvatar';
 import { DEFAULT_AVATAR_ID } from '../Avatar/avatars';
+import { useSavedDecks } from '../DeckManager/useSavedDecks';
+import { validateSavedDeckLegality } from '../../utils/deckLegality';
 import type { DuelHost } from './useDuelHosts';
 
 interface DuelInvite {
@@ -26,6 +28,34 @@ export function useDuelHosting(): UseDuelHostingResult {
   const { avatarId } = useUserAvatar();
   const navigate = useNavigate();
   const [isHosting, setIsHosting] = useState(false);
+  const { getSavedDeck, loading: decksLoading } = useSavedDecks();
+
+  // Shared by both startHosting and joinHost below — a player shouldn't
+  // be able to enter a match (as host OR joiner) with a deck that
+  // doesn't satisfy this format's own deck-construction rules (see
+  // deckLegality.ts's own module comment for why this re-check needs to
+  // exist separately from what the Deck Builder already enforces while
+  // building). Throws, rather than returning a boolean, so the calling
+  // component's own existing try/catch (see DuelMenuPage.tsx's own
+  // handleHostToggle and DuelHostList.tsx's own handleJoinClick) surfaces
+  // the specific reason(s) to the player without either of those needing
+  // to know anything about deck legality themselves.
+  const assertDeckIsLegal = useCallback(
+    (deckId: string) => {
+      if (decksLoading) {
+        throw new Error('Your decks are still loading. Please try again in a moment.');
+      }
+      const savedDeck = getSavedDeck(deckId);
+      if (!savedDeck) {
+        throw new Error('Could not find the selected deck.');
+      }
+      const { legal, errors } = validateSavedDeckLegality(savedDeck);
+      if (!legal) {
+        throw new Error(`"${savedDeck.name}" is not a legal deck: ${errors.join(' ')}`);
+      }
+    },
+    [decksLoading, getSavedDeck],
+  );
 
   // Read from the unmount-cleanup effect below, which intentionally only
   // runs once (empty dependency array) — a plain closure over
@@ -86,6 +116,11 @@ export function useDuelHosting(): UseDuelHostingResult {
   const startHosting = useCallback(
     async (deckId: string) => {
       if (!currentUser || !currentUser.displayName) return;
+      // Thrown errors propagate straight to the caller (DuelMenuPage's
+      // own handleHostToggle) — deliberately checked BEFORE anything is
+      // written, so an illegal deck never gets as far as actually
+      // appearing in the host list.
+      assertDeckIsLegal(deckId);
       hostingDeckIdRef.current = deckId;
       await setDoc(doc(db, 'duelHosts', currentUser.uid), {
         uid: currentUser.uid,
@@ -95,7 +130,7 @@ export function useDuelHosting(): UseDuelHostingResult {
       });
       setIsHosting(true);
     },
-    [currentUser, avatarId],
+    [currentUser, avatarId, assertDeckIsLegal],
   );
 
   const stopHosting = useCallback(async () => {
@@ -124,6 +159,10 @@ export function useDuelHosting(): UseDuelHostingResult {
   const joinHost = useCallback(
     async (host: DuelHost, deckId: string) => {
       if (!currentUser || !currentUser.displayName) return;
+      // Same "check before writing anything" reasoning as startHosting
+      // above — a rejected deck should never even attempt the invite
+      // write below.
+      assertDeckIsLegal(deckId);
       const duelId = crypto.randomUUID();
       try {
         // The create-only security rule on duelInvites/{hostUid} is what
@@ -148,7 +187,7 @@ export function useDuelHosting(): UseDuelHostingResult {
         },
       });
     },
-    [currentUser, avatarId, navigate],
+    [currentUser, avatarId, navigate, assertDeckIsLegal],
   );
 
   return { isHosting, startHosting, stopHosting, joinHost };

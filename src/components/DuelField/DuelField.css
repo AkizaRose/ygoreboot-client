@@ -51,27 +51,12 @@
 }
 
 /* Reserves grid space without rendering anything visible — see the
-   opponent deck row's leading placeholder in DuelField.tsx. */
+   opponent deck row's leading placeholder in DuelField.tsx. Also what the
+   player's own deckRow's final column now renders as: it used to hold
+   the Die Roll/Coin Flip buttons, which moved into the hand button grid
+   (see MultiplayerDuelFieldPage.tsx), so it's a plain spacer now, same as
+   the opponent's own deckRow always had here. */
 .DuelField-emptyZone {
   width: 72px;
   height: 105px;
-}
-
-/* The player's own deckRow slot that holds BOTH the die-roll and
-   coin-flip buttons (see DuelField.tsx's own deckRow) — stacks them one
-   above the other rather than side by side, and shrinks each button's
-   own normally-full-cell height (105px, same as a plain FieldZone) down
-   to half the cell each, so the pair together still fits inside this
-   one 72x105 slot exactly as a single button used to. */
-.DuelField-emptyZone--stacked {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.DuelField-emptyZone--stacked .DieRoller-button,
-.DuelField-emptyZone--stacked .CoinFlipper-button {
-  width: 72px;
-  height: auto;
-  flex: 1 1 0;
-  min-height: 0;
 }

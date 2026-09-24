@@ -178,7 +178,7 @@
    happens to need. */
 .MultiplayerDuelFieldPage-chatHistory {
   width: 210px;
-  height: 345px;
+  height: 450px;
   box-sizing: content-box;
   overflow-y: auto;
   display: flex;
@@ -426,19 +426,32 @@
   gap: 8px;
 }
 
-/* Places Reveal Hand beside Shuffle Hand (side by side, not stacked —
-   see this page's own JSX, which now renders these two as a row) — the
-   pair together still sits to the LEFT of the LP counter, at the same
-   fixed spot the single button used to occupy, rather than either one
-   becoming just another item in the overall row above. */
+/* A 2x2 grid of every "player action, not a card action" button, in DOM
+   order: Die Roll/Coin Flip on top, Reveal Hand/Shuffle Hand underneath
+   (see this page's own JSX) — a plain 2-column grid lays that out
+   correctly on its own from DOM order alone, no explicit per-button
+   placement needed. The whole group sits at the same fixed spot (to the
+   LEFT of the LP counter) the hand buttons alone used to occupy.
+   Die Roll/Coin Flip moved here from the duel field itself (see
+   DuelField.tsx/.css's own comments on their old deckRow slot) — their
+   buttons default to a much bigger, board-zone-sized footprint (see
+   DieRoller.css/CoinFlipper.css), so the rule below shrinks them down to
+   match Reveal/Shuffle Hand's own small icon-button size instead. */
 .MultiplayerDuelFieldPage-handButtonRow {
   position: absolute;
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
   gap: 4px;
   bottom: 8px;
   right: 272px;
   z-index: 9999;
+}
+
+.MultiplayerDuelFieldPage-handButtonRow .DieRoller-button,
+.MultiplayerDuelFieldPage-handButtonRow .CoinFlipper-button {
+  width: 34px;
+  height: 34px;
+  padding: 6px;
 }
 
 /* Both buttons now render a single icon image (see MultiplayerDuelFieldPage-handButtonIcon
@@ -619,12 +632,33 @@
   opacity: 0.5;
 }
 /* The opponent's hand is rendered in a viewport-level layer rather than
-   inside the boardStage's clipping context. This keeps the viewport's top
-   edge as the only relevant clip boundary when OPPONENT_HAND_TOP is moved
-   upward, so the visible lower portion of the cards is preserved. */
+   inside the boardStage's clipping context, so OPPONENT_HAND_TOP (which
+   sits above boardStage's own top edge) doesn't get hard-clipped by
+   .MultiplayerDuelFieldPage's own overflow: hidden — only the deliberate
+   partial cutoff further up should apply.
+   Since ViewportScaler (src/components/ViewportScaler) wraps the whole
+   app in an ancestor with transform: scale(...), this layer's real
+   containing block is THAT ancestor, not the browser viewport (a
+   transform on an ancestor becomes the containing block for every
+   position: fixed descendant, per spec) — so `inset: 0` alone would only
+   span the page's own box, the same box .MultiplayerDuelFieldPage already
+   clips against, defeating the whole point. top is pulled up well past
+   OPPONENT_HAND_TOP (-110, in cardGeometry.ts) plus a full hand card's
+   own height instead, to reproduce the same generous headroom the real
+   viewport used to provide for free.
+   IMPORTANT: this box is also every hand card's own positioning
+   container (its nearest position: fixed/absolute ancestor), so pulling
+   its top up like this shifts what "top: 0" means for every card inside
+   it by the same 300px. CardLayer.tsx's updateOffset adds that 300px
+   back in (OPPONENT_HAND_LAYER_TOP_HEADROOM) to compensate — change that
+   constant to match if this value ever changes, or cards end up
+   rendered off the top of the screen. */
 .MultiplayerDuelFieldPage-opponentHandLayer {
   position: fixed;
-  inset: 0;
+  top: -300px;
+  left: 0;
+  right: 0;
+  bottom: 0;
   overflow: hidden;
   pointer-events: none;
   z-index: 90;

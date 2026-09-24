@@ -26,7 +26,11 @@ function isExtraDeckCard(card: CardData): boolean {
 // directly, so alternate-artwork entries (same name, different id) and
 // "treated as" cards (different name, explicit treatedAsName) both
 // group correctly with no special-casing needed at the call sites.
-function getLimitName(card: CardData): string {
+// Exported so deckLegality.ts's own validateDeckLegality can re-run this
+// exact same grouping when re-checking a whole deck wholesale (e.g.
+// before a match starts), rather than maintaining a second, potentially
+// drifting copy of this logic there.
+export function getLimitName(card: CardData): string {
   return card.treatedAsName ?? card.name;
 }
 

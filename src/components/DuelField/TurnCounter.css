@@ -1,19 +1,33 @@
-/* Same column PhaseTracker itself sits in (see PhaseTracker.css's own
-   comment) — this renders one row up, inside the opponent's own field
-   row (DuelField.tsx's fieldRow), directly above it. */
+/* Same row as PhaseTracker (DuelField.tsx's own phaseTrackerRow), but a
+   different column — grid-column: 1 is the opponent's own Banished Zone
+   column (see the opponent's fieldRow, one row up: with no leading empty
+   cell there, Banished renders first/leftmost, in column 1).
+   Same two-layer structure as PhaseTracker itself, for the same reason
+   (see PhaseTracker.css and cardGeometry.ts's PHASE_TRACKER_ROW_HEIGHT):
+   THIS element is the 1px-tall anchor the grid row actually measures —
+   display:flex + align-items:center lets its real child (.TurnCounter-
+   label, below) keep its own natural size and just overflow this box
+   symmetrically above/below, rather than being squashed to 1px itself.
+   Putting height: 1px directly on the label instead (as an earlier,
+   wrong version of this file did) clips the label's own box down to 1px
+   too, leaving its text rendering outside/underneath a barely-visible
+   sliver of background. */
 .TurnCounter {
-  grid-column: 9;
-  justify-self: center;
+  grid-column: 1;
+  justify-self: left;
   align-self: center;
+  display: flex;
+  align-items: center;
   z-index: 10;
+  height: 1px;
 }
 
-/* Identical styling to PhaseTracker's own label — see PhaseTracker.css —
+/* Identical styling to PhaseTracker-label — see PhaseTracker.css —
    deliberately kept as a byte-for-byte match rather than a shared class,
    so either can change independently later without the other silently
    drifting along with it. */
-.TurnCounter {
-  min-width: 80px;
+.TurnCounter-label {
+  width: 65px;
   text-align: center;
   font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
   font-size: 13px;
@@ -27,10 +41,10 @@
 /* Same red-for-mine/blue-for-opponent convention as PhaseTracker-label —
    applied based on THIS client's own isMyTurn, so each player
    independently sees red exactly when it's their own turn. */
-.TurnCounter--mine {
+.TurnCounter-label--mine {
   background: #7a1f1fee;
 }
 
-.TurnCounter--opponent {
+.TurnCounter-label--opponent {
   background: #1f3f7aee;
 }

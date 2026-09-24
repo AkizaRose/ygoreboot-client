@@ -167,6 +167,18 @@
   }
 }
 
+/* ViewportScaler (see src/components/ViewportScaler) already fits every
+   page to the window by scaling it down/up, so the document itself should
+   never need to scroll — DuelingBook doesn't, either. This is a hard
+   guarantee of that: even if some descendant's rendered box briefly ends
+   up larger than the viewport (e.g. while a layer's own position is still
+   catching up to a resize), it stays clipped instead of opening up a real
+   page scrollbar. */
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
 }

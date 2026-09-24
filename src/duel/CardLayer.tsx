@@ -1043,16 +1043,71 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
   // CardLayer normally lives inside boardStage and therefore uses board-space
   // coordinates. The opponent hand is deliberately rendered in a viewport
   // layer so the page's bottom-edge clipping cannot accidentally clip the
-  // visible part of a hand card. Convert board-space coordinates into viewport
-  // coordinates by tracking boardStage's actual viewport origin.
+  // visible part of a hand card. Convert board-space coordinates into
+  // that layer's own coordinate space by tracking boardStage's actual
+  // origin within it.
+  //
+  // That "layer's own coordinate space" is NOT the real browser viewport,
+  // even though the layer uses position: fixed — ViewportScaler (see
+  // src/components/ViewportScaler) wraps the whole app in an ancestor
+  // with transform: scale(...), and per spec a transform on an ancestor
+  // becomes the containing block for every position: fixed descendant
+  // underneath it. So boardStage's offset needs to be measured relative
+  // to THAT ancestor (found via its stable class name — CardLayer has no
+  // other way to reach it, and doesn't need to: this is the one place
+  // that cares) instead of the viewport, and expressed in natural,
+  // pre-scale pixels, since that's the coordinate space the transform
+  // itself then re-scales everything back up by when it paints. Getting
+  // this wrong is what made the opponent's hand render off-screen or
+  // out of position depending on window size.
+  //
+  // OPPONENT_HAND_LAYER_TOP_HEADROOM below has to match
+  // .MultiplayerDuelFieldPage-opponentHandLayer's own `top` value in
+  // MultiplayerDuelFieldPage.css (currently -300px) exactly. That layer
+  // is itself the positioning container every card below renders inside
+  // (via plain top/left, since it's their nearest position: fixed/
+  // absolute ancestor) — pulling its own top up to give headroom above
+  // the page (see that CSS rule's own comment) shifts what "top: 0"
+  // inside it actually means by the same amount, so it has to be added
+  // back in here or every card ends up rendered that many pixels too
+  // high, right off the top of the screen.
+  const OPPONENT_HAND_LAYER_TOP_HEADROOM = 300;
+
   useLayoutEffect(() => {
     const layer = layerRef.current;
     const stage = layer?.parentElement;
     if (!stage) return;
 
     const updateOffset = () => {
-      const rect = stage.getBoundingClientRect();
-      setStageOffset({ x: rect.left, y: rect.top });
+      const stageRect = stage.getBoundingClientRect();
+      const scalerCanvas = stage.closest('.ViewportScaler-canvas') as HTMLElement | null;
+
+      if (scalerCanvas && scalerCanvas.offsetWidth > 0) {
+        // offsetWidth is boardStage's/canvas's true, un-transformed layout
+        // size — a CSS transform never changes it, only how it's painted
+        // — while getBoundingClientRect() reports the post-transform,
+        // on-screen size, so dividing the two recovers the current scale
+        // factor directly from the DOM, with no dependency on
+        // ViewportScaler's own React state or render timing.
+        const canvasRect = scalerCanvas.getBoundingClientRect();
+        const scale = canvasRect.width / scalerCanvas.offsetWidth;
+        setStageOffset({
+          x: (stageRect.left - canvasRect.left) / scale,
+          y: (stageRect.top - canvasRect.top) / scale + OPPONENT_HAND_LAYER_TOP_HEADROOM,
+        });
+        return;
+      }
+
+      // Fallback for anywhere CardLayer might render without
+      // ViewportScaler as an ancestor (e.g. an isolated test harness) —
+      // position: fixed here genuinely resolves against the real
+      // viewport, but the opponentHandLayer's own -300px top (see the
+      // headroom comment above) still applies regardless, so it still
+      // needs compensating here too.
+      setStageOffset({
+        x: stageRect.left,
+        y: stageRect.top + OPPONENT_HAND_LAYER_TOP_HEADROOM,
+      });
     };
 
     updateOffset();

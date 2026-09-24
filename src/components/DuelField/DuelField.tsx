@@ -1,7 +1,5 @@
 import type { CSSProperties } from 'react';
 import FieldZone, { type FieldZoneAction } from './FieldZone';
-import { DieRollButton, type DieRollData } from './DieRoller';
-import { CoinFlipButton, type CoinFlipData } from './CoinFlipper';
 import PhaseTracker from './PhaseTracker';
 import TurnCounter from './TurnCounter';
 import type { TurnPhase } from '../Matchmaking/useMultiplayerDuel';
@@ -210,22 +208,6 @@ interface PlayerFieldProps {
   fieldZone?: PlacedCard | null;
   // Only ever wired up on the player's (non-flipped) side.
   onDrawCard?: () => void;
-  // Renders a DieRoller button in the empty field-zone-sized slot to the
-  // left of the player's own Field Zone (see fieldRow below) — only ever
-  // wired up on the player's (non-flipped) side, same as onDrawCard
-  // above. myDieRoll is the shared/synced roll data DieRoller itself
-  // animates from (see that component's own comment on why); onRollDie
-  // is just the click trigger that asks the caller to start a brand new
-  // one (it computes the actual result and writes it, since that write
-  // is also what makes the SAME roll visible to the opponent).
-  myDieRoll?: DieRollData | null;
-  onRollDie?: () => void;
-  // Same convention/placement as myDieRoll/onRollDie above — renders a
-  // CoinFlipButton directly underneath the DieRollButton, in the same
-  // deckRow slot (see deckRow below), only ever wired up on the
-  // player's (non-flipped) side.
-  myCoinFlip?: CoinFlipData | null;
-  onFlipCoin?: () => void;
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
   // Zone type + slot index identify exactly which card the action
@@ -276,12 +258,10 @@ interface PlayerFieldProps {
   onToggleRitualZoneMaterial?: (index: number) => void;
   // currentPhase gates the Attack menu option below to the turn
   // player's own Battle Phase — only meaningful for the player's own
-  // (non-flipped) side. isMyTurn/turnNumber are also read by the
-  // flipped side now, for TurnCounter (see fieldRow below) — that's the
-  // only thing either of them does there.
+  // (non-flipped) side. isMyTurn is also read by the flipped side, for
+  // the Attack Position/battle-phase highlighting further down.
   currentPhase?: TurnPhase | null;
   isMyTurn?: boolean;
-  turnNumber?: number;
   // Opens StatAdjustDialog for the given Monster Zone slot index — only
   // ever wired up for the player's own (non-flipped) side, same as
   // onFieldAction.
@@ -358,10 +338,6 @@ function PlayerField({
   banished = [],
   fieldZone = null,
   onDrawCard,
-  myDieRoll,
-  onRollDie,
-  myCoinFlip,
-  onFlipCoin,
   onCardHover,
   onCardHoverEnd,
   onFieldAction,
@@ -382,7 +358,6 @@ function PlayerField({
   onToggleRitualZoneMaterial,
   currentPhase,
   isMyTurn = false,
-  turnNumber,
   onStatsAdjust,
   onSelectCard,
   isSelectingMoveDestination = false,
@@ -674,14 +649,6 @@ function PlayerField({
         }
         return <FieldZone key={i} label={zone.label} />;
       })}
-      {/* Opponent only — sits one row above PhaseTracker, in the same
-          grid-column: 7 it occupies (see TurnCounter.css). The
-          opponent's row above has no leading empty cell (unlike the
-          player's own, see the comment at this row's own top), which is
-          what leaves column 7 free here for this to occupy. */}
-      {flipped && turnNumber !== undefined && (
-        <TurnCounter turnNumber={turnNumber} isMyTurn={isMyTurn} />
-      )}
     </div>
   );
 
@@ -770,15 +737,11 @@ function PlayerField({
           (directly beneath this player's own Banished Zone — fieldRow's
           own last column — and to the right of their Main Deck,
           DECK_ZONES' own last entry) with nothing ever rendered into it.
-          Only added on the player's own (non-flipped) side — same
-          restriction onRollDie always had; the opponent's deckRow simply
-          leaves this column empty, as it always has. */}
-      {!flipped && (
-        <div className="DuelField-emptyZone DuelField-emptyZone--stacked">
-          {onRollDie && <DieRollButton roll={myDieRoll ?? null} onRoll={onRollDie} />}
-          {onFlipCoin && <CoinFlipButton flip={myCoinFlip ?? null} onFlip={onFlipCoin} />}
-        </div>
-      )}
+          Used to hold the Die Roll/Coin Flip buttons — those moved into
+          the hand button grid (see MultiplayerDuelFieldPage.tsx) — so
+          this is now just a plain spacer, same as the opponent's own
+          deckRow always had here. */}
+      {!flipped && <div className="DuelField-emptyZone" />}
     </div>
   );
 
@@ -808,10 +771,6 @@ interface DuelFieldProps {
   playerBanished?: CardInstance[];
   playerFieldZone?: PlacedCard | null;
   onDrawCard?: () => void;
-  myDieRoll?: DieRollData | null;
-  onRollDie?: () => void;
-  myCoinFlip?: CoinFlipData | null;
-  onFlipCoin?: () => void;
   onCardHover?: (card: CardData) => void;
   onCardHoverEnd?: () => void;
   onFieldAction?: (zoneType: 'monster' | 'spellTrap' | 'field', index: number, actionKey: string) => void;
@@ -889,10 +848,6 @@ function DuelField({
   playerBanished = [],
   playerFieldZone = null,
   onDrawCard,
-  myDieRoll,
-  onRollDie,
-  myCoinFlip,
-  onFlipCoin,
   onCardHover,
   onCardHoverEnd,
   onFieldAction,
@@ -962,18 +917,22 @@ function DuelField({
         onAttackTarget={onAttackTarget}
         onFieldInstanceHoverChange={onFieldInstanceHoverChange}
         isMyTurn={isMyTurn}
-        turnNumber={turnNumber}
       />
-      {/* Same 7-column grid as every zone row (.DuelField-row) — the
-          tracker itself sits at grid-column: 7 (see PhaseTracker.css),
+      {/* Same 9-column grid as every zone row (.DuelField-row) — the
+          tracker itself sits at grid-column: 9 (see PhaseTracker.css),
           the same column Banished Zone occupies in the player's own row
           below, so it lines up directly above it without needing its
-          own separate coordinate system. Only rendered once currentPhase
-          is actually known (briefly null while the duel doc's first
-          snapshot is still in flight) — an empty row still reserves the
-          same vertical space either way, so nothing shifts once it does
-          appear. */}
+          own separate coordinate system. TurnCounter shares this row too
+          now, at grid-column: 1 — the opponent's own Banished Zone
+          column, one row up in fieldRow above (see TurnCounter.css).
+          Only rendered once currentPhase/turnNumber are actually known
+          (briefly null while the duel doc's first snapshot is still in
+          flight) — an empty row still reserves the same vertical space
+          either way, so nothing shifts once either does appear. */}
       <div className="DuelField-row DuelField-phaseTrackerRow" style={DUEL_FIELD_ROW_GRID_STYLE}>
+        {turnNumber !== undefined && (
+          <TurnCounter turnNumber={turnNumber} isMyTurn={isMyTurn} />
+        )}
         {currentPhase && (
           <PhaseTracker
             currentPhase={currentPhase}
@@ -994,10 +953,6 @@ function DuelField({
         banished={playerBanished}
         fieldZone={playerFieldZone}
         onDrawCard={onDrawCard}
-        myDieRoll={myDieRoll}
-        onRollDie={onRollDie}
-        myCoinFlip={myCoinFlip}
-        onFlipCoin={onFlipCoin}
         onCardHover={onCardHover}
         onCardHoverEnd={onCardHoverEnd}
         currentPhase={currentPhase}

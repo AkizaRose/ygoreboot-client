@@ -4,8 +4,8 @@ import { doc, setDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../auth/AuthContext';
 import DuelField from '../components/DuelField/DuelField';
-import { DieRollDisplay, ROLL_DURATION_MS } from '../components/DuelField/DieRoller';
-import { CoinFlipDisplay, FLIP_DURATION_MS } from '../components/DuelField/CoinFlipper';
+import { DieRollButton, DieRollDisplay, ROLL_DURATION_MS } from '../components/DuelField/DieRoller';
+import { CoinFlipButton, CoinFlipDisplay, FLIP_DURATION_MS } from '../components/DuelField/CoinFlipper';
 import Hand from '../components/DuelField/Hand';
 import DeckViewer from '../components/DuelField/DeckViewer';
 import CardDisplay from '../components/CardDisplay/CardDisplay';
@@ -4370,7 +4370,13 @@ function MultiplayerDuelFieldPage() {
         </button>
       </div>
 
+      {/* 2x2 grid: Die Roll/Coin Flip on top (moved here from the duel
+          field itself — see DuelField.tsx's own deckRow comment), Reveal
+          Hand/Shuffle Hand underneath, grouping every "player action, not
+          a card action" button in one place. */}
       <div className="MultiplayerDuelFieldPage-handButtonRow">
+        <DieRollButton roll={myDieRoll ?? null} onRoll={handleRollDie} />
+        <CoinFlipButton flip={myCoinFlip ?? null} onFlip={handleFlipCoin} />
         <button
           type="button"
           className={
@@ -4436,10 +4442,6 @@ function MultiplayerDuelFieldPage() {
               playerBanished={displayBanished}
               playerFieldZone={renderMe.fieldZone}
               onDrawCard={handleDrawCard}
-              myDieRoll={myDieRoll}
-              onRollDie={handleRollDie}
-              myCoinFlip={myCoinFlip}
-              onFlipCoin={handleFlipCoin}
               onCardHover={handleCardHover}
               onCardHoverEnd={handleCardHoverEnd}
               onFieldAction={handleFieldAction}

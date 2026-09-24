@@ -5,21 +5,21 @@ interface TurnCounterProps {
   isMyTurn: boolean;
 }
 
-// Sits directly above PhaseTracker, in the opponent's own field row (see
-// DuelField.tsx's own fieldRow — rendered only for the flipped/opponent
-// PlayerField instance, at the same grid-column: 7 PhaseTracker itself
-// uses one row down) rather than in a dedicated row of its own, since
-// there's no separate row above the opponent's field zones to put one
-// in.
+// Renders in the same row as PhaseTracker (DuelField.tsx's own
+// phaseTrackerRow), in the column matching the opponent's own Banished
+// Zone (grid-column: 1 — see TurnCounter.css) rather than PhaseTracker's
+// own column.
 function TurnCounter({ turnNumber, isMyTurn }: TurnCounterProps) {
   return (
-    <div
-      className={[
-        'TurnCounter',
-        isMyTurn ? 'TurnCounter--mine' : 'TurnCounter--opponent',
-      ].join(' ')}
-    >
-      Turn {turnNumber}
+    <div className="TurnCounter">
+      <div
+        className={[
+          'TurnCounter-label',
+          isMyTurn ? 'TurnCounter-label--mine' : 'TurnCounter-label--opponent',
+        ].join(' ')}
+      >
+        Turn {turnNumber}
+      </div>
     </div>
   );
 }

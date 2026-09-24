@@ -27,6 +27,13 @@ export interface SavedDeck {
   extra: number[];
   side: number[];
   updatedAt: number;
+  // True for at most one deck per account at a time (see setDefaultDeck
+  // below, which is what enforces that) — the deck the Deck Builder auto-
+  // loads on open and the Duel Menu auto-selects, and the one shown with
+  // a "(default)" tag in either page's own deck dropdown. Absent/false
+  // for every deck saved before this feature existed, same as any other
+  // Firestore field added after the fact.
+  isDefault: boolean;
 }
 
 // The pre-Firestore localStorage key — kept only so migrateLocalDecks
@@ -134,6 +141,7 @@ export function useSavedDecks() {
               side: data.side as number[],
               updatedAt:
                 data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : Date.now(),
+              isDefault: data.isDefault === true,
             };
           });
           setSavedDecks(decks);
@@ -180,7 +188,17 @@ export function useSavedDecks() {
       const deckId = existing?.id ?? crypto.randomUUID();
 
       try {
-        await setDoc(doc(decksCollection(currentUser.uid), deckId), payload);
+        // merge: true — payload above deliberately doesn't include
+        // isDefault (saving a deck's contents has nothing to do with
+        // whether it's the default one), so a plain setDoc here would
+        // otherwise silently WIPE that flag on overwrite: setDoc with no
+        // merge option replaces the whole document, and a field left out
+        // of the new payload just doesn't exist afterward — this was the
+        // bug where re-saving a deck under its own existing name cleared
+        // its own "(default)" tag. merge: true instead only touches the
+        // fields payload actually names, leaving isDefault (and anything
+        // else not listed here) exactly as it already was.
+        await setDoc(doc(decksCollection(currentUser.uid), deckId), payload, { merge: true });
         setSelectedDeckId(deckId);
       } catch (err) {
         console.error('[useSavedDecks] Failed to save deck:', err);
@@ -219,6 +237,37 @@ export function useSavedDecks() {
     [currentUser],
   );
 
+  // Marks `id` as the one default deck for this account, clearing
+  // whichever deck (if any) held that flag before — at most one deck is
+  // ever the default at a time, enforced here rather than left to
+  // whoever calls this, so nothing downstream (the Deck Builder's own
+  // auto-load, the Duel Menu's own auto-select) has to reconcile more
+  // than one candidate. A single batch (rather than two separate writes)
+  // so the two flags always flip together, never leaving a moment where
+  // either zero or two decks are marked default if the second write were
+  // to fail on its own.
+  const setDefaultDeck = useCallback(
+    async (id: string) => {
+      if (!currentUser) return;
+      const previousDefault = savedDecks.find((deck) => deck.isDefault && deck.id !== id);
+      const batch = writeBatch(db);
+      batch.set(doc(decksCollection(currentUser.uid), id), { isDefault: true }, { merge: true });
+      if (previousDefault) {
+        batch.set(
+          doc(decksCollection(currentUser.uid), previousDefault.id),
+          { isDefault: false },
+          { merge: true },
+        );
+      }
+      try {
+        await batch.commit();
+      } catch (err) {
+        console.error('[useSavedDecks] Failed to set default deck:', err);
+      }
+    },
+    [currentUser, savedDecks],
+  );
+
   return {
     savedDecks,
     loading,
@@ -228,5 +277,6 @@ export function useSavedDecks() {
     saveDeck,
     renameDeck,
     deleteDeck,
+    setDefaultDeck,
   };
 }

@@ -1,0 +1,17 @@
+.ViewportScaler-stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Shrink-wraps to whatever the current page's own natural content size is
+   (nothing here forces a size), so the scale factor computed in
+   ViewportScaler.tsx is always measured against real, honest content
+   dimensions rather than anything viewport-relative. */
+.ViewportScaler-canvas {
+  display: inline-flex;
+  transform-origin: center center;
+}

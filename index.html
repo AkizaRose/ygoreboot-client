@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- maximum-scale=1, user-scalable=no discourages pinch/mobile zoom;
+         modern desktop browsers mostly ignore this for Ctrl+/- and
+         Ctrl+wheel zoom, which is why ViewportScaler (src/components/
+         ViewportScaler) is the real fix for those — this is just an
+         extra layer for the gestures it does still stop. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>ygoreboot-client</title>
   </head>
   <body>
