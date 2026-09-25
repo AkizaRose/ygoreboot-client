@@ -9,7 +9,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "cards:resolve-ids": "node scripts/resolve-card-ids.js",
-    "artwork:download": "node scripts/download-artwork.js"
+    "artwork:download": "node scripts/download-artwork.js",
+    "cards:rasterize": "node scripts/rasterize-cards.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -30,6 +31,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "babel-plugin-react-compiler": "^1.0.0",
     "oxlint": "^1.71.0",
+    "puppeteer": "^24.0.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
   },

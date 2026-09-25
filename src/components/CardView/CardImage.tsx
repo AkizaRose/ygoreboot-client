@@ -1,76 +1,39 @@
-import { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
-import Card from './Card';
 import type { CardData } from '../../types/Card';
-import { useRasterizedCard, CARD_WIDTH, CARD_HEIGHT } from './useRasterizedCard';
+import Card from './Card';
+import { getCardImageUrl } from './cardImages';
 import './CardImage.css';
 
 interface CardImageProps {
   card: CardData;
 }
 
-// Renders the same visual result as <Card card={card} />, but backed by a
-// cached, rasterized PNG once one exists for this card — filling the same
-// 813x1185 box either way, so callers (e.g. CardBrowser's scale wrapper)
-// don't need to know or care which is currently showing.
+// Renders the same visual result as <Card card={card} />, but from a
+// pre-rasterized PNG (see scripts/rasterize-cards.js) when one exists for
+// this card, filling the same 813x1185 box either way — callers don't
+// need to know or care which is actually showing.
+//
+// Cards used to be rasterized on demand, in-browser, the first time each
+// one was seen (see the project's git history for CardPrewarmGate/
+// useRasterizedCard/rasterCache, all now removed) — that meant slower
+// initial loads as the card pool grew, plus visible re-rasterizing after
+// a refresh or reconnect mid-duel, since that cache lived only in memory
+// for the current session. Rasterizing once, locally, ahead of time and
+// shipping the results as ordinary bundled assets removes both: this is
+// now just a synchronous lookup, no async capture/cache/warm-up gate
+// needed anywhere in the running app.
 function CardImage({ card }: CardImageProps) {
-  const { imageUrl, captureRef, needsCapture } = useRasterizedCard(card);
+  const imageUrl = getCardImageUrl(card.id);
 
-  // True for the brief window right after imageUrl first becomes
-  // available, during which the raster image is faded in ON TOP of the
-  // still-visible live card (rather than instantly replacing it) — false
-  // once that fade finishes, at which point the live card is removed and
-  // the raster image switches to its own normal, fill-the-parent sizing.
-  // Initialized from imageUrl's OWN starting value (not hardcoded false)
-  // so an already-cached card showing up for the first time renders
-  // straight to its steady state, with no unwarranted fade-in.
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const previousImageUrlRef = useRef(imageUrl);
-
-  useEffect(() => {
-    if (imageUrl && !previousImageUrlRef.current) {
-      setIsTransitioning(true);
-    }
-    previousImageUrlRef.current = imageUrl;
-  }, [imageUrl]);
-
-  if (imageUrl && !isTransitioning) {
+  if (imageUrl) {
     return <img src={imageUrl} alt={card.name} className="CardImage-raster" />;
   }
 
-  return (
-    <>
-      {/* Visible immediately: the live, fully-styled component, while the
-          rasterized version is still being captured — or, during the
-          brief crossfade window, still visible underneath the overlay
-          below until that fade finishes. */}
-      <Card card={card} />
-
-      {imageUrl && isTransitioning && (
-        <motion.img
-          src={imageUrl}
-          alt={card.name}
-          className="CardImage-raster CardImage-raster--overlay"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.15, ease: 'easeInOut' }}
-          onAnimationComplete={() => setIsTransitioning(false)}
-        />
-      )}
-
-      {needsCapture && (
-        <div className="CardImage-captureStage" aria-hidden="true">
-          <div
-            ref={captureRef}
-            className="CardImage-captureNode"
-            style={{ width: CARD_WIDTH, height: CARD_HEIGHT }}
-          >
-            <Card card={card} />
-          </div>
-        </div>
-      )}
-    </>
-  );
+  // Falls back to the live, fully-styled component for any card that
+  // hasn't been rasterized yet — e.g. just added to carddata.json, with
+  // `npm run cards:rasterize` not re-run since — so local development
+  // isn't blocked on remembering to run the script before a new card is
+  // usable at all.
+  return <Card card={card} />;
 }
 
 export default CardImage;

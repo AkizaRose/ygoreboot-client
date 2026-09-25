@@ -161,7 +161,7 @@ function DeckManager({ cards, mainDeck, extraDeck, sideDeck, onLoadDeck }: DeckM
         placeholder="Deck name..."
       />
 
-      <div className="DeckManager-actions">
+      <div className="DeckManager-topactions">
         <button
           type="button"
           className="DeckManager-button"
@@ -178,7 +178,10 @@ function DeckManager({ cards, mainDeck, extraDeck, sideDeck, onLoadDeck }: DeckM
         >
           Rename
         </button>
-        <button
+      </div>
+      
+      <div className="DeckManager-bottomactions">
+                <button
           type="button"
           className="DeckManager-button"
           onClick={handleDeleteClick}

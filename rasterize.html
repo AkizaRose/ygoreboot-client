@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Card Rasterizer</title>
+  </head>
+  <body>
+    <!--
+      Not part of the real app — this page only exists so
+      scripts/rasterize-cards.js has something to point a headless
+      browser at. It's served by Vite's own dev server (started
+      programmatically by that script, not `npm run dev`) and loads
+      src/rasterize/main.tsx, which sets up window.__rasterizeCard for
+      the script to call once per card. See that script's own top
+      comment for the full pipeline.
+
+      `vite build` (npm run build) never touches this file — the
+      production build only bundles index.html's own entry, so this
+      never ships to real users.
+    -->
+    <div id="status">Card rasterizer — not a real app page.</div>
+    <script type="module" src="/src/rasterize/main.tsx"></script>
+  </body>
+</html>

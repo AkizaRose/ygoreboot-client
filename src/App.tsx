@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext';
 import ProtectedRoute from './auth/ProtectedRoute';
-import CardPrewarmGate from './components/CardView/CardPrewarmGate';
 import ViewportScaler from './components/ViewportScaler/ViewportScaler';
 import AuthPage from './pages/AuthPage';
 import LandingPage from './pages/LandingPage';
@@ -29,9 +28,7 @@ function App() {
               path="/"
               element={
                 <ProtectedRoute>
-                  <CardPrewarmGate>
-                    <LandingPage />
-                  </CardPrewarmGate>
+                  <LandingPage />
                 </ProtectedRoute>
               }
             />
@@ -39,9 +36,7 @@ function App() {
               path="/duel"
               element={
                 <ProtectedRoute>
-                  <CardPrewarmGate>
-                    <DuelMenuPage />
-                  </CardPrewarmGate>
+                  <DuelMenuPage />
                 </ProtectedRoute>
               }
             />
@@ -57,9 +52,7 @@ function App() {
               path="/deck-builder"
               element={
                 <ProtectedRoute>
-                  <CardPrewarmGate>
-                    <DeckBuilderPage />
-                  </CardPrewarmGate>
+                  <DeckBuilderPage />
                 </ProtectedRoute>
               }
             />

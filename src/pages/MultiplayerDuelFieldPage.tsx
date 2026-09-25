@@ -3962,21 +3962,29 @@ function MultiplayerDuelFieldPage() {
       <div className="MultiplayerDuelFieldPage MultiplayerDuelFieldPage--siding">
         <div className="MultiplayerDuelFieldPage-sidePanel">
           <CardDisplay card={hoveredCard} />
-          {/* Swap Cards/Reset Deck/Done Siding — positioned in the same
-              column as the Card Viewer, below it, exactly like Exit and
-              the Admit Defeat/Offer Draw row are positioned during a
-              normal duel (see MultiplayerDuelFieldPage-topActions/
-              -matchActionsRow further down). This whole block only ever
-              renders during this isSidingPhase return, so it only ever
-              appears during Side Decking. */}
+          {/* Exit/Swap Cards/Reset Deck/Done Siding — all grouped together
+              in the same column as the Card Viewer, below it: Exit in its
+              own row, then Swap Cards and Reset Deck in a row underneath,
+              then Done Siding in its own row underneath that. This whole
+              block only ever renders during this isSidingPhase return, so
+              it only ever appears during Side Decking. */}
           <div className="SideDecking-sidePanelActions">
-            <p className="SideDecking-subtext">
-              {myDoneSiding
-                ? opponentDoneSiding
-                  ? 'Starting the next duel…'
-                  : 'Waiting for your opponent to finish siding…'
-                : 'Select an equal number of cards from your Side Deck and your Main Deck (or your Side Deck and your Extra Deck), then click Swap Cards.'}
-            </p>
+            <div className="MultiplayerDuelFieldPage-topActions">
+              <button type="button" className="MultiplayerDuelFieldPage-exitButton" onClick={handleExitClick}>
+                Exit
+              </button>
+            </div>
+
+            {/* The default instructional sentence ("Select an equal
+                number of cards…") is left out here — it took up too much
+                space and isn't necessary. The two dynamic status messages
+                (shown once this player has clicked Done Siding) are still
+                worth the room, so those still render. */}
+            {myDoneSiding && (
+              <p className="SideDecking-subtext">
+                {opponentDoneSiding ? 'Starting the next duel…' : 'Waiting for your opponent to finish siding…'}
+              </p>
+            )}
             <div className="SideDecking-actions">
               <button
                 type="button"
@@ -3994,27 +4002,16 @@ function MultiplayerDuelFieldPage() {
               >
                 Reset Deck
               </button>
-              <button
-                type="button"
-                className="SideDecking-doneButton"
-                disabled={myDoneSiding}
-                onClick={handleDoneSidingClick}
-              >
-                {myDoneSiding ? 'Done Siding ✓' : 'Done Siding'}
-              </button>
             </div>
+            <button
+              type="button"
+              className="SideDecking-doneButton"
+              disabled={myDoneSiding}
+              onClick={handleDoneSidingClick}
+            >
+              {myDoneSiding ? 'Done Siding ✓' : 'Done Siding'}
+            </button>
           </div>
-        </div>
-
-        {/* Same Exit button, same top-left position, as the normal duel
-            field's own MultiplayerDuelFieldPage-topActions below —
-            duplicated here (rather than shared) since this whole return
-            replaces the normal field's markup entirely for as long as
-            isSidingPhase is true. */}
-        <div className="MultiplayerDuelFieldPage-topActions">
-          <button type="button" onClick={handleExitClick}>
-            Exit
-          </button>
         </div>
 
         {showExitConfirm && (
@@ -4329,12 +4326,48 @@ function MultiplayerDuelFieldPage() {
     <div className="MultiplayerDuelFieldPage">
       <div className="MultiplayerDuelFieldPage-sidePanel">
         <CardDisplay card={hoveredCard} />
-      </div>
 
-      <div className="MultiplayerDuelFieldPage-topActions">
-        <button type="button" onClick={handleExitClick}>
-          Exit
-        </button>
+        {/* Exit / Admit Defeat / Offer Draw — grouped together in the same
+            column as the Card Viewer, directly below it: Exit in its own
+            row, then Admit Defeat and Offer Draw in a row underneath. The
+            best-of-three duel counter/win tally renders as a further row
+            below that, so it doesn't visually collide with these buttons
+            now that everything shares this one column. */}
+        <div className="MultiplayerDuelFieldPage-sidePanelActions">
+          <div className="MultiplayerDuelFieldPage-topActions">
+            <button type="button" className="MultiplayerDuelFieldPage-exitButton" onClick={handleExitClick}>
+              Exit
+            </button>
+          </div>
+
+          <div className="MultiplayerDuelFieldPage-matchActionsRow">
+            <button
+              type="button"
+              className="MultiplayerDuelFieldPage-matchActionButton"
+              disabled={isMatchOver}
+              onClick={handleAdmitDefeatClick}
+            >
+              Forfeit
+            </button>
+            <button
+              type="button"
+              className="MultiplayerDuelFieldPage-matchActionButton"
+              disabled={isMatchOver}
+              onClick={handleOfferDrawClick}
+            >
+              Offer Draw
+            </button>
+          </div>
+
+          <div className="MultiplayerDuelFieldPage-matchStatus">
+            <div>
+              Duel {duelNumber} of 3
+            </div>
+            Wins: You{' '}
+            {state.role === 'player1' ? matchWins.player1 : matchWins.player2} · Opponent{' '}
+            {state.role === 'player1' ? matchWins.player2 : matchWins.player1}
+          </div>
+        </div>
       </div>
 
       {showExitConfirm && (
@@ -4347,28 +4380,6 @@ function MultiplayerDuelFieldPage() {
           onDismiss={handleExitCancel}
         />
       )}
-
-      {/* Positioned via CSS (absolute, bottom-left of .content) — same
-      column as Exit above, at the bottom of the screen instead of
-      the top. */}
-      <div className="MultiplayerDuelFieldPage-matchActionsRow">
-        <button
-          type="button"
-          className="MultiplayerDuelFieldPage-matchActionButton"
-          disabled={isMatchOver}
-          onClick={handleAdmitDefeatClick}
-        >
-          Admit Defeat
-        </button>
-        <button
-          type="button"
-          className="MultiplayerDuelFieldPage-matchActionButton"
-          disabled={isMatchOver}
-          onClick={handleOfferDrawClick}
-        >
-          Offer Draw
-        </button>
-      </div>
 
       {/* 2x2 grid: Die Roll/Coin Flip on top (moved here from the duel
           field itself — see DuelField.tsx's own deckRow comment), Reveal
@@ -4401,12 +4412,6 @@ function MultiplayerDuelFieldPage() {
         >
           <img src={shuffleHandIcon} alt="Shuffle Hand" className="MultiplayerDuelFieldPage-handButtonIcon" />
         </button>
-      </div>
-
-      <div className="MultiplayerDuelFieldPage-matchStatus">
-        Duel {duelNumber} of 3 — Wins: You{' '}
-        {state.role === 'player1' ? matchWins.player1 : matchWins.player2} · Opponent{' '}
-        {state.role === 'player1' ? matchWins.player2 : matchWins.player1}
       </div>
 
       {/* marginLeft here (half of BOARD_WIDTH, negative) is what actually

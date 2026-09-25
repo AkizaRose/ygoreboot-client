@@ -12,7 +12,15 @@ interface ViewportScalerProps {
 // their old 100vh self-centering removed in favor of this), and this
 // component uniformly scales that natural-size content to fit whatever the
 // actual browser window is, via a single CSS transform: scale(...)
-// recomputed on resize. Two things fall out of that for free:
+// recomputed on resize. The scale is capped at 1 (see recompute below) —
+// this only ever SHRINKS a page to fit a window smaller than its own
+// natural size, never enlarges one beyond it. Without that cap, a page
+// with a small natural footprint (the Login/Landing/Account/Duel Menu
+// pages, all far smaller than the Duel Field/Deck Builder's fixed
+// 1400x660) gets blown up to fill the whole window on anything but a tiny
+// screen — much more zoomed-in than its original, native size — since
+// each page is scaled to fit the SAME window independently of how big its
+// own content actually is. Two things fall out of the (capped) scaling:
 //  - Resizing the window never reflows anything — every element stays in
 //    exactly the same position relative to every other element, the whole
 //    page just gets visually bigger or smaller together.
@@ -39,9 +47,12 @@ function ViewportScaler({ children }: ViewportScalerProps) {
       const naturalWidth = canvas.offsetWidth;
       const naturalHeight = canvas.offsetHeight;
       if (naturalWidth === 0 || naturalHeight === 0) return;
+      // The trailing `, 1` is the cap described above — shrink to fit a
+      // small window, but never scale up past a page's real, native size.
       const nextScale = Math.min(
         window.innerWidth / naturalWidth,
         window.innerHeight / naturalHeight,
+        1,
       );
       setScale(nextScale);
     };

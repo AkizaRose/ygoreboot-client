@@ -179,15 +179,15 @@
   transform-origin: top left;
 }
 
-/* --- Side panel actions (Swap Cards / Reset Deck / Done Siding) ---
+/* --- Side panel actions (Exit / Swap Cards / Reset Deck / Done Siding) ---
    These no longer live inside the grid area above — see
    MultiplayerDuelFieldPage's own siding-phase render, which places this
    block in .MultiplayerDuelFieldPage-sidePanel, directly below the Card
    Viewer, so it only ever appears during Side Decking (that whole
    section of the page is swapped out for the normal duel field's own
-   sidePanel content otherwise). Stacked in a column, not the wide
-   horizontal row this used to be, since the side panel is a narrow
-   column, not the full remaining width of the page. */
+   sidePanel content otherwise). Stacked in a column: Exit in its own
+   row, then Swap Cards/Reset Deck as a row (see .SideDecking-actions
+   below), then Done Siding as its own row underneath that. */
 .SideDecking-sidePanelActions {
   display: flex;
   flex-direction: column;
@@ -201,15 +201,18 @@
   margin: 0;
 }
 
+/* Swap Cards and Reset Deck side by side, sharing the row's width evenly
+   (flex: 1 on each button below) — Done Siding renders as its own
+   separate row-level child of .SideDecking-sidePanelActions instead, not
+   as part of this row. */
 .SideDecking-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 6px;
 }
 
 .SideDecking-actionButton,
 .SideDecking-doneButton {
-  width: 100%;
   box-sizing: border-box;
   font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
   font-size: 13px;
@@ -219,6 +222,19 @@
   background: #16171dee;
   color: var(--text);
   cursor: pointer;
+}
+
+/* Shares .SideDecking-actions' row width evenly with its sibling,
+   instead of the width: 100% it used when this row was a column. */
+.SideDecking-actionButton {
+  flex: 1;
+}
+
+/* Done Siding is its own full-width row (a direct child of
+   .SideDecking-sidePanelActions, not part of the .SideDecking-actions
+   row), so it keeps the old width: 100% behavior. */
+.SideDecking-doneButton {
+  width: 100%;
 }
 
 .SideDecking-actionButton:hover:not(:disabled),
