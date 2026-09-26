@@ -553,6 +553,21 @@ interface DuelDoc {
   // time, so nothing else could ever race it.
   player1Expression?: ExpressionEvent | null;
   player2Expression?: ExpressionEvent | null;
+  // Viewing-location overlay — "Viewing Main Deck"/"Viewing Grave"/etc,
+  // shown over the VIEWING player's own avatar box (both mine and the
+  // opponent's, same visibility as player1Expression/player2Expression
+  // above) for as long as that player has one of the six named pile
+  // viewers open. Same "each client only ever writes its own field"
+  // convention as player1Expression/player2Expression, but unlike those,
+  // this is never cleared by a timer — MultiplayerDuelFieldPage's own
+  // viewingLocation-sync effect just mirrors its local
+  // viewingOwnPile/viewingOpponentPile state straight into this field
+  // (including back to null) any time either of those changes, so it's
+  // always an accurate live reflection of whichever pile viewer (if any)
+  // that client currently has open, not a discrete one-off event like an
+  // expression click.
+  player1ViewingLocation?: ViewingLocation | null;
+  player2ViewingLocation?: ViewingLocation | null;
   // Chat — the full message history for this duel "room," shared by
   // both players and persisting across every duel in the match (this
   // lives at the top level of the document, same as matchWins/
@@ -570,6 +585,28 @@ interface DuelDoc {
   // fallback ready at the read site — chatMessages does too, see
   // UseMultiplayerDuelResult's own copy below).
   chatMessages?: ChatMessage[];
+  // The full Duel Log — every notable action either player performs,
+  // across the whole MATCH (same "lives at the top level, persists
+  // across every duel" reasoning as chatMessages above, and appended via
+  // arrayUnion for the exact same "two entries added close together must
+  // never let one overwrite the other" reason). See DuelLogEntry's own
+  // comment for why each entry's timestamp is a preformatted string, not
+  // a raw number.
+  duelLog?: DuelLogEntry[];
+  // The real-world moment (Date.now(), not serverTimestamp() — same
+  // "doesn't need to be authoritative, just good enough for display"
+  // reasoning as ChatMessage's own sentAt below) the CURRENT duel began —
+  // reset at the start of every duel (both the very first, and every
+  // later one startNextDuel begins), so DuelLogEntry's own timestamps
+  // stay relative to "the start of the duel" as requested, not the start
+  // of the whole match. Both clients write this — once at initial duel
+  // creation, again each time a new duel starts — with their own
+  // Date.now(); the two calls land within milliseconds of each other in
+  // practice, and this only ever drives a human-readable "[MM:SS]"
+  // label, so the tiny resulting skew is never worth coordinating a
+  // single writer for the way an arrayUnion append (duelLog itself,
+  // chatMessages) has to be.
+  duelStartedAt?: number;
 }
 
 // A single chat message — id is a fresh crypto.randomUUID() (same
@@ -642,6 +679,42 @@ export function buildSystemChatMessage(text: string): ChatMessage {
   return { id: crypto.randomUUID(), role: 'system', text, sentAt: Date.now() };
 }
 
+// Formats an elapsed duration as "[MM:SS]" (e.g. "[03:45]") — the Duel
+// Log's own timestamp format, always relative to whichever duel is
+// currently in progress (see DuelDoc's own duelStartedAt comment), never
+// clamped to a max of 59 minutes — an unusually long duel just keeps
+// counting up past "[59:59]" into "[60:00]" and beyond, rather than
+// wrapping back to zero.
+export function formatDuelLogTimestamp(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}]`;
+}
+
+// Builds one Duel Log entry — see DuelLogEntry's own comment for the
+// full field-by-field reasoning. Exported for the same reason
+// buildSystemChatMessage is: callers on both sides live in this file's
+// own init/startNextDuel/presence effects (match begun, duel begun,
+// disconnect/reconnect) AND in MultiplayerDuelFieldPage.tsx (every
+// player-initiated action) — one shared builder, so every entry is
+// timestamped identically regardless of which file triggers it.
+// duelStartedAt is passed in (rather than this function reading some
+// shared ambient value itself) since each of those call sites already
+// has its own most-current copy at hand — MultiplayerDuelFieldPage's own
+// copy comes from the hook's returned duelStartedAt, while this file's
+// own callers below read it straight off the duelDoc/fields object they
+// already have in scope, which can be more up to date than a hook return
+// value in the middle of the very same write that's setting it.
+export function buildDuelLogEntry(
+  role: PlayerRole | 'system',
+  text: string,
+  duelStartedAt: number | null | undefined,
+): DuelLogEntry {
+  const elapsedMs = duelStartedAt ? Date.now() - duelStartedAt : 0;
+  return { id: crypto.randomUUID(), timestamp: formatDuelLogTimestamp(elapsedMs), role, text };
+}
+
 // A transient expression overlay event — id is a fresh
 // crypto.randomUUID() per click (same convention as ChatMessage's own
 // id above), used as the overlay <img>'s own React key so a SECOND
@@ -651,6 +724,51 @@ export function buildSystemChatMessage(text: string): ChatMessage {
 export interface ExpressionEvent {
   id: string;
   type: 'thumbsUp' | 'thinking';
+}
+
+// The six pile viewers the "Viewing [location]" avatar overlay covers —
+// see DuelDoc's own player1ViewingLocation/player2ViewingLocation and
+// MultiplayerDuelFieldPage's own viewingLocation-sync effect, which
+// derives one of these (or null) from its local viewingOwnPile/
+// viewingOpponentPile state. 'opponentGrave'/'opponentBanished' (rather
+// than just reusing 'grave'/'banished' for both cases) is deliberate —
+// the label needs to read "Viewing Opponent's Grave" rather than plain
+// "Viewing Grave" when it's the OPPONENT's pile being looked at, even
+// though the overlay itself always renders over the VIEWING player's own
+// avatar, not the pile owner's.
+export type ViewingLocation =
+  | 'mainDeck'
+  | 'extraDeck'
+  | 'grave'
+  | 'banished'
+  | 'opponentGrave'
+  | 'opponentBanished';
+
+// One line of the Duel Log — see DuelDoc's own duelLog/duelStartedAt
+// comments for the full array/timing reasoning. id is a fresh
+// crypto.randomUUID() (same convention as ChatMessage's own id), used as
+// this list's own React key.
+export interface DuelLogEntry {
+  id: string;
+  // Preformatted as "[MM:SS]" (e.g. "[03:45]") at the moment the action
+  // happened — see MultiplayerDuelFieldPage's own formatDuelLogTimestamp
+  // — rather than a raw timestamp recomputed at render time. "Relative
+  // to the start of the duel" only has one sensible meaning at the exact
+  // moment an action happens (elapsed time since THIS duel's own
+  // duelStartedAt); baking that into a fixed string here means an old
+  // entry's timestamp stays exactly what it was when it happened,
+  // forever, rather than depending on whatever duelStartedAt the doc
+  // happens to hold by the time someone later opens the Duel Log (which,
+  // for an entry from a PREVIOUS duel, is no longer even the right
+  // reference point to recompute against).
+  timestamp: string;
+  // 'system' for an automated match/duel-lifecycle line that isn't
+  // either player's own action (e.g. "Match between X and Y has begun")
+  // — same three-way role used throughout this app (ChatMessage's own
+  // role, expressionOverlay's mine/opponent split, etc.) to color the
+  // entry red/blue/white in the Duel Log overlay.
+  role: PlayerRole | 'system';
+  text: string;
 }
 
 // The exact visual position a card was rendered at, at a specific
@@ -817,12 +935,26 @@ interface UseMultiplayerDuelResult {
   // players' messages interleaved in one list anyway, not as two
   // separate values.
   chatMessages: ChatMessage[];
+  // Resolved straight from DuelDoc's own duelLog/duelStartedAt — see
+  // those fields' own comments for the full reasoning. Not resolved into
+  // "mine"/"opponent" the way mySelection/opponentSelection are: every
+  // entry already carries its own role (same as ChatMessage), and the
+  // Duel Log overlay needs to render every player's entries interleaved
+  // in one list, in order, not as two separate values.
+  duelLog: DuelLogEntry[];
+  duelStartedAt: number | null;
   // Resolved from DuelDoc's own player1Expression/player2Expression, the
   // same "mine"/"opponent" resolution mySelection/opponentSelection
   // above already do — see DuelDoc's own comment on these two fields for
   // the full reasoning.
   myExpression: ExpressionEvent | null;
   opponentExpression: ExpressionEvent | null;
+  // Resolved from DuelDoc's own player1ViewingLocation/
+  // player2ViewingLocation, the same "mine"/"opponent" resolution as
+  // myExpression/opponentExpression above — see DuelDoc's own comment on
+  // those two fields for the full reasoning.
+  myViewingLocation: ViewingLocation | null;
+  opponentViewingLocation: ViewingLocation | null;
   // Resolved straight from DuelDoc's own forfeitedBy — see that field's
   // own comment for the full reasoning. Not resolved into "mine"/
   // "opponent" the way mySelection/opponentSelection are: the caller
@@ -1032,15 +1164,17 @@ export function useMultiplayerDuel(
     // above, not something that needs a coordinated write. Also doubles as
     // duel 1's own duelStartingRole (see that field's own comment).
     const firstPlayerRole = determineFirstPlayer(duelId, player1Uid, player2Uid);
+    const player1Username = isPlayer1 ? currentUser.displayName : opponentInfo.username;
+    const player2Username = isPlayer1 ? opponentInfo.username : currentUser.displayName;
 
     setDoc(
       doc(db, 'duels', duelId),
       {
         player1Uid,
-        player1Username: isPlayer1 ? currentUser.displayName : opponentInfo.username,
+        player1Username,
         player1AvatarId: isPlayer1 ? myAvatarId : opponentInfo.avatarId,
         player2Uid,
-        player2Username: isPlayer1 ? opponentInfo.username : currentUser.displayName,
+        player2Username,
         player2AvatarId: isPlayer1 ? opponentInfo.avatarId : myAvatarId,
         createdAt: serverTimestamp(),
         turnPlayer: firstPlayerRole,
@@ -1052,6 +1186,29 @@ export function useMultiplayerDuel(
         duelStartingRole: firstPlayerRole,
         matchOutcome: null,
         [role]: publicState,
+        // See DuelDoc's own comment on duelStartedAt for why both
+        // clients writing their own Date.now() here (rather than
+        // coordinating a single writer) is fine.
+        duelStartedAt: Date.now(),
+        // Player1 alone (an arbitrary but consistent single-writer
+        // choice — see DuelDoc's own comment on duelLog for why an
+        // arrayUnion append, unlike a scalar field such as
+        // duelStartedAt above, DOES need exactly one writer) posts the
+        // very first Duel Log entry — both clients reach this same
+        // initial-creation effect independently, and without this guard
+        // each would append its own separate "Match has begun" entry,
+        // duplicating it.
+        ...(role === 'player1'
+          ? {
+              duelLog: arrayUnion(
+                buildDuelLogEntry(
+                  'system',
+                  `Match between ${player1Username} and ${player2Username} has begun`,
+                  Date.now(),
+                ),
+              ),
+            }
+          : {}),
       },
       { merge: true },
     ).catch((err) => {
@@ -1159,22 +1316,33 @@ export function useMultiplayerDuel(
       previousOpponentOnlineRef.current = online;
       if (previous === null || previous === online) return;
 
+      // Reads duelDocRef (not duelDoc directly — this effect only
+      // re-attaches on duelId/opponentInfo changes, so a plain closure
+      // over duelDoc would go stale) — same reasoning as the
+      // matchOutcome/disconnectTimer read further down, just needed a
+      // line earlier here for the Duel Log entry's own timestamp.
+      const currentDuelDoc = duelDocRef.current;
       const fields: Record<string, unknown> = {
         chatMessages: arrayUnion(
           buildSystemChatMessage(
             `${opponentInfo.username} has ${online ? 'reconnected' : 'disconnected'}`,
           ),
         ),
+        // Same single-writer-by-construction reasoning as this effect's
+        // own top comment already gives for chatMessages above — only
+        // the OTHER client ever observes this transition, so there's no
+        // dual-write risk to guard against here either.
+        duelLog: arrayUnion(
+          buildDuelLogEntry(
+            opponentRole,
+            online ? `${opponentInfo.username} reconnected` : `${opponentInfo.username} disconnected`,
+            currentDuelDoc?.duelStartedAt,
+          ),
+        ),
       };
       // Start/clear the 60-second disconnect countdown alongside the
       // chat announcement, in this same write — see DuelDoc's own
-      // comment on disconnectTimer for the full reasoning. Reads
-      // duelDocRef (not duelDoc directly — this effect only re-attaches
-      // on duelId/opponentInfo changes, so a plain closure over duelDoc
-      // would go stale) to avoid starting a fresh countdown toward a
-      // match that's already decided, and to avoid clearing some
-      // unrelated countdown that isn't actually this opponent's own.
-      const currentDuelDoc = duelDocRef.current;
+      // comment on disconnectTimer for the full reasoning.
       if (!online) {
         if (!currentDuelDoc?.matchOutcome) {
           fields.disconnectTimer = { role: opponentRole, startedAt: Date.now() };
@@ -1290,6 +1458,12 @@ export function useMultiplayerDuel(
     // started, which never happened while these were still duel 1's
     // stale values.
     const duelStartingRole = duelDoc?.duelStartingRole ?? role;
+    // duelNumber was already incremented to THIS upcoming duel's own
+    // number by whichever client's admit-defeat/accept-draw write ended
+    // the previous one (see MultiplayerDuelFieldPage's own comment on
+    // that), so it's already correct to read here, before this client's
+    // own write below.
+    const upcomingDuelNumber = duelDoc?.duelNumber ?? 1;
     setDoc(
       doc(db, 'duels', duelId),
       {
@@ -1298,6 +1472,26 @@ export function useMultiplayerDuel(
         currentPhase: 'draw',
         turnEnding: false,
         turnNumber: 1,
+        // See DuelDoc's own comment on duelStartedAt for why both
+        // clients writing their own Date.now() here is fine.
+        duelStartedAt: Date.now(),
+        // Player1 alone posts this — same single-writer reasoning as the
+        // initial "Match has begun" entry above: both clients reach this
+        // same startNextDuel call independently (see
+        // MultiplayerDuelFieldPage's own siding-complete effect), and
+        // without this guard each would append its own duplicate "Duel X
+        // has begun" entry.
+        ...(role === 'player1'
+          ? {
+              duelLog: arrayUnion(
+                buildDuelLogEntry(
+                  'system',
+                  `Both players have finished siding. Duel ${upcomingDuelNumber} has begun`,
+                  Date.now(),
+                ),
+              ),
+            }
+          : {}),
       },
       { merge: true },
     ).catch((err) => {
@@ -1346,6 +1540,9 @@ export function useMultiplayerDuel(
   const myExpression = (role && duelDoc?.[`${role}Expression`]) ?? null;
   const opponentExpression =
     (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}Expression`]) ?? null;
+  const myViewingLocation = (role && duelDoc?.[`${role}ViewingLocation`]) ?? null;
+  const opponentViewingLocation =
+    (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}ViewingLocation`]) ?? null;
   const myDieRoll = (role && duelDoc?.[`${role}DieRoll`]) ?? null;
   const opponentDieRoll =
     (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}DieRoll`]) ?? null;
@@ -1381,8 +1578,12 @@ export function useMultiplayerDuel(
     myDoneSiding,
     opponentDoneSiding,
     chatMessages: duelDoc?.chatMessages ?? [],
+    duelLog: duelDoc?.duelLog ?? [],
+    duelStartedAt: duelDoc?.duelStartedAt ?? null,
     myExpression,
     opponentExpression,
+    myViewingLocation,
+    opponentViewingLocation,
     forfeitedBy: duelDoc?.forfeitedBy ?? null,
     disconnectTimer: duelDoc?.disconnectTimer ?? null,
     disconnectedBy: duelDoc?.disconnectedBy ?? null,

@@ -95,6 +95,136 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Sits directly beside Exit in the same .topActions row — same look,
+   just without the fixed 100.5px width (Exit's own width was sized to
+   match its old standalone layout; "Duel Log" is a different length and
+   this row already wraps via flex-wrap if the two ever don't fit side
+   by side, so there's no need to force a matching width here). */
+.MultiplayerDuelFieldPage-duelLogButton {
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  color: var(--text);
+  cursor: pointer;
+  width: 100.5px
+}
+
+.MultiplayerDuelFieldPage-duelLogButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* --- Duel Log overlay ---
+   position: fixed + inset: 0 deliberately takes this OUT of document
+   flow entirely, per the original request that it "shouldn't interfere
+   with the positioning of any other elements on the page" — every other
+   element keeps its exact layout regardless of whether this is open. */
+.MultiplayerDuelFieldPage-duelLogOverlay {
+  position: fixed;
+  width: 256px;
+  max-width: 90vw;
+  height: 460px;
+  max-height: 80vh;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: left;
+  justify-content: left;
+  padding: 4px;
+}
+
+.MultiplayerDuelFieldPage-duelLogPanel {
+  width: 256px;
+  max-width: 90vw;
+  height: 460px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.MultiplayerDuelFieldPage-duelLogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.MultiplayerDuelFieldPage-duelLogTitle {
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  font-size: 16px;
+  color: var(--text);
+}
+
+.MultiplayerDuelFieldPage-duelLogCloseButton {
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #16171dee;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.MultiplayerDuelFieldPage-duelLogCloseButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.MultiplayerDuelFieldPage-duelLogEntries {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 2px;
+  text-align: left;
+}
+
+.MultiplayerDuelFieldPage-duelLogEmpty {
+  font-family: 'Yu-Gi-Oh! Matrix Book';
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: left;
+  margin-top: 12px;
+}
+
+.MultiplayerDuelFieldPage-duelLogEntry {
+  font-family: 'Yu-Gi-Oh! Matrix Book';
+  font-size: 12px;
+  line-height: 14px;
+  overflow-wrap: anywhere;
+}
+
+.MultiplayerDuelFieldPage-duelLogTimestamp {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Same red/blue/white convention as MultiplayerDuelFieldPage-chatBubble's
+   own --mine/--opponent/--system modifiers, just as plain text color
+   here (full opacity, unlike the chat bubble's translucent fill) rather
+   than a background, per the request that these render as colored text
+   entries in a single scrolling list. */
+.MultiplayerDuelFieldPage-duelLogEntry--mine {
+  color: #ff6b6b;
+}
+
+.MultiplayerDuelFieldPage-duelLogEntry--opponent {
+  color: #6bb3ff;
+}
+
+.MultiplayerDuelFieldPage-duelLogEntry--system {
+  color: var(--text);
+}
+
 .MultiplayerDuelFieldPage-matchStatus {
   font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
   font-size: 12px;
@@ -148,6 +278,14 @@
   display: flex;
   flex-direction: row;
   gap: 6px;
+  /* Matches MultiplayerDuelFieldPage-chatInputRow/-chatHistory's own
+     216px width (see those classes' own comments) — requested so this
+     row (the avatar box plus the username/LP counter stack in
+     .hudInfo) lines up with the chat box above/below it, and so
+     PlayerAvatarBox's own flex: 1 (see that class's own comment) has a
+     fixed 216px total to actually grow into. */
+  width: 216px;
+  box-sizing: border-box;
 }
 
 /* Separate modifiers (rather than one shared align-items) so the two
@@ -202,7 +340,7 @@
    happens to need. */
 .MultiplayerDuelFieldPage-chatHistory {
   width: 210px;
-  height: 450px;
+  height: 420px;
   box-sizing: content-box;
   overflow-y: auto;
   display: flex;
@@ -409,6 +547,59 @@
   }
 }
 
+/* The "Viewing [location]" text overlay — same child-of-.PlayerAvatarBox
+   positioning as .MultiplayerDuelFieldPage-expressionOverlay above
+   (relying on that class's own position: relative), and the same
+   pointer-events: none so it never intercepts a click meant for the
+   avatar box underneath. The grow-in/shrink-out transition itself is
+   driven by framer-motion (see renderViewingLocationOverlay's own
+   comment for why a fixed-duration CSS keyframe timeline like
+   MultiplayerDuelFieldPage-expressionPulse's doesn't fit this — this
+   overlay's own duration isn't known in advance, unlike the expression
+   overlay's fixed 3 seconds), so this class itself carries no
+   animation — just layout. */
+.MultiplayerDuelFieldPage-viewingLocationOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 4px;
+  box-sizing: border-box;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+/* The label text itself — RoGSanSrfStd-UB/white/1px black stroke, per
+   request, the same font-family/color/-webkit-text-stroke convention
+   Card.css's own .atkValue/.defValue already use (just 1px here rather
+   than their 3px, since this is much smaller text sitting over a
+   player's avatar, not a large card stat). The oscillating-scale pulse,
+   once grown in, mirrors MultiplayerDuelFieldPage-thumbsUpPulse's own
+   technique above — kept on this INNER span, separate from the outer
+   motion.div's own grow/shrink scale, for the same "one element can only
+   ever have one `transform` in effect at a time" reason given on
+   MultiplayerDuelFieldPage-expressionOverlayImage--thumbsUp above. */
+.MultiplayerDuelFieldPage-viewingLocationText {
+  font-family: 'RoGSanSrfStd-UB';
+  font-size: 12px;
+  line-height: 1.2;
+  color: white;
+  word-break: break-word;
+  animation: MultiplayerDuelFieldPage-viewingLocationPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes MultiplayerDuelFieldPage-viewingLocationPulse {
+  0%,
+  100% {
+    transform: scale(1.08);
+  }
+  50% {
+    transform: scale(1);
+  }
+}
+
 /* The 60-second disconnect countdown — fills the whole avatar box (same
    position: absolute; inset: 0 technique as .expressionOverlay above,
    relying on the same PlayerAvatarBox's own position: relative), dimming
@@ -422,9 +613,8 @@
   justify-content: center;
   background: rgba(0, 0, 0, 0.65);
   color: #ff5252;
-  font-family: 'Yu-Gi-Oh! Matrix Book';
+  font-family: 'RoGSanSrfStd-UB';
   font-size: 26px;
-  font-weight: bold;
   pointer-events: none;
 }
 

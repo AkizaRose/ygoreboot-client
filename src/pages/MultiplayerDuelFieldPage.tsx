@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { doc, setDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../auth/AuthContext';
@@ -30,6 +31,7 @@ import {
   decodeHandSelection,
   OPENING_HAND_SIZE,
   buildSystemChatMessage,
+  buildDuelLogEntry,
   type PlayerRole,
   type OpponentInfo,
   type MyDuelState,
@@ -37,6 +39,8 @@ import {
   type SharedCardVisualPosition,
   type ChatMessage,
   type ExpressionEvent,
+  type ViewingLocation,
+  type DuelLogEntry,
   type DieRollData,
   type CoinFlipData,
 } from '../components/Matchmaking/useMultiplayerDuel';
@@ -155,6 +159,59 @@ function renderChatMessage(
   );
 }
 
+// Duel Log overlay — a simple fixed-position modal (see its own CSS for
+// the position: fixed/inset:0 backdrop, which is what keeps it from
+// disturbing the layout of anything else on the page per the original
+// request) listing every entry in timestamp order, color-coded red for
+// this player's own actions, blue for the opponent's, and white for
+// system entries — same red/blue convention as PhaseTracker's own
+// turn-color coding and PlayerAvatarBox's own --myTurn/--opponentTurn
+// border colors, just applied to text here instead of a border.
+function renderDuelLogOverlay(
+  entries: DuelLogEntry[],
+  myRole: PlayerRole | undefined,
+  onClose: () => void,
+  historyRef: { current: HTMLDivElement | null },
+) {
+  return (
+    <div className="MultiplayerDuelFieldPage-duelLogOverlay">
+      <div className="MultiplayerDuelFieldPage-duelLogPanel">
+        <div className="MultiplayerDuelFieldPage-duelLogHeader">
+          <span className="MultiplayerDuelFieldPage-duelLogTitle">Duel Log</span>
+          <button type="button" className="MultiplayerDuelFieldPage-duelLogCloseButton" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="MultiplayerDuelFieldPage-duelLogEntries" ref={historyRef}>
+          {entries.length === 0 && (
+            <div className="MultiplayerDuelFieldPage-duelLogEmpty">No actions recorded yet.</div>
+          )}
+          {entries.map((entry) => {
+            const isSystem = entry.role === 'system';
+            const isMine = !isSystem && entry.role === myRole;
+            return (
+              <div
+                key={entry.id}
+                className={[
+                  'MultiplayerDuelFieldPage-duelLogEntry',
+                  isSystem
+                    ? 'MultiplayerDuelFieldPage-duelLogEntry--system'
+                    : isMine
+                      ? 'MultiplayerDuelFieldPage-duelLogEntry--mine'
+                      : 'MultiplayerDuelFieldPage-duelLogEntry--opponent',
+                ].join(' ')}
+              >
+                <span className="MultiplayerDuelFieldPage-duelLogTimestamp">{entry.timestamp}</span>{' '}
+                {entry.text}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function renderExpressionOverlay(expression: ExpressionEvent | null) {
   if (!expression) return null;
   const src = expression.type === 'thumbsUp' ? thumbsUpIcon : thinkingGif;
@@ -170,6 +227,67 @@ function renderExpressionOverlay(expression: ExpressionEvent | null) {
         }
       />
     </div>
+  );
+}
+
+// The plain-English label shown for each ViewingLocation — "Viewing
+// Opponent's Grave"/"Viewing Opponent's Banished" rather than just
+// "Viewing Grave"/"Viewing Banished" for those two, since this overlay
+// always renders over the VIEWING player's own avatar (see
+// renderViewingLocationOverlay below), so it needs to say whose pile is
+// being looked at, not just which kind.
+const VIEWING_LOCATION_LABELS: Record<ViewingLocation, string> = {
+  mainDeck: 'Viewing Main Deck',
+  extraDeck: 'Viewing Extra Deck',
+  grave: 'Viewing Grave',
+  banished: 'Viewing Banished',
+  opponentGrave: "Viewing Opponent's Grave",
+  opponentBanished: "Viewing Opponent's Banished",
+};
+
+// Renders the "Viewing [location]" text overlay for either avatar — same
+// call shape as renderExpressionOverlay above (null renders nothing, so
+// this can be called unconditionally at both the player's own
+// PlayerAvatarBox overlay prop and the opponent's own inline avatar box
+// markup), and positions against that same PlayerAvatarBox's own
+// position: relative.
+//
+// Unlike the expression overlay, this doesn't run on a fixed 3-second
+// timer — it stays up for as long as the relevant player has one of the
+// six pile viewers open (see the viewingLocation-sync effect further
+// down, and DuelDoc's own player1ViewingLocation/player2ViewingLocation
+// comment), so a single CSS keyframe timeline sized to a known duration
+// (the way MultiplayerDuelFieldPage-expressionPulse is) can't drive its
+// grow-in/shrink-out the way it drives the expression overlay's. Instead
+// this uses AnimatePresence/motion.div — already used elsewhere in this
+// app for exactly this "animate an element out before actually removing
+// it" need, see DeckViewer's own context menu — to play a real exit
+// animation on unmount, whenever `location` goes back to null. The
+// "present" pulse (once grown in) is still a plain CSS animation
+// (MultiplayerDuelFieldPage-viewingLocationPulse), the same technique as
+// the thumbs-up icon's own inner pulse — kept as a separate inner <span>
+// rather than on motion.div's own element, so it doesn't fight
+// motion.div's own grow/shrink scale (two `transform`s can't combine on
+// one element any more than MultiplayerDuelFieldPage-expressionOverlayImage
+// --thumbsUp's own comment already explains for the thumbs-up icon).
+function renderViewingLocationOverlay(location: ViewingLocation | null) {
+  return (
+    <AnimatePresence>
+      {location && (
+        <motion.div
+          key="viewingLocationOverlay"
+          className="MultiplayerDuelFieldPage-viewingLocationOverlay"
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0, opacity: 0 }}
+          transition={{ duration: 0.25, ease: 'easeInOut' }}
+        >
+          <span className="MultiplayerDuelFieldPage-viewingLocationText">
+            {VIEWING_LOCATION_LABELS[location]}
+          </span>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -316,8 +434,12 @@ function MultiplayerDuelFieldPage() {
     myDoneSiding,
     opponentDoneSiding,
     chatMessages,
+    duelLog,
+    duelStartedAt,
     myExpression,
     opponentExpression,
+    myViewingLocation,
+    opponentViewingLocation,
     forfeitedBy,
     disconnectTimer,
     disconnectedBy,
@@ -332,6 +454,40 @@ function MultiplayerDuelFieldPage() {
   // here since this feature needs it in more than one place.
   const opponentRole: PlayerRole | null =
     state.role === 'player1' ? 'player2' : state.role === 'player2' ? 'player1' : null;
+
+  // --- Duel Log ---
+  // This client's own display name, as it should appear at the front of
+  // every Duel Log entry this client itself writes (every action handler
+  // below logs the ACTOR's own action, and the actor is always this
+  // client for everything except the match/duel-lifecycle and
+  // disconnect/reconnect entries, which useMultiplayerDuel's own init/
+  // presence effects post instead — see DuelLogEntry's own comment).
+  // Falls back the same way handleAdmitDefeatConfirm's own copy of this
+  // already does, for the same reason (currentUser briefly null on a
+  // very first render).
+  const myUsername = currentUser?.displayName ?? 'A player';
+  // Wraps one Duel Log entry, attributed to THIS client's own role, in
+  // the arrayUnion field update most call sites below merge straight
+  // into whatever setDoc/applyMeUpdate write the triggering action was
+  // already making — see DuelDoc's own duelLog/duelStartedAt comments
+  // for the full array-append/timestamp reasoning. A handler that needs
+  // to log an action NOT attributed to this client's own role (there are
+  // none among the player-triggered handlers below — every one of them
+  // only ever logs its own actor's own action) would pass a second
+  // argument instead of relying on this default.
+  const logDuelAction = (text: string, role: PlayerRole | 'system' = state.role ?? 'system') =>
+    arrayUnion(buildDuelLogEntry(role, text, duelStartedAt));
+  // "zone 2" rather than a raw index — 1-indexed since that's how a
+  // person would actually refer to one of their 3 Monster/Spell-Trap
+  // Zone slots ("my second zone"), not how the array storing them
+  // happens to be indexed internally.
+  const zoneName = (index: number) => `zone ${index + 1}`;
+  // "(zone 2)" — the parenthesized form most requested entry formats use
+  // as a trailing suffix (Normal/Special/Fusion/etc. Summon, activate,
+  // Set, attack); a couple of others (declared effect, moved) instead
+  // fold the bare zoneName in as their own "in [location]" value, with
+  // no parentheses of their own.
+  const zoneLabel = (index: number) => `(${zoneName(index)})`;
 
   // --- Side Decking (see the "--- Side Decking ---" section further
   // down for the full feature) — getSavedDeck/cardById are needed here,
@@ -415,6 +571,23 @@ function MultiplayerDuelFieldPage() {
   // Same idea, for the Exit button — see the "--- Exit / Forfeit ---"
   // section further down for the actual forfeit write this guards.
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  // Whether the Duel Log overlay is open — purely local, both-players-
+  // press-it-independently UI state, the same shape as the confirm
+  // prompts above, just without any confirmation step of its own (see
+  // the "--- Duel Log ---" section's own renderDuelLogOverlay).
+  const [showDuelLog, setShowDuelLog] = useState(false);
+  // Auto-scrolled to the bottom on every new entry AND whenever the
+  // overlay is (re)opened — the same reasoning as chatHistoryRef's own
+  // effect, just also keyed on showDuelLog so opening the overlay after
+  // several entries have already piled up starts scrolled to the most
+  // recent one instead of the very first.
+  const duelLogHistoryRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showDuelLog) return;
+    const el = duelLogHistoryRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [duelLog.length, showDuelLog]);
   // Tracks which matchConclusion this client has already clicked OK on
   // (see handleAcknowledgeDrawDeclined), as a stable, derived key rather
   // than the raw object itself — duelDoc is rebuilt fresh from every
@@ -707,6 +880,100 @@ function MultiplayerDuelFieldPage() {
   const [viewingOpponentStackIndex, setViewingOpponentStackIndex] = useState<number | null>(
     null,
   );
+
+  // Mirrors viewingOwnPile/viewingOpponentPile above into the duel doc as
+  // a single combined ViewingLocation, so the "Viewing [location]" text
+  // overlay (see renderViewingLocationOverlay) shows up over the VIEWING
+  // player's own avatar for BOTH players, not just locally — the same
+  // "each client only ever writes its own field" convention as
+  // player1Expression/player2Expression (see DuelDoc's own comment on
+  // those two fields), just driven by a derived effect here rather than
+  // a discrete click handler like handleSendExpression's own: there's no
+  // single call site to hook a write into, since viewingOwnPile/
+  // viewingOpponentPile are each set from several different places
+  // scattered through this file (the Main/Extra Deck buttons, the
+  // Grave/Banished zone clicks, the opponent's own Grave/Banished
+  // clicks) — deriving one combined value here and syncing it in one
+  // effect keeps this feature isolated to a single place rather than
+  // needing every one of those existing call sites touched individually.
+  // Unlike handleSendExpression's own 3-second auto-clear, this never
+  // clears itself on a timer — it simply mirrors whatever
+  // viewingOwnPile/viewingOpponentPile currently is, including back to
+  // null the instant the relevant viewer is closed. The two are only
+  // ever expected to be open one at a time in practice (opening one pile
+  // viewer already closes any other), so this priority order (own pile
+  // before the opponent's) is just a defensive fallback, never
+  // meaningfully exercised.
+  const currentViewingLocation: ViewingLocation | null =
+    viewingOwnPile === 'main'
+      ? 'mainDeck'
+      : viewingOwnPile === 'extra'
+        ? 'extraDeck'
+        : viewingOwnPile === 'grave'
+          ? 'grave'
+          : viewingOwnPile === 'banished'
+            ? 'banished'
+            : viewingOpponentPile === 'grave'
+              ? 'opponentGrave'
+              : viewingOpponentPile === 'banished'
+                ? 'opponentBanished'
+                : null;
+  // Human-readable phrasing for each ViewingLocation, matching the Duel
+  // Log spec's own "[their/their opponent's] [Main Deck/Extra Deck/
+  // Grave/Banished Zone]" wording exactly.
+  const viewingLocationLabel = (location: ViewingLocation): string => {
+    switch (location) {
+      case 'mainDeck':
+        return "their Main Deck";
+      case 'extraDeck':
+        return "their Extra Deck";
+      case 'grave':
+        return "their Grave";
+      case 'banished':
+        return "their Banished Zone";
+      case 'opponentGrave':
+        return "their opponent's Grave";
+      case 'opponentBanished':
+        return "their opponent's Banished Zone";
+    }
+  };
+  // Tracks the previous value purely to diff transitions for Duel Log
+  // "started/stopped viewing" entries — the setDoc sync above already
+  // mirrors the CURRENT value unconditionally on every change, so this
+  // ref only ever informs which log line(s), if any, to also append.
+  const previousViewingLocationRef = useRef<ViewingLocation | null>(null);
+  useEffect(() => {
+    if (!duelId || !state.role) return;
+    const field = `${state.role}ViewingLocation`;
+    const previous = previousViewingLocationRef.current;
+    previousViewingLocationRef.current = currentViewingLocation;
+    const logEntries: DuelLogEntry[] = [];
+    if (previous && previous !== currentViewingLocation) {
+      logEntries.push(
+        buildDuelLogEntry(state.role, `${myUsername} stopped viewing ${viewingLocationLabel(previous)}`, duelStartedAt),
+      );
+    }
+    if (currentViewingLocation && currentViewingLocation !== previous) {
+      logEntries.push(
+        buildDuelLogEntry(
+          state.role,
+          `${myUsername} started viewing ${viewingLocationLabel(currentViewingLocation)}`,
+          duelStartedAt,
+        ),
+      );
+    }
+    setDoc(
+      doc(db, 'duels', duelId),
+      {
+        [field]: currentViewingLocation,
+        ...(logEntries.length > 0 ? { duelLog: arrayUnion(...logEntries) } : {}),
+      },
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to sync viewing location:', err);
+    });
+  }, [currentViewingLocation, duelId, state.role]);
+
   // Tracks a summon awaiting a Battle Position choice — source
   // identifies which pile the card is coming from, since Normal Summon
   // (hand) and Special Summon (Extra Deck/Grave/Banished) are otherwise
@@ -952,11 +1219,14 @@ function MultiplayerDuelFieldPage() {
   };
 
   const handleDrawCard = () =>
-    applyMeUpdate((current) => {
-      if (current.mainDeck.length === 0) return current;
-      const [drawnCard, ...restDeck] = current.mainDeck;
-      return { ...current, hand: [...current.hand, drawnCard], mainDeck: restDeck };
-    }, { shuffleHand: false });
+    applyMeUpdate(
+      (current) => {
+        if (current.mainDeck.length === 0) return current;
+        const [drawnCard, ...restDeck] = current.mainDeck;
+        return { ...current, hand: [...current.hand, drawnCard], mainDeck: restDeck };
+      },
+      { shuffleHand: false, extraFields: { duelLog: logDuelAction(`${myUsername} drew a card`) } },
+    );
 
   // The actual random result is generated HERE, once, at roll-start —
   // not inside DieRollDisplay itself — and immediately written to this
@@ -998,11 +1268,20 @@ function MultiplayerDuelFieldPage() {
         text: `${currentUser?.displayName ?? 'A player'} rolled a ${result}`,
         sentAt: Date.now(),
       };
-      setDoc(doc(db, 'duels', duelId), { chatMessages: arrayUnion(message) }, { merge: true }).catch(
-        (err) => {
-          console.error('[MultiplayerDuelFieldPage] Failed to send die roll message:', err);
+      setDoc(
+        doc(db, 'duels', duelId),
+        {
+          chatMessages: arrayUnion(message),
+          // Logged on this same delay, for the same reason the chat
+          // message itself is (see this function's own top comment) —
+          // the reveal, not the roll's own start, is the moment worth
+          // recording.
+          duelLog: logDuelAction(`${myUsername} rolled a ${result}`, role),
         },
-      );
+        { merge: true },
+      ).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to send die roll message:', err);
+      });
     }, ROLL_DURATION_MS);
     // Clears the die back to null (hiding it — both DuelField's own
     // DieRollButton, which simply re-enables once its own roll field is
@@ -1043,11 +1322,16 @@ function MultiplayerDuelFieldPage() {
         text: `${currentUser?.displayName ?? 'A player'}'s coin landed on ${result}`,
         sentAt: Date.now(),
       };
-      setDoc(doc(db, 'duels', duelId), { chatMessages: arrayUnion(message) }, { merge: true }).catch(
-        (err) => {
-          console.error('[MultiplayerDuelFieldPage] Failed to send coin flip message:', err);
+      setDoc(
+        doc(db, 'duels', duelId),
+        {
+          chatMessages: arrayUnion(message),
+          duelLog: logDuelAction(`${myUsername}'s coin landed on ${result}`, role),
         },
-      );
+        { merge: true },
+      ).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to send coin flip message:', err);
+      });
     }, FLIP_DURATION_MS);
     coinFlipClearTimeoutRef.current = window.setTimeout(() => {
       setDoc(doc(db, 'duels', duelId), { [field]: null }, { merge: true }).catch((err) => {
@@ -1086,6 +1370,9 @@ function MultiplayerDuelFieldPage() {
                 `${currentUser?.displayName ?? 'A player'} has ${verb} ${Math.abs(appliedDelta)} Life Points`,
               ),
             ),
+            duelLog: logDuelAction(
+              `${myUsername} ${appliedDelta > 0 ? 'gained' : 'lost'} ${Math.abs(appliedDelta)} Life Points`,
+            ),
           };
         },
       },
@@ -1099,11 +1386,14 @@ function MultiplayerDuelFieldPage() {
   // version — this always counts as a shuffle regardless of whether
   // the hand's size happens to have changed.
   const handleShuffleHand = () =>
-    applyMeUpdate((current) => ({
-      ...current,
-      hand: shuffle(current.hand),
-      handShuffleVersion: current.handShuffleVersion + 1,
-    }));
+    applyMeUpdate(
+      (current) => ({
+        ...current,
+        hand: shuffle(current.hand),
+        handShuffleVersion: current.handShuffleVersion + 1,
+      }),
+      { extraFields: { duelLog: logDuelAction(`${myUsername} shuffled their hand`) } },
+    );
 
   // Ends an active "Reveal Hand" — shared by BOTH ways it can end: the
   // revealing player's own "Hide Hand" click, and the viewing player's
@@ -1146,7 +1436,15 @@ function MultiplayerDuelFieldPage() {
     // handRevealExitedBy is cleared defensively here too, in case a
     // previous cycle's signal somehow never made it through
     // endHandReveal's own clear.
-    applyMeUpdate((current) => ({ ...current }), { extraFields: { handRevealExitedBy: null } });
+    applyMeUpdate(
+      (current) => ({ ...current }),
+      {
+        extraFields: {
+          handRevealExitedBy: null,
+          duelLog: logDuelAction(`${myUsername} revealed their hand`),
+        },
+      },
+    );
   };
 
   // The revealing player's own side of the opponent-exits-the-viewer
@@ -1255,6 +1553,7 @@ function MultiplayerDuelFieldPage() {
         sentAt: Date.now(),
       };
       fields.chatMessages = arrayUnion(message);
+      fields.duelLog = logDuelAction(`${myUsername} selected ${cardName} in ${zoneDescription}`);
     }
     setDoc(doc(db, 'duels', duelId), fields, { merge: true }).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to update pile selection:', err);
@@ -1327,11 +1626,19 @@ function MultiplayerDuelFieldPage() {
       text,
       sentAt: Date.now(),
     };
-    setDoc(doc(db, 'duels', duelId), { chatMessages: arrayUnion(message) }, { merge: true }).catch(
-      (err) => {
-        console.error('[MultiplayerDuelFieldPage] Failed to send chat message:', err);
+    setDoc(
+      doc(db, 'duels', duelId),
+      {
+        chatMessages: arrayUnion(message),
+        // Every chat message gets its own Duel Log entry too, per
+        // request — quoted, so it reads unambiguously as what was SAID
+        // rather than another automated action line.
+        duelLog: logDuelAction(`${myUsername}: "${text}"`),
       },
-    );
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to send chat message:', err);
+    });
   };
 
   // Enter sends (Shift+Enter would be the usual way to allow a newline
@@ -1373,7 +1680,12 @@ function MultiplayerDuelFieldPage() {
     const field = `${state.role}Expression`;
     setDoc(
       doc(db, 'duels', duelId),
-      { [field]: { id: crypto.randomUUID(), type } },
+      {
+        [field]: { id: crypto.randomUUID(), type },
+        duelLog: logDuelAction(
+          type === 'thumbsUp' ? `${myUsername} gave thumbs-up` : `${myUsername} was thinking`,
+        ),
+      },
       { merge: true },
     ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to send expression:', err);
@@ -1623,6 +1935,7 @@ function MultiplayerDuelFieldPage() {
           // being decided right now anyway via this forfeit, so there's
           // nothing left for that countdown to resolve.
           disconnectTimer: null,
+          duelLog: logDuelAction(`${myUsername} left the match`),
         },
         { merge: true },
       ).catch((err) => {
@@ -1717,6 +2030,7 @@ function MultiplayerDuelFieldPage() {
         chatMessages: arrayUnion(
           buildSystemChatMessage(`${currentUser?.displayName ?? 'A player'} has admitted defeat`),
         ),
+        duelLog: logDuelAction(`${myUsername} admitted defeat`, loserRole),
         // The loser of a decisive duel goes first next. Only reset the
         // Side Decking done-flags when the match ISN'T over — a
         // match-deciding duel skips siding entirely (isSidingPhase
@@ -1745,7 +2059,17 @@ function MultiplayerDuelFieldPage() {
     if (!duelId || !state.role) return;
     setDoc(
       doc(db, 'duels', duelId),
-      { matchConclusion: { type: 'drawOffered', offererRole: state.role } },
+      {
+        matchConclusion: { type: 'drawOffered', offererRole: state.role },
+        // Same "merged into this same write via arrayUnion" reasoning as
+        // handleAdmitDefeatConfirm's own copy of this comment — currentUser
+        // is THIS client's own account, i.e. the player making the offer,
+        // so their own displayName is exactly the name this should name.
+        chatMessages: arrayUnion(
+          buildSystemChatMessage(`${currentUser?.displayName ?? 'A player'} offered a draw`),
+        ),
+        duelLog: logDuelAction(`${myUsername} offered a draw`),
+      },
       { merge: true },
     ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to offer draw:', err);
@@ -1785,6 +2109,16 @@ function MultiplayerDuelFieldPage() {
               player1DoneSiding: false,
               player2DoneSiding: false,
             }),
+        // Same "merged into this same write via arrayUnion" reasoning as
+        // handleAdmitDefeatConfirm's own copy of this comment — this
+        // handler is only ever callable by the player who was OFFERED the
+        // draw (see its own comment above), i.e. THIS client, so
+        // currentUser's own displayName is exactly the name this should
+        // name.
+        chatMessages: arrayUnion(
+          buildSystemChatMessage(`${currentUser?.displayName ?? 'A player'} accepted draw offer`),
+        ),
+        duelLog: logDuelAction(`${myUsername} accepted draw offer`),
       },
       { merge: true },
     ).catch((err) => {
@@ -1796,7 +2130,17 @@ function MultiplayerDuelFieldPage() {
     if (!duelId || matchConclusion?.type !== 'drawOffered') return;
     setDoc(
       doc(db, 'duels', duelId),
-      { matchConclusion: { type: 'drawDeclined', offererRole: matchConclusion.offererRole } },
+      {
+        matchConclusion: { type: 'drawDeclined', offererRole: matchConclusion.offererRole },
+        // Same reasoning as handleAcceptDraw's own copy of this comment —
+        // only the player who was OFFERED the draw can decline it, i.e.
+        // THIS client, so currentUser's own displayName is exactly the
+        // name this should name.
+        chatMessages: arrayUnion(
+          buildSystemChatMessage(`${currentUser?.displayName ?? 'A player'} declined draw offer`),
+        ),
+        duelLog: logDuelAction(`${myUsername} declined draw offer`),
+      },
       { merge: true },
     ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to decline draw:', err);
@@ -2019,38 +2363,76 @@ function MultiplayerDuelFieldPage() {
     console.log(
       `[completeSummon] summoning instanceId=${pending.instanceId} from source=${pending.source} position=${position}`,
     );
-    applyMeUpdate((current) => {
-      const sourcePile =
-        pending.source === 'hand'
-          ? current.hand
-          : pending.source === 'main'
-            ? current.mainDeck
-            : pending.source === 'extra'
-              ? current.extraDeck
-              : pending.source === 'grave'
-                ? current.grave
-                : current.banished;
-      const instance = sourcePile.find((i) => i.instanceId === pending.instanceId);
-      const emptySlot = findEmptyZoneSlot(current.monsterZones);
-      if (!instance || emptySlot === -1) return current;
+    // Captured from inside the updater below for the Duel Log entry —
+    // Normal Summon (source 'hand') gets its own simpler entry with no
+    // "from" clause at all, while every other source here is a Special
+    // Summon "from" one of this player's own piles (opponentGrave/
+    // opponentBanished are handled by the SEPARATE pendingPileRequests
+    // branch above, before this point, so they never reach here).
+    let summonedCardName: string | undefined;
+    let summonedZoneIndex: number | undefined;
+    applyMeUpdate(
+      (current) => {
+        const sourcePile =
+          pending.source === 'hand'
+            ? current.hand
+            : pending.source === 'main'
+              ? current.mainDeck
+              : pending.source === 'extra'
+                ? current.extraDeck
+                : pending.source === 'grave'
+                  ? current.grave
+                  : current.banished;
+        const instance = sourcePile.find((i) => i.instanceId === pending.instanceId);
+        const emptySlot = findEmptyZoneSlot(current.monsterZones);
+        if (!instance || emptySlot === -1) return current;
+        summonedCardName = instance.card.name;
+        summonedZoneIndex = emptySlot;
 
-      const nextZones = [...current.monsterZones];
-      nextZones[emptySlot] = {
-        instanceId: instance.instanceId,
-        card: instance.card,
-        faceDown: false,
-        position,
-      };
-      const next: MyDuelState = { ...current, monsterZones: nextZones };
-      const withoutInstance = (pile: CardInstance[]) =>
-        pile.filter((i) => i.instanceId !== pending.instanceId);
-      if (pending.source === 'hand') next.hand = withoutInstance(current.hand);
-      else if (pending.source === 'main') next.mainDeck = withoutInstance(current.mainDeck);
-      else if (pending.source === 'extra') next.extraDeck = withoutInstance(current.extraDeck);
-      else if (pending.source === 'grave') next.grave = withoutInstance(current.grave);
-      else next.banished = withoutInstance(current.banished);
-      return next;
-    });
+        const nextZones = [...current.monsterZones];
+        nextZones[emptySlot] = {
+          instanceId: instance.instanceId,
+          card: instance.card,
+          faceDown: false,
+          position,
+        };
+        const next: MyDuelState = { ...current, monsterZones: nextZones };
+        const withoutInstance = (pile: CardInstance[]) =>
+          pile.filter((i) => i.instanceId !== pending.instanceId);
+        if (pending.source === 'hand') next.hand = withoutInstance(current.hand);
+        else if (pending.source === 'main') next.mainDeck = withoutInstance(current.mainDeck);
+        else if (pending.source === 'extra') next.extraDeck = withoutInstance(current.extraDeck);
+        else if (pending.source === 'grave') next.grave = withoutInstance(current.grave);
+        else next.banished = withoutInstance(current.banished);
+        return next;
+      },
+      {
+        extraFields: () => {
+          if (!summonedCardName || summonedZoneIndex === undefined) return undefined;
+          const zone = zoneLabel(summonedZoneIndex);
+          if (pending.source === 'hand') {
+            return {
+              duelLog: logDuelAction(
+                `${myUsername} Normal Summoned ${summonedCardName} in ${position} position ${zone}`,
+              ),
+            };
+          }
+          const fromLocation =
+            pending.source === 'main'
+              ? 'the Main Deck'
+              : pending.source === 'extra'
+                ? 'the Extra Deck'
+                : pending.source === 'grave'
+                  ? 'the Grave'
+                  : 'the Banished Zone';
+          return {
+            duelLog: logDuelAction(
+              `${myUsername} Special Summoned ${summonedCardName} from ${fromLocation} in ${position} position ${zone}`,
+            ),
+          };
+        },
+      },
+    );
   };
 
   // --- Fusion Summon ---
@@ -2088,55 +2470,79 @@ function MultiplayerDuelFieldPage() {
     if (!pending) return;
     const { extraDeckInstance, selectedIndices } = pending;
 
-    applyMeUpdate((current) => {
-      // The materials themselves are about to be removed as part of
-      // this very fusion, so their own slots should count as available
-      // too — checking findEmptyZoneSlot against the CURRENT zones
-      // (still occupied by the materials) would wrongly report no room
-      // in the common case where the selected materials fill every
-      // zone.
-      const zonesAfterMaterialRemoval = [...current.monsterZones];
-      for (const idx of selectedIndices) zonesAfterMaterialRemoval[idx] = null;
-      const emptySlot = findEmptyZoneSlot(zonesAfterMaterialRemoval);
-      if (emptySlot === -1) return current;
+    // Captured for the Duel Log entry — one "[material] in zone [x]" per
+    // selected material, in selection order, before any of them are
+    // actually removed from their zones below.
+    const materialDescriptions = selectedIndices
+      .map((idx) => {
+        const material = me?.monsterZones[idx];
+        return material ? `${material.card.name} in ${zoneName(idx)}` : null;
+      })
+      .filter((d): d is string => d !== null);
+    let summonedZoneIndex: number | undefined;
 
-      // Every selected material's WHOLE stack — its own top card plus
-      // anything already buried beneath it — becomes buried beneath the
-      // newly arriving Fusion Monster, in selection order.
-      const materialCards: CardInstance[] = [];
-      for (const idx of selectedIndices) {
-        const material = current.monsterZones[idx];
-        if (!material) continue;
-        materialCards.push(...(material.stackedBelow ?? []));
-        // Conditionally spread owner in, rather than always including the
-        // key — `owner: material.owner` would write an EXPLICIT
-        // `owner: undefined` for the ordinary case of a material that's
-        // never changed control, and Firestore's SDK rejects any write
-        // containing an explicit undefined value outright (not a silent
-        // no-op — the whole write fails).
-        materialCards.push({
-          instanceId: material.instanceId,
-          card: material.card,
-          ...(material.owner ? { owner: material.owner } : {}),
-        });
-      }
+    applyMeUpdate(
+      (current) => {
+        // The materials themselves are about to be removed as part of
+        // this very fusion, so their own slots should count as available
+        // too — checking findEmptyZoneSlot against the CURRENT zones
+        // (still occupied by the materials) would wrongly report no room
+        // in the common case where the selected materials fill every
+        // zone.
+        const zonesAfterMaterialRemoval = [...current.monsterZones];
+        for (const idx of selectedIndices) zonesAfterMaterialRemoval[idx] = null;
+        const emptySlot = findEmptyZoneSlot(zonesAfterMaterialRemoval);
+        if (emptySlot === -1) return current;
+        summonedZoneIndex = emptySlot;
 
-      const nextZones = [...current.monsterZones];
-      for (const idx of selectedIndices) nextZones[idx] = null;
-      nextZones[emptySlot] = {
-        instanceId: extraDeckInstance.instanceId,
-        card: extraDeckInstance.card,
-        faceDown: false,
-        position,
-        stackedBelow: materialCards,
-      };
+        // Every selected material's WHOLE stack — its own top card plus
+        // anything already buried beneath it — becomes buried beneath the
+        // newly arriving Fusion Monster, in selection order.
+        const materialCards: CardInstance[] = [];
+        for (const idx of selectedIndices) {
+          const material = current.monsterZones[idx];
+          if (!material) continue;
+          materialCards.push(...(material.stackedBelow ?? []));
+          // Conditionally spread owner in, rather than always including the
+          // key — `owner: material.owner` would write an EXPLICIT
+          // `owner: undefined` for the ordinary case of a material that's
+          // never changed control, and Firestore's SDK rejects any write
+          // containing an explicit undefined value outright (not a silent
+          // no-op — the whole write fails).
+          materialCards.push({
+            instanceId: material.instanceId,
+            card: material.card,
+            ...(material.owner ? { owner: material.owner } : {}),
+          });
+        }
 
-      return {
-        ...current,
-        monsterZones: nextZones,
-        extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
-      };
-    });
+        const nextZones = [...current.monsterZones];
+        for (const idx of selectedIndices) nextZones[idx] = null;
+        nextZones[emptySlot] = {
+          instanceId: extraDeckInstance.instanceId,
+          card: extraDeckInstance.card,
+          faceDown: false,
+          position,
+          stackedBelow: materialCards,
+        };
+
+        return {
+          ...current,
+          monsterZones: nextZones,
+          extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
+        };
+      },
+      {
+        extraFields: () =>
+          summonedZoneIndex === undefined
+            ? undefined
+            : {
+                duelLog: logDuelAction(
+                  `${myUsername} Fusion Summoned ${extraDeckInstance.card.name} using ${materialDescriptions.join(', ')} ${zoneLabel(summonedZoneIndex)}`,
+                ),
+              },
+      },
+    );
   };
 
   // --- Evolution Summon ---
@@ -2152,36 +2558,50 @@ function MultiplayerDuelFieldPage() {
     const { extraDeckInstance } = pendingEvolutionSummon;
     setPendingEvolutionSummon(null);
 
-    applyMeUpdate((current) => {
-      const material = current.monsterZones[index];
-      if (!material) return current;
-      const position = material.position ?? 'attack';
+    let materialCardName: string | undefined;
+    applyMeUpdate(
+      (current) => {
+        const material = current.monsterZones[index];
+        if (!material) return current;
+        materialCardName = material.card.name;
+        const position = material.position ?? 'attack';
 
-      const nextZones = [...current.monsterZones];
-      // Same zone the material was already in, not the first available
-      // one — an Evolution Monster replaces what it evolved from in
-      // place, rather than moving elsewhere.
-      nextZones[index] = {
-        instanceId: extraDeckInstance.instanceId,
-        card: extraDeckInstance.card,
-        faceDown: false,
-        position,
-        stackedBelow: [
-          ...(material.stackedBelow ?? []),
-          {
-            instanceId: material.instanceId,
-            card: material.card,
-            ...(material.owner ? { owner: material.owner } : {}),
-          },
-        ],
-      };
+        const nextZones = [...current.monsterZones];
+        // Same zone the material was already in, not the first available
+        // one — an Evolution Monster replaces what it evolved from in
+        // place, rather than moving elsewhere.
+        nextZones[index] = {
+          instanceId: extraDeckInstance.instanceId,
+          card: extraDeckInstance.card,
+          faceDown: false,
+          position,
+          stackedBelow: [
+            ...(material.stackedBelow ?? []),
+            {
+              instanceId: material.instanceId,
+              card: material.card,
+              ...(material.owner ? { owner: material.owner } : {}),
+            },
+          ],
+        };
 
-      return {
-        ...current,
-        monsterZones: nextZones,
-        extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
-      };
-    });
+        return {
+          ...current,
+          monsterZones: nextZones,
+          extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
+        };
+      },
+      {
+        extraFields: () =>
+          materialCardName
+            ? {
+                duelLog: logDuelAction(
+                  `${myUsername} Evolution Summoned ${extraDeckInstance.card.name} using ${materialCardName} in ${zoneName(index)} ${zoneLabel(index)}`,
+                ),
+              }
+            : undefined,
+      },
+    );
   };
 
   // --- Ritual Summon ---
@@ -2243,68 +2663,101 @@ function MultiplayerDuelFieldPage() {
     if (!pending) return;
     const { extraDeckInstance, selectedZoneIndices, selectedHandIndices } = pending;
 
-    applyMeUpdate((current) => {
-      // Same reasoning as Fusion's own completeFusionSummon: the
-      // tributed zone materials are about to be removed as part of this
-      // very summon, so their own slots should count as available too —
-      // checking findEmptyZoneSlot against the CURRENT zones (still
-      // occupied by the materials) would wrongly report no room in the
-      // common case where the selected materials fill every zone.
-      const zonesAfterMaterialRemoval = [...current.monsterZones];
-      for (const idx of selectedZoneIndices) zonesAfterMaterialRemoval[idx] = null;
-      const emptySlot = findEmptyZoneSlot(zonesAfterMaterialRemoval);
-      if (emptySlot === -1) return current;
+    let zoneMaterialNames: string[] = [];
+    let handMaterialNames: string[] = [];
+    let summonedZoneIndex: number | undefined;
 
-      // Unlike Fusion, tributed materials go straight to the Grave, not
-      // buried beneath the summoned monster — but a zone material's
-      // WHOLE stack (its own top card plus anything already buried
-      // beneath IT) still comes along, same as how Fusion absorbs a
-      // material's own buried cards, just to a different destination.
-      const graveAdditions: CardInstance[] = [];
-      for (const idx of selectedZoneIndices) {
-        const material = current.monsterZones[idx];
-        if (!material) continue;
-        graveAdditions.push(...(material.stackedBelow ?? []));
-        // Conditionally spread owner in, rather than always including
-        // the key — see Fusion's own identical comment on why.
-        graveAdditions.push({
-          instanceId: material.instanceId,
-          card: material.card,
-          ...(material.owner ? { owner: material.owner } : {}),
-        });
-      }
+    applyMeUpdate(
+      (current) => {
+        // Same reasoning as Fusion's own completeFusionSummon: the
+        // tributed zone materials are about to be removed as part of this
+        // very summon, so their own slots should count as available too —
+        // checking findEmptyZoneSlot against the CURRENT zones (still
+        // occupied by the materials) would wrongly report no room in the
+        // common case where the selected materials fill every zone.
+        const zonesAfterMaterialRemoval = [...current.monsterZones];
+        for (const idx of selectedZoneIndices) zonesAfterMaterialRemoval[idx] = null;
+        const emptySlot = findEmptyZoneSlot(zonesAfterMaterialRemoval);
+        if (emptySlot === -1) return current;
 
-      // Hand materials are selected by INDEX, so removed high-to-low —
-      // splicing out a lower index first would shift every later one
-      // out from under its own, still-pending removal.
-      const nextHand = [...current.hand];
-      const sortedHandIndices = [...selectedHandIndices].sort((a, b) => b - a);
-      const handMaterials: CardInstance[] = [];
-      for (const idx of sortedHandIndices) {
-        const [removed] = nextHand.splice(idx, 1);
-        // Rebuilds the original left-to-right hand order in
-        // graveAdditions, despite removing highest-index-first above.
-        if (removed) handMaterials.unshift(removed);
-      }
-      graveAdditions.push(...handMaterials);
+        // Unlike Fusion, tributed materials go straight to the Grave, not
+        // buried beneath the summoned monster — but a zone material's
+        // WHOLE stack (its own top card plus anything already buried
+        // beneath IT) still comes along, same as how Fusion absorbs a
+        // material's own buried cards, just to a different destination.
+        const graveAdditions: CardInstance[] = [];
+        zoneMaterialNames = [];
+        for (const idx of selectedZoneIndices) {
+          const material = current.monsterZones[idx];
+          if (!material) continue;
+          zoneMaterialNames.push(material.card.name);
+          graveAdditions.push(...(material.stackedBelow ?? []));
+          // Conditionally spread owner in, rather than always including
+          // the key — see Fusion's own identical comment on why.
+          graveAdditions.push({
+            instanceId: material.instanceId,
+            card: material.card,
+            ...(material.owner ? { owner: material.owner } : {}),
+          });
+        }
 
-      const nextZones = [...current.monsterZones];
-      for (const idx of selectedZoneIndices) nextZones[idx] = null;
-      nextZones[emptySlot] = {
-        instanceId: extraDeckInstance.instanceId,
-        card: extraDeckInstance.card,
-        faceDown: false,
-        position,
-      };
+        // Hand materials are selected by INDEX, so removed high-to-low —
+        // splicing out a lower index first would shift every later one
+        // out from under its own, still-pending removal.
+        const nextHand = [...current.hand];
+        const sortedHandIndices = [...selectedHandIndices].sort((a, b) => b - a);
+        const handMaterials: CardInstance[] = [];
+        for (const idx of sortedHandIndices) {
+          const [removed] = nextHand.splice(idx, 1);
+          // Rebuilds the original left-to-right hand order in
+          // graveAdditions, despite removing highest-index-first above.
+          if (removed) handMaterials.unshift(removed);
+        }
+        handMaterialNames = handMaterials.map((m) => m.card.name);
+        graveAdditions.push(...handMaterials);
 
-      return {
-        ...current,
-        monsterZones: nextZones,
-        hand: nextHand,
-        grave: [...current.grave, ...graveAdditions],
-        extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
-      };
-    });
+        const nextZones = [...current.monsterZones];
+        for (const idx of selectedZoneIndices) nextZones[idx] = null;
+        nextZones[emptySlot] = {
+          instanceId: extraDeckInstance.instanceId,
+          card: extraDeckInstance.card,
+          faceDown: false,
+          position,
+        };
+        summonedZoneIndex = emptySlot;
+
+        return {
+          ...current,
+          monsterZones: nextZones,
+          hand: nextHand,
+          grave: [...current.grave, ...graveAdditions],
+          extraDeck: current.extraDeck.filter((i) => i.instanceId !== extraDeckInstance.instanceId),
+        };
+      },
+      {
+        extraFields: () => {
+          if (summonedZoneIndex === undefined) return undefined;
+          // Spec format: "using [material(s)] from [location 1] and
+          // [material(s)] from [location 2]" — but either group can be
+          // empty (a Ritual Summon can draw entirely from the field or
+          // entirely from hand), so each group's "from ..." clause is
+          // only included when that group actually has materials, and
+          // they're joined with "and" only when BOTH groups are present.
+          const groups: string[] = [];
+          if (zoneMaterialNames.length > 0) {
+            groups.push(`${zoneMaterialNames.join(', ')} from the field`);
+          }
+          if (handMaterialNames.length > 0) {
+            groups.push(`${handMaterialNames.join(', ')} from hand`);
+          }
+          return {
+            duelLog: logDuelAction(
+              `${myUsername} Ritual Summoned ${extraDeckInstance.card.name} using ${groups.join(' and ')} ${zoneLabel(summonedZoneIndex)}`,
+            ),
+          };
+        },
+      },
+    );
   };
 
   // --- Stat adjustment ---
@@ -2317,13 +2770,49 @@ function MultiplayerDuelFieldPage() {
     const index = pendingStatAdjustIndex;
     setPendingStatAdjustIndex(null);
     if (index === null) return;
-    applyMeUpdate((current) => {
-      const slot = current.monsterZones[index];
-      if (!slot) return current;
-      const nextZones = [...current.monsterZones];
-      nextZones[index] = { ...slot, atkOverride: atk, defOverride: def };
-      return { ...current, monsterZones: nextZones };
-    });
+    // StatAdjustDialog always submits both fields together (see its own
+    // onConfirm), even when the person only meant to change one — so
+    // each stat is compared against its own previous value (the
+    // existing override, or the card's base stat when never overridden)
+    // and only the one(s) that actually changed get their own Duel Log
+    // line, matching the spec's singular "[ATK/DEF]" phrasing per entry.
+    let statChangeEntries: { stat: 'ATK' | 'DEF'; from: number; to: number }[] = [];
+    let statChangedCardName: string | undefined;
+    applyMeUpdate(
+      (current) => {
+        const slot = current.monsterZones[index];
+        if (!slot) return current;
+        statChangedCardName = slot.card.name;
+        const parsedBaseAtk = Number(slot.card.atk);
+        const parsedBaseDef = Number(slot.card.def);
+        const baseAtk = Number.isNaN(parsedBaseAtk) ? 0 : parsedBaseAtk;
+        const baseDef = Number.isNaN(parsedBaseDef) ? 0 : parsedBaseDef;
+        const previousAtk = slot.atkOverride ?? baseAtk;
+        const previousDef = slot.defOverride ?? baseDef;
+        statChangeEntries = [];
+        if (atk !== previousAtk) statChangeEntries.push({ stat: 'ATK', from: previousAtk, to: atk });
+        if (def !== previousDef) statChangeEntries.push({ stat: 'DEF', from: previousDef, to: def });
+        const nextZones = [...current.monsterZones];
+        nextZones[index] = { ...slot, atkOverride: atk, defOverride: def };
+        return { ...current, monsterZones: nextZones };
+      },
+      {
+        extraFields: () =>
+          statChangedCardName && statChangeEntries.length > 0
+            ? {
+                duelLog: arrayUnion(
+                  ...statChangeEntries.map((change) =>
+                    buildDuelLogEntry(
+                      state.role ?? 'system',
+                      `${myUsername} changed ${statChangedCardName}'s ${zoneLabel(index)} ${change.stat} from ${change.from} to ${change.to}`,
+                      duelStartedAt,
+                    ),
+                  ),
+                ),
+              }
+            : undefined,
+      },
+    );
   };
 
   // Resets to base AND closes the dialog, in one step — no separate
@@ -2333,30 +2822,69 @@ function MultiplayerDuelFieldPage() {
     const index = pendingStatAdjustIndex;
     setPendingStatAdjustIndex(null);
     if (index === null) return;
-    applyMeUpdate((current) => {
-      const slot = current.monsterZones[index];
-      if (!slot) return current;
-      const nextZones = [...current.monsterZones];
-      nextZones[index] = { ...slot, atkOverride: null, defOverride: null };
-      return { ...current, monsterZones: nextZones };
-    });
+    let resetCardName: string | undefined;
+    let hadOverride = false;
+    applyMeUpdate(
+      (current) => {
+        const slot = current.monsterZones[index];
+        if (!slot) return current;
+        resetCardName = slot.card.name;
+        // Only worth a Duel Log entry when there was actually something
+        // to reset — Reset can be clicked with neither stat overridden
+        // (nothing changed at all), which shouldn't post a misleading
+        // "reset to default" line.
+        hadOverride = slot.atkOverride != null || slot.defOverride != null;
+        const nextZones = [...current.monsterZones];
+        nextZones[index] = { ...slot, atkOverride: null, defOverride: null };
+        return { ...current, monsterZones: nextZones };
+      },
+      {
+        extraFields: () =>
+          resetCardName && hadOverride
+            ? {
+                duelLog: logDuelAction(
+                  `${myUsername} reset ${resetCardName}'s ${zoneLabel(index)} stats to default`,
+                ),
+              }
+            : undefined,
+      },
+    );
   };
 
   // Shared by Activate and Set — both place a card into the first
   // available Spell/Trap Zone, differing only in faceDown.
-  const placeInSpellTrapZone = (instanceId: string, faceDown: boolean) =>
-    applyMeUpdate((current) => {
-      const instance = current.hand.find((i) => i.instanceId === instanceId);
-      const emptySlot = findEmptyZoneSlot(current.spellTrapZones);
-      if (!instance || emptySlot === -1) return current;
-      const nextZones = [...current.spellTrapZones];
-      nextZones[emptySlot] = { instanceId: instance.instanceId, card: instance.card, faceDown };
-      return {
-        ...current,
-        hand: current.hand.filter((i) => i.instanceId !== instanceId),
-        spellTrapZones: nextZones,
-      };
-    });
+  const placeInSpellTrapZone = (instanceId: string, faceDown: boolean) => {
+    let placedCardName: string | undefined;
+    let placedZoneIndex: number | undefined;
+    applyMeUpdate(
+      (current) => {
+        const instance = current.hand.find((i) => i.instanceId === instanceId);
+        const emptySlot = findEmptyZoneSlot(current.spellTrapZones);
+        if (!instance || emptySlot === -1) return current;
+        placedCardName = instance.card.name;
+        placedZoneIndex = emptySlot;
+        const nextZones = [...current.spellTrapZones];
+        nextZones[emptySlot] = { instanceId: instance.instanceId, card: instance.card, faceDown };
+        return {
+          ...current,
+          hand: current.hand.filter((i) => i.instanceId !== instanceId),
+          spellTrapZones: nextZones,
+        };
+      },
+      {
+        extraFields: () => {
+          if (placedZoneIndex === undefined) return undefined;
+          return {
+            duelLog: logDuelAction(
+              faceDown
+                ? `${myUsername} Set a card to S/T zone ${zoneLabel(placedZoneIndex)}`
+                : `${myUsername} activated ${placedCardName} ${zoneLabel(placedZoneIndex)}`,
+            ),
+          };
+        },
+      },
+    );
+  };
 
   // Field Spells go to the single Field Zone instead — activating a new
   // one while one's already there sends the old one to Grave first.
@@ -2470,59 +2998,125 @@ function MultiplayerDuelFieldPage() {
     if (!pendingAttack) return;
     const fromIndex = pendingAttack.index;
     setPendingAttack(null);
-    applyMeUpdate((current) => ({
-      ...current,
-      activeAttack: { id: crypto.randomUUID(), fromIndex, toIndex: targetIndex },
-    }));
+    const attackerCardName = me?.monsterZones[fromIndex]?.card.name;
+    const targetCardName = opponent?.monsterZones[targetIndex]?.card.name;
+    applyMeUpdate(
+      (current) => ({
+        ...current,
+        activeAttack: { id: crypto.randomUUID(), fromIndex, toIndex: targetIndex },
+      }),
+      {
+        extraFields:
+          attackerCardName && targetCardName
+            ? {
+                duelLog: logDuelAction(
+                  `${myUsername} attacked opponent's ${targetCardName} ${zoneLabel(targetIndex)} with ${attackerCardName} ${zoneLabel(fromIndex)}`,
+                ),
+              }
+            : undefined,
+      },
+    );
   };
 
   const handleAttackCancel = () => setPendingAttack(null);
 
-  const handleHandToGrave = (instanceId: string) =>
-    applyMeUpdate((current) => {
-      const instance = current.hand.find((i) => i.instanceId === instanceId);
-      if (!instance) return current;
-      return {
-        ...current,
-        hand: current.hand.filter((i) => i.instanceId !== instanceId),
-        grave: [...current.grave, instance],
-      };
-    });
+  const handleHandToGrave = (instanceId: string) => {
+    let movedCardName: string | undefined;
+    return applyMeUpdate(
+      (current) => {
+        const instance = current.hand.find((i) => i.instanceId === instanceId);
+        if (!instance) return current;
+        movedCardName = instance.card.name;
+        return {
+          ...current,
+          hand: current.hand.filter((i) => i.instanceId !== instanceId),
+          grave: [...current.grave, instance],
+        };
+      },
+      {
+        extraFields: () =>
+          movedCardName
+            ? { duelLog: logDuelAction(`${myUsername} moved ${movedCardName} from hand to Grave`) }
+            : undefined,
+      },
+    );
+  };
 
-  const handleHandBanish = (instanceId: string) =>
-    applyMeUpdate((current) => {
-      const instance = current.hand.find((i) => i.instanceId === instanceId);
-      if (!instance) return current;
-      return {
-        ...current,
-        hand: current.hand.filter((i) => i.instanceId !== instanceId),
-        banished: [...current.banished, instance],
-      };
-    });
+  const handleHandBanish = (instanceId: string) => {
+    let movedCardName: string | undefined;
+    return applyMeUpdate(
+      (current) => {
+        const instance = current.hand.find((i) => i.instanceId === instanceId);
+        if (!instance) return current;
+        movedCardName = instance.card.name;
+        return {
+          ...current,
+          hand: current.hand.filter((i) => i.instanceId !== instanceId),
+          banished: [...current.banished, instance],
+        };
+      },
+      {
+        extraFields: () =>
+          movedCardName
+            ? { duelLog: logDuelAction(`${myUsername} moved ${movedCardName} from hand to Banished Zone`) }
+            : undefined,
+      },
+    );
+  };
 
-  const handleHandStackTop = (instanceId: string) =>
-    applyMeUpdate((current) => {
-      const instance = current.hand.find((i) => i.instanceId === instanceId);
-      if (!instance) return current;
-      return {
-        ...current,
-        hand: current.hand.filter((i) => i.instanceId !== instanceId),
-        mainDeck: [instance, ...current.mainDeck],
-        lastMainDeckReturnSide: 'top',
-      };
-    });
+  const handleHandStackTop = (instanceId: string) => {
+    let movedCardName: string | undefined;
+    return applyMeUpdate(
+      (current) => {
+        const instance = current.hand.find((i) => i.instanceId === instanceId);
+        if (!instance) return current;
+        movedCardName = instance.card.name;
+        return {
+          ...current,
+          hand: current.hand.filter((i) => i.instanceId !== instanceId),
+          mainDeck: [instance, ...current.mainDeck],
+          lastMainDeckReturnSide: 'top',
+        };
+      },
+      {
+        extraFields: () =>
+          movedCardName
+            ? {
+                duelLog: logDuelAction(
+                  `${myUsername} moved ${movedCardName} from hand to the top of the Main Deck`,
+                ),
+              }
+            : undefined,
+      },
+    );
+  };
 
-  const handleHandStackBottom = (instanceId: string) =>
-    applyMeUpdate((current) => {
-      const instance = current.hand.find((i) => i.instanceId === instanceId);
-      if (!instance) return current;
-      return {
-        ...current,
-        hand: current.hand.filter((i) => i.instanceId !== instanceId),
-        mainDeck: [...current.mainDeck, instance],
-        lastMainDeckReturnSide: 'bottom',
-      };
-    });
+  const handleHandStackBottom = (instanceId: string) => {
+    let movedCardName: string | undefined;
+    return applyMeUpdate(
+      (current) => {
+        const instance = current.hand.find((i) => i.instanceId === instanceId);
+        if (!instance) return current;
+        movedCardName = instance.card.name;
+        return {
+          ...current,
+          hand: current.hand.filter((i) => i.instanceId !== instanceId),
+          mainDeck: [...current.mainDeck, instance],
+          lastMainDeckReturnSide: 'bottom',
+        };
+      },
+      {
+        extraFields: () =>
+          movedCardName
+            ? {
+                duelLog: logDuelAction(
+                  `${myUsername} moved ${movedCardName} from hand to the bottom of the Main Deck`,
+                ),
+              }
+            : undefined,
+      },
+    );
+  };
 
   // Where a card can land once it's done passing through (or being
   // shown in) the reveal zone.
@@ -2638,6 +3232,22 @@ function MultiplayerDuelFieldPage() {
   // reasoning; this is now just that function with the hand's own
   // instanceId-based removal described.
   const handleHandReveal = (instanceId: string) => {
+    // Read from the current `me` snapshot, outside the updater — the
+    // reveal-zone move itself is fully generic (moveCardViaRevealZone is
+    // shared with several Grave/Banished pile actions that already log
+    // their own "moved" entries elsewhere), so the card name is grabbed
+    // here rather than threading a Duel Log write through that shared
+    // helper.
+    const revealedCardName = me?.hand.find((i) => i.instanceId === instanceId)?.card.name;
+    if (revealedCardName && duelId) {
+      setDoc(
+        doc(db, 'duels', duelId),
+        { duelLog: logDuelAction(`${myUsername} revealed ${revealedCardName} in hand`) },
+        { merge: true },
+      ).catch((err) => {
+        console.error('[MultiplayerDuelFieldPage] Failed to log hand reveal:', err);
+      });
+    }
     moveCardViaRevealZone(
       (current) => {
         const instance = current.hand.find((i) => i.instanceId === instanceId);
@@ -2658,7 +3268,12 @@ function MultiplayerDuelFieldPage() {
   // so it renders through renderChatMessage's ordinary "mine" styling
   // exactly like a real typed message. See handleSendChatMessage above
   // for the identical write shape this mirrors.
-  const sendDeclareMessage = (cardName: string) => {
+  // `location` (added alongside the Duel Log feature) is only used for
+  // the Duel Log's own "declared effect of [card] in [location]" line —
+  // the chat announcement's own wording stays exactly as it already was,
+  // since that's a separate, already-shipped feature this isn't meant to
+  // reword.
+  const sendDeclareMessage = (cardName: string, location: string) => {
     if (!duelId || !state.role) return;
     const message: ChatMessage = {
       id: crypto.randomUUID(),
@@ -2666,11 +3281,16 @@ function MultiplayerDuelFieldPage() {
       text: `${currentUser?.displayName ?? 'A player'} activated the effect of ${cardName}`,
       sentAt: Date.now(),
     };
-    setDoc(doc(db, 'duels', duelId), { chatMessages: arrayUnion(message) }, { merge: true }).catch(
-      (err) => {
-        console.error('[MultiplayerDuelFieldPage] Failed to send declare message:', err);
+    setDoc(
+      doc(db, 'duels', duelId),
+      {
+        chatMessages: arrayUnion(message),
+        duelLog: logDuelAction(`${myUsername} declared effect of ${cardName} in ${location}`),
       },
-    );
+      { merge: true },
+    ).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to send declare message:', err);
+    });
   };
 
   // Which Grave/Banished pile card (if any) is currently being declared
@@ -2691,7 +3311,7 @@ function MultiplayerDuelFieldPage() {
   // the 'Reveal' option" instruction.
   const handleHandDeclare = (instanceId: string) => {
     const instance = (latestMeRef.current ?? me)?.hand.find((i) => i.instanceId === instanceId);
-    if (instance) sendDeclareMessage(instance.card.name);
+    if (instance) sendDeclareMessage(instance.card.name, 'hand');
     moveCardViaRevealZone(
       (current) => {
         const inst = current.hand.find((i) => i.instanceId === instanceId);
@@ -2739,10 +3359,22 @@ function MultiplayerDuelFieldPage() {
       // showing a targeting reticle with nowhere valid to click.
       const opponentHasMonsters = opponent?.monsterZones.some((zone) => zone !== null) ?? false;
       if (!opponentHasMonsters) {
-        applyMeUpdate((current) => ({
-          ...current,
-          activeAttack: { id: crypto.randomUUID(), fromIndex: index, toIndex: null },
-        }));
+        const attackerCardName = me?.monsterZones[index]?.card.name;
+        applyMeUpdate(
+          (current) => ({
+            ...current,
+            activeAttack: { id: crypto.randomUUID(), fromIndex: index, toIndex: null },
+          }),
+          {
+            extraFields: attackerCardName
+              ? {
+                  duelLog: logDuelAction(
+                    `${myUsername} attacked directly with ${attackerCardName} ${zoneLabel(index)}`,
+                  ),
+                }
+              : undefined,
+          },
+        );
       } else {
         setPendingAttack({ index });
       }
@@ -2757,43 +3389,78 @@ function MultiplayerDuelFieldPage() {
     if (actionKey === 'declare') {
       // Only ever offered face-up (see getPlacedCardActions), so
       // clickedPlaced's card is always public knowledge already.
-      if (clickedPlaced) sendDeclareMessage(clickedPlaced.card.name);
+      if (clickedPlaced) sendDeclareMessage(clickedPlaced.card.name, zoneName(index));
       return;
     }
 
     if (actionKey === 'activate' || actionKey === 'set') {
       const faceDown = actionKey === 'set';
-      applyMeUpdate((current) => {
-        if (zoneType === 'monster') {
-          const slot = current.monsterZones[index];
-          if (!slot) return current;
-          const next = [...current.monsterZones];
-          next[index] = { ...slot, faceDown };
-          return { ...current, monsterZones: next };
-        }
-        if (zoneType === 'spellTrap') {
-          const slot = current.spellTrapZones[index];
-          if (!slot) return current;
-          const next = [...current.spellTrapZones];
-          next[index] = { ...slot, faceDown };
-          return { ...current, spellTrapZones: next };
-        }
-        if (!current.fieldZone) return current;
-        return { ...current, fieldZone: { ...current.fieldZone, faceDown } };
-      });
+      // 'activate' is only ever offered on a FACE-DOWN card (see
+      // getPlacedCardActions), so this is specifically activating a
+      // previously-Set Spell/Trap — the Duel Log's own "activated set
+      // [name]" line. 'set' (flipping an already-placed face-up
+      // Spell/Trap back face-down) isn't one of the requested Duel Log
+      // entries, so that direction stays unlogged.
+      const activatedSetCardName =
+        actionKey === 'activate' && zoneType === 'spellTrap' ? clickedPlaced?.card.name : undefined;
+      applyMeUpdate(
+        (current) => {
+          if (zoneType === 'monster') {
+            const slot = current.monsterZones[index];
+            if (!slot) return current;
+            const next = [...current.monsterZones];
+            next[index] = { ...slot, faceDown };
+            return { ...current, monsterZones: next };
+          }
+          if (zoneType === 'spellTrap') {
+            const slot = current.spellTrapZones[index];
+            if (!slot) return current;
+            const next = [...current.spellTrapZones];
+            next[index] = { ...slot, faceDown };
+            return { ...current, spellTrapZones: next };
+          }
+          if (!current.fieldZone) return current;
+          return { ...current, fieldZone: { ...current.fieldZone, faceDown } };
+        },
+        activatedSetCardName
+          ? {
+              extraFields: {
+                duelLog: logDuelAction(
+                  `${myUsername} activated set ${activatedSetCardName} ${zoneLabel(index)}`,
+                ),
+              },
+            }
+          : {},
+      );
       return;
     }
 
     if (actionKey === 'toDefense' || actionKey === 'toAttack') {
       if (zoneType !== 'monster') return;
       const newPosition = actionKey === 'toDefense' ? 'defense' : 'attack';
-      applyMeUpdate((current) => {
-        const slot = current.monsterZones[index];
-        if (!slot) return current;
-        const next = [...current.monsterZones];
-        next[index] = { ...slot, position: newPosition };
-        return { ...current, monsterZones: next };
-      });
+      let switchedCardName: string | undefined;
+      let previousPosition: 'attack' | 'defense' | undefined;
+      applyMeUpdate(
+        (current) => {
+          const slot = current.monsterZones[index];
+          if (!slot) return current;
+          switchedCardName = slot.card.name;
+          previousPosition = slot.position ?? 'attack';
+          const next = [...current.monsterZones];
+          next[index] = { ...slot, position: newPosition };
+          return { ...current, monsterZones: next };
+        },
+        {
+          extraFields: () =>
+            switchedCardName && previousPosition
+              ? {
+                  duelLog: logDuelAction(
+                    `${myUsername} switched ${switchedCardName} ${zoneLabel(index)} from ${previousPosition} to ${newPosition}`,
+                  ),
+                }
+              : undefined,
+        },
+      );
       return;
     }
 
@@ -2819,6 +3486,27 @@ function MultiplayerDuelFieldPage() {
       notYetImplemented(`field action: ${actionKey}`);
       return;
     }
+
+    // The "moved [card] from [previous location] to [new location]" Duel
+    // Log line for this generic "send a placed card off the field to a
+    // pile" action — captured before the updater below runs (it reads
+    // clickedPlaced/zoneType/index from the outer closure, none of which
+    // this actually needs to wait on).
+    const moveFromLocation =
+      zoneType === 'monster' ? zoneName(index) : zoneType === 'spellTrap' ? zoneName(index) : 'Field Zone';
+    const moveToLocation =
+      actionKey === 'toHand'
+        ? 'hand'
+        : actionKey === 'toExtra'
+          ? 'Extra Deck'
+          : actionKey === 'toGrave'
+            ? 'Grave'
+            : actionKey === 'banish'
+              ? 'Banished Zone'
+              : actionKey === 'stackTop'
+                ? 'the top of the Main Deck'
+                : 'the bottom of the Main Deck';
+    const movedCardName = clickedPlaced?.card.name;
 
     // Captured from inside the updater below (which runs synchronously,
     // well before applyMeUpdate's own writes are awaited) — every card
@@ -2968,7 +3656,10 @@ function MultiplayerDuelFieldPage() {
       return next;
     }, {
       extraFields: () => {
-        if (returnItems.length === 0 || !returnToRole) return undefined;
+        const duelLogField = movedCardName
+          ? { duelLog: logDuelAction(`${myUsername} moved ${movedCardName} from ${moveFromLocation} to ${moveToLocation}`) }
+          : {};
+        if (returnItems.length === 0 || !returnToRole) return duelLogField;
         const batch = {
           // Same reasoning as handleMoveToOpponentTarget's own transfer
           // id — a genuinely unique value per batch, not derived from
@@ -2985,6 +3676,7 @@ function MultiplayerDuelFieldPage() {
         // function before any of its own writes are awaited.
         cardLayerRef.current?.queueCardReturn(batch);
         return {
+          ...duelLogField,
           // arrayUnion, not a plain field write — same reasoning as
           // pendingControlTransfers' own fix: a plain merge write here
           // would overwrite (and lose) any OTHER return batch still
@@ -3016,26 +3708,40 @@ function MultiplayerDuelFieldPage() {
     }
     const { zoneType: originZoneType, index: originIndex } = pendingMove;
     setPendingMove(null);
-    applyMeUpdate((current) => {
-      const originZones = originZoneType === 'monster' ? current.monsterZones : current.spellTrapZones;
-      const destZones = destZoneType === 'monster' ? current.monsterZones : current.spellTrapZones;
-      const card = originZones[originIndex];
-      // Guards against the origin having emptied out from under this
-      // (e.g. sent to Grave by some other means) or the destination
-      // having filled up since it was clicked — neither should happen
-      // given the menu/click gating in DuelField.tsx, but this is the
-      // authoritative check that actually matters.
-      if (!card || destZones[destIndex]) return current;
+    let movedCardName: string | undefined;
+    applyMeUpdate(
+      (current) => {
+        const originZones = originZoneType === 'monster' ? current.monsterZones : current.spellTrapZones;
+        const destZones = destZoneType === 'monster' ? current.monsterZones : current.spellTrapZones;
+        const card = originZones[originIndex];
+        // Guards against the origin having emptied out from under this
+        // (e.g. sent to Grave by some other means) or the destination
+        // having filled up since it was clicked — neither should happen
+        // given the menu/click gating in DuelField.tsx, but this is the
+        // authoritative check that actually matters.
+        if (!card || destZones[destIndex]) return current;
+        movedCardName = card.card.name;
 
-      const nextMonsterZones = [...current.monsterZones];
-      const nextSpellTrapZones = [...current.spellTrapZones];
-      if (originZoneType === 'monster') nextMonsterZones[originIndex] = null;
-      else nextSpellTrapZones[originIndex] = null;
-      if (destZoneType === 'monster') nextMonsterZones[destIndex] = card;
-      else nextSpellTrapZones[destIndex] = card;
+        const nextMonsterZones = [...current.monsterZones];
+        const nextSpellTrapZones = [...current.spellTrapZones];
+        if (originZoneType === 'monster') nextMonsterZones[originIndex] = null;
+        else nextSpellTrapZones[originIndex] = null;
+        if (destZoneType === 'monster') nextMonsterZones[destIndex] = card;
+        else nextSpellTrapZones[destIndex] = card;
 
-      return { ...current, monsterZones: nextMonsterZones, spellTrapZones: nextSpellTrapZones };
-    });
+        return { ...current, monsterZones: nextMonsterZones, spellTrapZones: nextSpellTrapZones };
+      },
+      {
+        extraFields: () =>
+          movedCardName
+            ? {
+                duelLog: logDuelAction(
+                  `${myUsername} moved ${movedCardName} from ${zoneName(originIndex)} to ${zoneName(destIndex)}`,
+                ),
+              }
+            : undefined,
+      },
+    );
   };
 
   // Cross-field counterpart to handleMoveTarget above — only ever
@@ -3111,6 +3817,9 @@ function MultiplayerDuelFieldPage() {
           // origin before ever seeing this signal telling them where it
           // went — a real gap where the card existed nowhere at all.
           pendingControlTransfers: arrayUnion(transferRecord),
+          duelLog: logDuelAction(
+            `${myUsername} moved ${card.card.name} from ${zoneName(originIndex)} to opponent's ${zoneName(destIndex)}`,
+          ),
         },
       },
     );
@@ -3239,11 +3948,14 @@ function MultiplayerDuelFieldPage() {
     });
 
   const handleShuffleMainDeck = () =>
-    applyMeUpdate((current) => ({
-      ...current,
-      mainDeck: shuffle(current.mainDeck),
-      mainDeckShuffleVersion: current.mainDeckShuffleVersion + 1,
-    }));
+    applyMeUpdate(
+      (current) => ({
+        ...current,
+        mainDeck: shuffle(current.mainDeck),
+        mainDeckShuffleVersion: current.mainDeckShuffleVersion + 1,
+      }),
+      { extraFields: { duelLog: logDuelAction(`${myUsername} shuffled their deck`) } },
+    );
 
   // Closing the Main Deck viewer always shuffles afterward — matches
   // the real-world convention that looking through your deck requires
@@ -3435,7 +4147,7 @@ function MultiplayerDuelFieldPage() {
     if (!instance) return;
 
     if (actionKey === 'declare') {
-      sendDeclareMessage(instance.card.name);
+      sendDeclareMessage(instance.card.name, 'Grave');
       setDeclaredPileCard({ pile: 'grave', instanceId });
       window.setTimeout(() => {
         setDeclaredPileCard((current) =>
@@ -3571,7 +4283,7 @@ function MultiplayerDuelFieldPage() {
     if (!me) return;
     const instance = me.banished.find((i) => i.instanceId === instanceId);
     if (instance && actionKey === 'declare') {
-      sendDeclareMessage(instance.card.name);
+      sendDeclareMessage(instance.card.name, 'Banished Zone');
       setDeclaredPileCard({ pile: 'banished', instanceId });
       window.setTimeout(() => {
         setDeclaredPileCard((current) =>
@@ -3778,6 +4490,14 @@ function MultiplayerDuelFieldPage() {
       request: (typeof newRequests)[number];
       transfer: (typeof newTransfers)[number] | null;
     }[] = [];
+    // Special Summons requested from one of THIS client's own piles are
+    // logged here (the one place that actually knows the card's name and
+    // its destination zone) rather than back at the requester's own
+    // completeSummon — but attributed to the REQUESTER (opponentRole
+    // here, from this executing client's own point of view), not to
+    // this client itself, since it's the requester's own action being
+    // recorded, not this client's.
+    const specialSummonLogEntries: DuelLogEntry[] = [];
     for (const request of newRequests) {
       if (request.action !== 'specialSummon') {
         resolvedRequests.push({ request, transfer: null });
@@ -3828,6 +4548,15 @@ function MultiplayerDuelFieldPage() {
       };
       newTransfers.push(transfer);
       resolvedRequests.push({ request, transfer });
+      specialSummonLogEntries.push(
+        buildDuelLogEntry(
+          opponentRole,
+          `${opponent?.username ?? 'Opponent'} Special Summoned ${instance.card.name} from their opponent's ${
+            request.pile === 'grave' ? 'Grave' : 'Banished Zone'
+          } in ${transfer.card.position} position ${zoneLabel(destIndex)}`,
+          duelStartedAt,
+        ),
+      );
     }
 
     // Queued locally, immediately — same reasoning as every other
@@ -3864,6 +4593,9 @@ function MultiplayerDuelFieldPage() {
           pendingPileRequests: arrayRemove(...newRequests),
           ...(newTransfers.length > 0
             ? { pendingControlTransfers: arrayUnion(...newTransfers) }
+            : {}),
+          ...(specialSummonLogEntries.length > 0
+            ? { duelLog: arrayUnion(...specialSummonLogEntries) }
             : {}),
         },
       },
@@ -3973,6 +4705,13 @@ function MultiplayerDuelFieldPage() {
               <button type="button" className="MultiplayerDuelFieldPage-exitButton" onClick={handleExitClick}>
                 Exit
               </button>
+              <button
+                type="button"
+                className="MultiplayerDuelFieldPage-duelLogButton"
+                onClick={() => setShowDuelLog(true)}
+              >
+                Duel Log
+              </button>
             </div>
 
             {/* The default instructional sentence ("Select an equal
@@ -4024,6 +4763,9 @@ function MultiplayerDuelFieldPage() {
             onDismiss={handleExitCancel}
           />
         )}
+
+        {showDuelLog &&
+          renderDuelLogOverlay(duelLog, state.role, () => setShowDuelLog(false), duelLogHistoryRef)}
 
         {/* The opponent having left/forfeited can happen even while this
             client is still on the Side Decking screen — isSidingPhase
@@ -4096,6 +4838,7 @@ function MultiplayerDuelFieldPage() {
             <div className="PlayerAvatarBox">
               <img src={getAvatarUrl(opponent.avatarId)} alt="" className="PlayerAvatarBox-image" />
               {renderExpressionOverlay(opponentExpression)}
+              {renderViewingLocationOverlay(opponentViewingLocation)}
               {renderDisconnectCountdownOverlay(disconnectTimer, opponentRole)}
             </div>
           </div>
@@ -4148,6 +4891,7 @@ function MultiplayerDuelFieldPage() {
               overlay={
                 <>
                   {renderExpressionOverlay(myExpression)}
+                  {renderViewingLocationOverlay(myViewingLocation)}
                   {renderDisconnectCountdownOverlay(disconnectTimer, state.role ?? null)}
                 </>
               }
@@ -4338,6 +5082,13 @@ function MultiplayerDuelFieldPage() {
             <button type="button" className="MultiplayerDuelFieldPage-exitButton" onClick={handleExitClick}>
               Exit
             </button>
+            <button
+              type="button"
+              className="MultiplayerDuelFieldPage-duelLogButton"
+              onClick={() => setShowDuelLog(true)}
+            >
+              Duel Log
+            </button>
           </div>
 
           <div className="MultiplayerDuelFieldPage-matchActionsRow">
@@ -4380,6 +5131,9 @@ function MultiplayerDuelFieldPage() {
           onDismiss={handleExitCancel}
         />
       )}
+
+      {showDuelLog &&
+        renderDuelLogOverlay(duelLog, state.role, () => setShowDuelLog(false), duelLogHistoryRef)}
 
       {/* 2x2 grid: Die Roll/Coin Flip on top (moved here from the duel
           field itself — see DuelField.tsx's own deckRow comment), Reveal
@@ -4631,6 +5385,7 @@ function MultiplayerDuelFieldPage() {
           >
             <img src={getAvatarUrl(opponent.avatarId)} alt="" className="PlayerAvatarBox-image" />
             {renderExpressionOverlay(opponentExpression)}
+            {renderViewingLocationOverlay(opponentViewingLocation)}
             {renderDisconnectCountdownOverlay(disconnectTimer, opponentRole)}
           </div>
         </div>
@@ -4708,6 +5463,7 @@ function MultiplayerDuelFieldPage() {
             overlay={
               <>
                 {renderExpressionOverlay(myExpression)}
+                {renderViewingLocationOverlay(myViewingLocation)}
                 {renderDisconnectCountdownOverlay(disconnectTimer, state.role ?? null)}
               </>
             }

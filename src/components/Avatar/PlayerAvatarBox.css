@@ -1,12 +1,38 @@
 .PlayerAvatarBox {
-  width: 64px;
-  height: 64px;
+  /* Sized to consume exactly whatever width is left over from
+     MultiplayerDuelFieldPage-hudRow's own fixed 216px total (see that
+     class's own comment) once .hudInfo's own content (the username/LP
+     counter stack next to this) and the row's 6px gap are accounted
+     for — flex: 1 rather than a second fixed pixel width, since
+     .hudInfo isn't a fixed width either (it's only ever as wide as
+     whichever of the username/LP display happens to be longer), so a
+     hardcoded avatar width here could just as easily leave the row
+     short of 216px or push it past. This way the row's total width is
+     always EXACTLY 216px — matching the chat box's own width, per
+     request — regardless of how long a given username happens to be.
+     min-width: 0 is needed alongside flex: 1 since flex items default
+     to a min-width equal to their content's own natural size otherwise,
+     which would stop this shrinking below whatever the avatar <img>
+     itself would ask for.
+     Also taller than the old fixed 64px square (84px now) so the
+     "Viewing [location]" text overlay (see
+     MultiplayerDuelFieldPage-viewingLocationOverlay) has more room to
+     fit a longer label like "Viewing Opponent's Banished" without
+     wrapping too tightly. The box is no longer strictly square as a
+     result (its rendered width now varies with username length), but
+     object-fit: cover on PlayerAvatarBox-image below already handles a
+     non-square box correctly, cropping the avatar image to fill it
+     either way. */
+  flex: 1;
+  min-width: 0;
+  height: 84px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: #16171dee;
   overflow: hidden;
-  /* Establishes the containing block for the expression overlay's own
-     position: absolute (see MultiplayerDuelFieldPage-expressionOverlay)
+  /* Establishes the containing block for the expression/viewing-location
+     overlays' own position: absolute (see
+     MultiplayerDuelFieldPage-expressionOverlay/-viewingLocationOverlay)
      — a no-op for every other use of this component/class, which never
      has an absolutely-positioned child to begin with. */
   position: relative;
