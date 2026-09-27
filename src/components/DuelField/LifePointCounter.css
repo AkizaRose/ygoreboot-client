@@ -2,9 +2,24 @@
    that now lives on the wrapping .MultiplayerDuelFieldPage-playerHud) is
    still needed here: it's what makes this the containing block
    .LifePointCounter-popover's own bottom:100% actually anchors
-   against. */
+   against.
+   display: flex is what makes this div's own height match
+   .LifePointCounter-display's (the <button> inside it) exactly — without
+   it, this is a plain block box around an inline-level (button) child,
+   and a block box's height in that case comes from its LINE BOX, not
+   just the button's own content box: the line box also has to fit an
+   invisible "strut" the size of this div's own inherited font/
+   line-height, which (being taller here than the button's own explicit
+   line-height: 1 at 28px) was quietly padding out the line box — and so
+   this div — a couple of pixels taller than the button itself. That's
+   what was making the player's own LP row (this div sits inside it)
+   render taller than the opponent's own LP counter, a plain div sharing
+   LifePointCounter-display with no such wrapper around it. Flex layout
+   sizes this to its flex item's (the button's) own box directly, with no
+   line box/strut involved, so it now matches exactly. */
 .LifePointCounter {
   position: relative;
+  display: flex;
 }
 
 /* No border/background of its own any more, per request — this now sits

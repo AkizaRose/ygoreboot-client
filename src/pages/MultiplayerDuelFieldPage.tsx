@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { doc, setDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import {
+  doc,
+  setDoc,
+  arrayUnion,
+  arrayRemove,
+  writeBatch,
+  increment,
+  serverTimestamp,
+  collection,
+  addDoc,
+} from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../auth/AuthContext';
 import DuelField from '../components/DuelField/DuelField';
@@ -416,11 +426,22 @@ function MultiplayerDuelFieldPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const state = (location.state ?? {}) as MultiplayerDuelLocationState;
+  // The raw values React Router's own navigation state was constructed
+  // with when this player first navigated here (see useDuelHosting's own
+  // navigate(...) calls) — NOT what the rest of this component reads
+  // from, from this point down (see the reconstructed `state` below).
+  // Most hosting setups don't reliably restore this across a genuine
+  // browser refresh (as opposed to an in-app remount), which is exactly
+  // what used to make a refresh mid-duel look like the duel had
+  // restarted from scratch.
+  const locationState = (location.state ?? {}) as MultiplayerDuelLocationState;
 
   const {
     loading,
     error,
+    role: hookRole,
+    opponentInfo: hookOpponentInfo,
+    hasReceivedDuelSnapshot,
     me,
     opponent,
     turnPlayer,
@@ -456,7 +477,27 @@ function MultiplayerDuelFieldPage() {
     disconnectTimer,
     disconnectedBy,
     startNextDuel,
-  } = useMultiplayerDuel(duelId, state.role, state.opponentInfo, state.myDeckId);
+  } = useMultiplayerDuel(
+    duelId,
+    locationState.role,
+    locationState.opponentInfo,
+    locationState.myDeckId,
+  );
+
+  // Every OTHER reference to `state` in this file (and there are many)
+  // reads role/opponentInfo from here, not from locationState above —
+  // useMultiplayerDuel resolves both from the duel document itself
+  // (matching currentUser's own uid against it) whenever locationState
+  // didn't have them, which is what actually lets a reconnect after a
+  // genuine browser refresh recover cleanly rather than hitting the
+  // "session lost" screen below just because navigation state didn't
+  // survive. myDeckId has no such fallback — see useMultiplayerDuel's
+  // own comment on why it's never actually needed for a reconnect.
+  const state: MultiplayerDuelLocationState = {
+    role: hookRole ?? undefined,
+    opponentInfo: hookOpponentInfo ?? undefined,
+    myDeckId: locationState.myDeckId,
+  };
 
   // Computed once here rather than inline at each of the several call
   // sites that need it (the disconnect countdown overlay, the
@@ -686,6 +727,79 @@ function MultiplayerDuelFieldPage() {
   // arriving separately), so rendering them would make the visible board
   // disagree with CardLayer for a frame or remove the moving card entirely.
   const pendingLocalStateRef = useRef<MyDuelState | null>(null);
+  // --- Match Replays ---
+  // A simple monotonic tie-breaker for THIS client's own replay-frame
+  // writes only (see recordReplayFrame below) — two frames from the same
+  // author can otherwise land with the exact same serverTimestamp
+  // millisecond, and this is what still lets playback order them
+  // correctly relative to each other. It never needs to survive a
+  // remount/reconnect: the two streams (one per player uid) are merged
+  // for playback by `recordedAt` first, and this is only ever compared
+  // within one author's own stream, where a reset-to-0 after a remount
+  // can't create an actual ordering ambiguity (a later action from the
+  // same freshly-remounted client still gets a later serverTimestamp).
+  const replayFrameSeqRef = useRef(0);
+  // Appends one frame to duels/{duelId}/replayFrames, capturing either
+  // this client's own full board+hand snapshot (from applyMeUpdate) or a
+  // shared turn/phase change (from applyTurnUpdate) — see ReplayFieldPage
+  // for how these get replayed back. Deliberately fire-and-forget: a
+  // dropped replay frame is a cosmetic gap in a later playback, never
+  // something worth blocking or retrying the actual game action over.
+  // Recording is unconditional (every duel now gets one going forward) —
+  // there's no per-duel opt-out flag to check here.
+  const recordReplayFrame = (
+    frame:
+      | { kind: 'player'; publicState: ReturnType<typeof buildPublicState>; hand: CardInstance[] }
+      | { kind: 'shared'; shared: Partial<{ turnPlayer: PlayerRole; currentPhase: TurnPhase; turnEnding: boolean; turnNumber: number }> },
+  ) => {
+    if (!duelId || !currentUser || !state.role) return;
+    addDoc(collection(db, 'duels', duelId, 'replayFrames'), {
+      ownerUid: currentUser.uid,
+      role: state.role,
+      seq: replayFrameSeqRef.current++,
+      recordedAt: serverTimestamp(),
+      duelNumber,
+      ...frame,
+    }).catch((err) => {
+      console.error('[MultiplayerDuelFieldPage] Failed to record replay frame:', err);
+    });
+  };
+  // Every OTHER frame is recorded from inside applyMeUpdate/applyTurnUpdate
+  // (see their own comments) — but the very first board state of each duel
+  // (opening hands dealt, deck shuffled) is written directly by
+  // useMultiplayerDuel's own init effect, never through applyMeUpdate, so
+  // it would otherwise never get a replay frame at all — a playback would
+  // start from an empty board until whatever the first REAL action happens
+  // to be. This effect exists purely to capture that one moment, once per
+  // duel (including duel 2/3 of a match, each of which re-deals into the
+  // same duelId document) — guarded by duelNumber so a duel whose opening
+  // hand was already recorded doesn't get a redundant duplicate on every
+  // later re-render.
+  const recordedOpeningHandForDuelRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!me?.openingHandDealt) return;
+    if (recordedOpeningHandForDuelRef.current === duelNumber) return;
+    recordedOpeningHandForDuelRef.current = duelNumber;
+    recordReplayFrame({
+      kind: 'player',
+      publicState: buildPublicState(me, handRevealedRef.current),
+      hand: me.hand,
+    });
+    // Also captures turnPlayer/currentPhase/turnNumber at this same
+    // moment — these are set once, directly by useMultiplayerDuel's own
+    // init effect (never through applyTurnUpdate), so without this they'd
+    // stay unset in a replay's reconstructed timeline until whatever the
+    // very first real phase/turn change happens to be, and PhaseTracker
+    // (which DuelField only renders once currentPhase is truthy) simply
+    // wouldn't appear for however many actions come before that.
+    if (turnPlayer && currentPhase) {
+      recordReplayFrame({
+        kind: 'shared',
+        shared: { turnPlayer, currentPhase, turnEnding, turnNumber },
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.openingHandDealt, duelNumber]);
   // Deliberately a SEPARATE piece of state from latestMeRef, updated one
   // animation frame later (see applyMeUpdate below) rather than in the
   // same synchronous batch as the click itself. latestMeRef alone
@@ -1225,10 +1339,11 @@ function MultiplayerDuelFieldPage() {
       mainDeck: next.mainDeck,
       extraDeck: next.extraDeck,
     });
+    const nextPublicState = buildPublicState(next, handRevealedRef.current);
     await setDoc(
       doc(db, 'duels', duelId),
       {
-        [state.role]: buildPublicState(next, handRevealedRef.current),
+        [state.role]: nextPublicState,
         // Any real action clears BOTH players' selections — selecting a
         // card is deliberately its own separate write (handleSelectCard
         // below) that never goes through applyMeUpdate at all, which is
@@ -1242,6 +1357,11 @@ function MultiplayerDuelFieldPage() {
       },
       { merge: true },
     );
+    // Match Replays: every action that actually changes this player's own
+    // board/hand gets its own frame — see recordReplayFrame's own comment.
+    // Uses the SAME nextPublicState/next.hand this write just sent, so a
+    // replay frame can never disagree with what actually got published.
+    recordReplayFrame({ kind: 'player', publicState: nextPublicState, hand: next.hand });
   };
 
   const handleDrawCard = () =>
@@ -1542,6 +1662,10 @@ function MultiplayerDuelFieldPage() {
     ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to update turn state:', err);
     });
+    // Match Replays: a turn/phase change doesn't touch either player's own
+    // board or hand, so it gets the lighter 'shared' frame kind instead of
+    // going through applyMeUpdate's own recording.
+    recordReplayFrame({ kind: 'shared', shared: patch });
   };
 
   // --- Card selection (purely visual — no gameplay effect of its own) ---
@@ -1967,13 +2091,18 @@ function MultiplayerDuelFieldPage() {
   const handleExitCancel = () => setShowExitConfirm(false);
   const handleExitConfirm = () => {
     setShowExitConfirm(false);
-    if (duelId && state.role) {
+    if (duelId && state.role && currentUser) {
       const winnerRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
-      setDoc(
+      const batch = writeBatch(db);
+      batch.set(
         doc(db, 'duels', duelId),
         {
           forfeitedBy: state.role,
           matchOutcome: { type: winnerRole === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch' },
+          // Always set here — a forfeit unconditionally ends the whole
+          // match, never just the current duel — used by the Replay
+          // History list to know a match is finished and sort by recency.
+          matchCompletedAt: serverTimestamp(),
           // Belt-and-braces: if the OPPONENT happened to have an active
           // disconnect countdown running against THEM at this exact
           // moment (a genuinely rare double-edge-case), the match is
@@ -1981,9 +2110,28 @@ function MultiplayerDuelFieldPage() {
           // nothing left for that countdown to resolve.
           disconnectTimer: null,
           duelLog: logDuelAction(`${myUsername} left the match`),
+          // Marked recorded right away, in the same batch as the loss
+          // write below — otherwise useMultiplayerDuel's own
+          // matchOutcome-watching effect would (harmlessly, but
+          // pointlessly) try to record this same loss again if this
+          // client's snapshot listener happens to see the updated
+          // duelDoc before navigate('/duel') below actually unmounts it.
+          [`${state.role}StatsRecorded`]: true,
         },
         { merge: true },
-      ).catch((err) => {
+      );
+      // Recorded directly here, in this same still-alive moment this
+      // player clicks "Exit", rather than left to useMultiplayerDuel's
+      // matchOutcome-watching effect to pick up afterwards — that effect
+      // only ever runs on a client that's still mounted to observe the
+      // updated snapshot come back, and navigate('/duel') below unmounts
+      // this page (tearing down that subscription) essentially
+      // immediately, almost certainly before this write round-trips back.
+      // This is still this player's own users/{uid} doc, so it stays
+      // within the "a client only ever writes its own account" convention
+      // used everywhere else in this app.
+      batch.set(doc(db, 'users', currentUser.uid), { matchLosses: increment(1) }, { merge: true });
+      batch.commit().catch((err) => {
         console.error('[MultiplayerDuelFieldPage] Failed to record forfeit:', err);
       });
     }
@@ -2019,17 +2167,64 @@ function MultiplayerDuelFieldPage() {
     const remainingMs = disconnectTimer.startedAt + DISCONNECT_TIMEOUT_MS - Date.now();
     const timeoutId = window.setTimeout(() => {
       const winnerRole = state.role as PlayerRole;
+      const disconnectedRole = disconnectTimer.role;
+      const disconnectedUid = state.opponentInfo?.uid;
+      // The actual match resolution — every player is waiting on this,
+      // so it's its own independent write, never bundled into one atomic
+      // batch with the cross-account stats write below. A batch is all-
+      // or-nothing: if that other write were ever rejected (e.g. before
+      // a matching firestore.rules exception is deployed), bundling it
+      // in here would silently roll THIS back too, leaving the match
+      // stuck unresolved for both players instead of just the one
+      // player's stat going unrecorded.
       setDoc(
         doc(db, 'duels', duelId),
         {
           matchOutcome: { type: winnerRole === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch' },
-          disconnectedBy: disconnectTimer.role,
+          disconnectedBy: disconnectedRole,
           disconnectTimer: null,
+          // Same reasoning as handleExitConfirm's own copy of this — a
+          // disconnect timeout unconditionally ends the whole match.
+          matchCompletedAt: serverTimestamp(),
         },
         { merge: true },
       ).catch((err) => {
         console.error('[MultiplayerDuelFieldPage] Failed to resolve disconnect timeout:', err);
       });
+
+      // The disconnected player's own client isn't running any more to
+      // record its own loss the normal way — by definition, that's what
+      // "disconnected" means here. This still-connected client is the
+      // only one left to do it, which means writing the loss directly to
+      // the DISCONNECTED player's own users/{uid} doc rather than this
+      // client's own — a deliberate, narrow exception to this app's usual
+      // "a client only ever writes its own account" convention (see
+      // useMultiplayerDuel's account-stats effect), and it needs a
+      // matching firestore.rules exception permitting exactly this
+      // (see that file's own comment on users/{userId}) — without it,
+      // this call rejects and this one match's loss just goes unrecorded
+      // (logged below), rather than anything else breaking.
+      // {disconnectedRole}StatsRecorded is only marked true AFTER this
+      // write actually succeeds — not alongside the duel-outcome write
+      // above — so that if it fails today (rules not deployed yet) it
+      // stays eligible rather than being permanently marked "done"
+      // without ever having happened.
+      if (disconnectedUid) {
+        setDoc(
+          doc(db, 'users', disconnectedUid),
+          { matchLosses: increment(1), lastLossDuelId: duelId },
+          { merge: true },
+        )
+          .then(() =>
+            setDoc(doc(db, 'duels', duelId), { [`${disconnectedRole}StatsRecorded`]: true }, { merge: true }),
+          )
+          .catch((err) => {
+            console.error(
+              '[MultiplayerDuelFieldPage] Failed to record disconnect loss to opponent account (likely needs a firestore.rules update):',
+              err,
+            );
+          });
+      }
       // Math.max(0, ...) — a countdown resumed after this client's own
       // remount could already be past its own deadline by the time this
       // effect first runs (e.g. this client was itself offline for a
@@ -2038,6 +2233,17 @@ function MultiplayerDuelFieldPage() {
       // case, not a bug to guard against differently.
     }, Math.max(0, remainingMs));
     return () => window.clearTimeout(timeoutId);
+    // Deliberately NOT depending on state.opponentInfo: its object
+    // identity is recomputed fresh every render (see useMultiplayerDuel's
+    // own derivation), even though the uid it carries doesn't actually
+    // change across a duel. Including it here previously caused this
+    // whole effect to tear down and reschedule its setTimeout (with an
+    // already-elapsed, effectively-0ms delay) on every single render —
+    // repeatedly re-firing the writes above in a tight loop, which is
+    // what caused the winner's "you win" dialog to flash rapidly: each
+    // attempt applied Firestore's normal optimistic local update, then
+    // got rolled back once the still-unpermitted cross-account write
+    // caused that attempt's batch/commit to fail server-side.
   }, [duelId, state.role, disconnectTimer, matchOutcome]);
 
   // --- Admit Defeat / Offer Draw ---
@@ -2060,6 +2266,11 @@ function MultiplayerDuelFieldPage() {
         matchOutcome: matchDecided
           ? { type: winnerRole === 'player1' ? 'player1WinsMatch' : 'player2WinsMatch' }
           : null,
+        // Only stamped when this admitted defeat actually decides the
+        // MATCH (matchDecided) — not on a mid-match duel loss, which
+        // still has more duels left to play and isn't "completed" yet
+        // for the Replay History list's purposes.
+        ...(matchDecided ? { matchCompletedAt: serverTimestamp() } : {}),
         // Belt-and-braces, same reasoning as handleExitConfirm's own
         // copy of this: only clear it once the MATCH is actually over —
         // a disconnect countdown belongs to a player, not a single duel,
@@ -2143,6 +2354,10 @@ function MultiplayerDuelFieldPage() {
         matchConclusion: { type: 'drawAccepted' },
         matchWins: nextWins,
         matchOutcome: matchOutcomeUpdate,
+        // Same matchDecided-only gating as handleAdmitDefeatConfirm's own
+        // copy of this — a drawn DUEL that doesn't decide the match yet
+        // (more duels left) isn't "completed" for Replay History purposes.
+        ...(matchOutcomeUpdate ? { matchCompletedAt: serverTimestamp() } : {}),
         // Same reasoning as handleAdmitDefeatConfirm's own copy of this
         // — only reset the Side Decking done-flags when a siding phase
         // is actually about to start (the match isn't over yet).
@@ -4654,7 +4869,20 @@ function MultiplayerDuelFieldPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPileRequests, duelId, state.role]);
 
-  if (!state.role || !state.opponentInfo || !state.myDeckId) {
+  // Waits for hasReceivedDuelSnapshot before concluding role/opponentInfo
+  // are genuinely unrecoverable, rather than the very first render or two
+  // where useMultiplayerDuel simply hasn't had a chance yet to derive
+  // them from the duel document (see that hook's own comment) — without
+  // this wait, a real refresh would flash this screen before the derived
+  // values even had a chance to arrive; the ordinary loading screen further
+  // below covers that brief gap instead, the same as it already covers
+  // every other "still waiting on the first snapshot" case.
+  // myDeckId is deliberately NOT checked here any more: it's only ever
+  // needed for a genuinely fresh join (see useMultiplayerDuel's own
+  // comment on why), and role/opponentInfo being resolved already means
+  // either this isn't one, or it is and locationState still had it —
+  // either way there's nothing left to be "lost" here.
+  if (hasReceivedDuelSnapshot && (!state.role || !state.opponentInfo)) {
     return (
       <div className="MultiplayerDuelFieldPage-status">
         <p>This duel's session info was lost — this can happen after a page refresh.</p>
@@ -4689,7 +4917,22 @@ function MultiplayerDuelFieldPage() {
   // as everything else loading has already waited on above), so this is
   // just "has the timeout in the effect above fired yet." Also shown
   // again at the start of duel 2/3 (see resetLocalStateForNewDuel).
-  if (showFirstPlayerBanner && turnPlayer) {
+  //
+  // !me.openingHandDealt is checked here directly, alongside
+  // showFirstPlayerBanner itself, rather than relying solely on the
+  // hasCheckedReconnectBannerRef effect above to flip showFirstPlayerBanner
+  // to false for a reconnect: that effect only runs AFTER this component
+  // has already rendered once with `me` newly available (effects always
+  // run post-render), and showFirstPlayerBanner still holds its initial
+  // `true` on that very first render — so without this, THIS render
+  // still draws the banner for one frame before the effect's own
+  // setShowFirstPlayerBanner(false) commits and removes it again, which
+  // is exactly the brief flash that was still showing up on reconnect.
+  // me.openingHandDealt, unlike showFirstPlayerBanner, is already known
+  // synchronously as part of this very same render (it's just a field on
+  // `me`), so checking it directly here skips the banner immediately, on
+  // the first render, with nothing left to flash.
+  if (showFirstPlayerBanner && turnPlayer && !me.openingHandDealt) {
     const firstPlayerName = turnPlayer === state.role ? currentUser?.displayName : opponent.username;
     return (
       <div className="MultiplayerDuelFieldPage-status">

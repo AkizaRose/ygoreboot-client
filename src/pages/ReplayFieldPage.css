@@ -1,0 +1,36 @@
+/* Layout classes (.MultiplayerDuelFieldPage, -content, -fieldArea,
+   -boardStage, -sidePanel, -hudInfo, -hudUsernameRow, -opponentHud,
+   -playerHud) are all reused directly from MultiplayerDuelFieldPage.css,
+   imported alongside this file — this page deliberately doesn't redefine
+   them, so the replay viewer's board/HUD layout always tracks the live
+   duel field's own layout instead of silently drifting out of sync with
+   it over time. Only genuinely new elements (Play/Pause, the frame
+   counter, the Duel N of 3 status) get their own rules here. */
+
+.ReplayFieldPage-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text);
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+}
+
+.ReplayFieldPage-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+}
+
+.ReplayFieldPage-progress {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.ReplayFieldPage-matchStatus {
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+}

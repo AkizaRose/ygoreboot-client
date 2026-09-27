@@ -8,6 +8,8 @@ import DuelMenuPage from './pages/DuelMenuPage';
 import MultiplayerDuelFieldPage from './pages/MultiplayerDuelFieldPage';
 import DeckBuilderPage from './pages/DeckBuilderPage';
 import AccountPage from './pages/AccountPage';
+import ReplaysPage from './pages/ReplaysPage';
+import ReplayFieldPage from './pages/ReplayFieldPage';
 
 function App() {
   return (
@@ -61,6 +63,22 @@ function App() {
               element={
                 <ProtectedRoute>
                   <AccountPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/replays"
+              element={
+                <ProtectedRoute>
+                  <ReplaysPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/replays/:duelId"
+              element={
+                <ProtectedRoute>
+                  <ReplayFieldPage />
                 </ProtectedRoute>
               }
             />

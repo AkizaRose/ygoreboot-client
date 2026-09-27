@@ -9,6 +9,7 @@ function LandingPage() {
       items={[
         { label: 'Duel', to: '/duel' },
         { label: 'Deck Builder', to: '/deck-builder' },
+        { label: 'Replays', to: '/replays' },
         { label: 'Account', to: '/account' },
         { label: 'Log Out', onClick: () => logOut() },
       ]}

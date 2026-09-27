@@ -315,6 +315,22 @@
   margin: -2px -6px 0 -6px;
   padding: 2px 6px;
   background: #000000;
+  /* display: flex is what closes the dead space above the username text
+     — without it, this is a plain block box around an inline (span)
+     child, and a block box's height in that case comes from a LINE BOX,
+     which also has to fit an invisible "strut" the size of THIS block's
+     own inherited font/line-height (inherited from way up the tree,
+     since neither this class nor .hudInfo sets one) — not the
+     username span's own, much shorter, explicit line-height: 12px. That
+     inherited strut being taller than the username text itself is what
+     was padding the row out above the text (the same root cause already
+     fixed on .LifePointCounter's own wrapper, for the same reason).
+     align-items: center then centers the text within whatever's left
+     (mainly the 2px 6px padding above), rather than the flex default
+     (stretch) leaving the span's own box exactly as tall as its text
+     but positioned flush at the container's own top edge either way. */
+  display: flex;
+  align-items: center;
 }
 
 .MultiplayerDuelFieldPage-hudRow--player .MultiplayerDuelFieldPage-hudUsernameRow {

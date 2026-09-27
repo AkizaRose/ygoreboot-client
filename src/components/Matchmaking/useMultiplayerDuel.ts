@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { doc, onSnapshot, setDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
+import {
+  doc,
+  onSnapshot,
+  setDoc,
+  serverTimestamp,
+  arrayUnion,
+  writeBatch,
+  increment,
+} from 'firebase/firestore';
 import {
   ref,
   onValue as onRtdbValue,
@@ -387,6 +395,20 @@ interface DuelDoc {
   // separate field so the outcome dialog can tell the two apart and show
   // a different message for each.
   disconnectedBy?: PlayerRole | null;
+  // Set once THIS role's own client has recorded this match's own outcome
+  // into that player's account-wide win/draw/loss record (see the
+  // account-stats effect below) — permanent once set, same "each client
+  // only ever writes its own field" convention as player1DoneSiding/
+  // player2DoneSiding above, and needed for the same reason those two
+  // separate fields are: two independent booleans, not one shared field,
+  // since each client can only ever write its own. This is what stops a
+  // player refreshing mid-way through (or right after) a just-concluded
+  // match from having their account stats recorded twice for the same
+  // match — without it, the account-stats effect would have no durable
+  // record of "I already did this," only an in-memory ref that starts
+  // fresh on every remount.
+  player1StatsRecorded?: boolean;
+  player2StatsRecorded?: boolean;
   // Every monster currently in transit to the OPPONENT's Monster Zone
   // (see MultiplayerDuelFieldPage's own handleMoveToOpponentTarget) — a
   // handoff, same idea as turnEnding/Start Turn above: a client can only
@@ -842,6 +864,21 @@ interface UseMultiplayerDuelResult {
   // their own starting state yet," not just "has my own read arrived."
   loading: boolean;
   error: string | null;
+  // This hook's own RESOLVED role/opponentInfo — see the top of
+  // useMultiplayerDuel's own body for why these can differ from the
+  // roleProp/opponentInfoProp it was actually called with (a fallback,
+  // derived from the duel document itself, for when the caller's own
+  // React Router navigation state didn't survive a hard page refresh).
+  // MultiplayerDuelFieldPage uses THESE, not its own raw location.state,
+  // for everything from this point on, so a refresh recovers cleanly.
+  role: PlayerRole | null;
+  opponentInfo: OpponentInfo | null;
+  // True from the moment the first duels/{duelId} snapshot has arrived —
+  // MultiplayerDuelFieldPage's own "session lost" screen waits for this
+  // before concluding role/opponentInfo genuinely can't be resolved
+  // (rather than just not having loaded yet), the same reasoning as this
+  // hook's own hasReceivedDuelSnapshot further down.
+  hasReceivedDuelSnapshot: boolean;
   me: MyDuelState | null;
   opponent: OpponentDuelState | null;
   // null only until the very first snapshot of the duel doc arrives —
@@ -1046,8 +1083,8 @@ function buildInitialState(
 
 export function useMultiplayerDuel(
   duelId: string | undefined,
-  role: PlayerRole | undefined,
-  opponentInfo: OpponentInfo | undefined,
+  roleProp: PlayerRole | undefined,
+  opponentInfoProp: OpponentInfo | undefined,
   myDeckId: string | undefined,
 ): UseMultiplayerDuelResult {
   const { currentUser } = useAuth();
@@ -1055,6 +1092,57 @@ export function useMultiplayerDuel(
   const { getSavedDeck, loading: decksLoading } = useSavedDecks();
 
   const [duelDoc, setDuelDoc] = useState<DuelDoc | null>(null);
+
+  // role/opponentInfo, from here on, are RESOLVED values — roleProp/
+  // opponentInfoProp (what the caller actually passed in) falling back to
+  // deriving them from the duel document itself (matching currentUser's
+  // own uid against the document's own player1Uid/player2Uid) whenever
+  // the caller didn't have them to pass in. This is what actually fixes
+  // a genuine, hard page refresh (not just an in-app remount, which
+  // duelDoc?.[role] below already handled): MultiplayerDuelFieldPage
+  // gets roleProp/opponentInfoProp/myDeckId from React Router's own
+  // navigation state, which a real browser reload does not reliably
+  // restore — so on an actual refresh, MultiplayerDuelFieldPage may have
+  // nothing at all to pass in here. duelId itself always survives (it
+  // comes from the URL), and the duel document has durably recorded both
+  // players' uids/usernames/avatars since the moment the duel first
+  // began — so once that document exists, this hook (and
+  // MultiplayerDuelFieldPage, which uses these SAME resolved values
+  // instead of its own raw location.state from this point on) no longer
+  // needs to depend on that fragile navigation state at all. A GENUINELY
+  // fresh join (this uid appearing in the duel document for the very
+  // first time) still needs the caller's own roleProp/opponentInfoProp —
+  // there's nothing in the document yet to derive them from — which is
+  // the one case a real refresh still can't recover from, and
+  // MultiplayerDuelFieldPage's own "session lost" screen still covers
+  // it. myDeckId isn't resolved the same way: it's only ever read below
+  // when duelDoc?.[role] does NOT already exist (a genuinely fresh
+  // join), so it never needs recovering for a reconnect in the first
+  // place.
+  const role: PlayerRole | undefined =
+    roleProp ??
+    (duelDoc && currentUser
+      ? duelDoc.player1Uid === currentUser.uid
+        ? 'player1'
+        : duelDoc.player2Uid === currentUser.uid
+          ? 'player2'
+          : undefined
+      : undefined);
+  const opponentInfo: OpponentInfo | undefined =
+    opponentInfoProp ??
+    (duelDoc && role
+      ? role === 'player1'
+        ? {
+            uid: duelDoc.player2Uid,
+            username: duelDoc.player2Username,
+            avatarId: duelDoc.player2AvatarId,
+          }
+        : {
+            uid: duelDoc.player1Uid,
+            username: duelDoc.player1Username,
+            avatarId: duelDoc.player1AvatarId,
+          }
+      : undefined);
   // A ref mirror of duelDoc, kept in sync by the effect right below —
   // needed by the opponent-presence-watching effect further down, whose
   // own onValue listener is deliberately only ever (re)attached when
@@ -1433,6 +1521,69 @@ export function useMultiplayerDuel(
     return () => window.clearTimeout(timeoutId);
   }, [duelId, role, opponentInfo, myDeckId, hasOpponentPublicState]);
 
+  // --- Account-wide win/draw/loss record ---
+  //
+  // Rolls this match's own final outcome (duelDoc.matchOutcome, set once
+  // and permanent — see that field's own comment) into THIS role's own
+  // account, the moment it's seen, by incrementing one of
+  // matchWins/matchLosses/matchDraws on that account's own users/{uid}
+  // document (the same document useUserAvatar/AuthContext already read
+  // and write username/avatarId on) — AccountPage reads those same three
+  // fields back to show the running total.
+  //
+  // Each client only ever increments its OWN account's own document,
+  // never the opponent's — the same "a client can only ever write its
+  // own slice" convention as everywhere else in this file — so both
+  // clients independently run this same effect for their own role, and
+  // there's no cross-account write to worry about securing.
+  //
+  // Guarded by TWO layers, the same double-guard pattern as this hook's
+  // own initialization effect further up uses for the exact same reason:
+  // hasRecordedStatsRef (an in-memory ref) stops this SAME MOUNT from
+  // ever firing the write twice in a row before Firestore's own updated
+  // snapshot comes back around — duelDoc[`${role}StatsRecorded`] (a
+  // durable field on the duel document itself) is what stops a LATER
+  // mount (a reconnect, or simply revisiting this now-finished match)
+  // from recording the same match's outcome into this account a second
+  // time, since a plain in-memory ref alone starts fresh on every remount
+  // and would otherwise have no way to tell "already recorded this" apart
+  // from "haven't gotten to it yet."
+  //
+  // The increment and the duel document's own recorded-flag are written
+  // together in one atomic batch — if only the increment landed but the
+  // flag didn't (or vice versa), a later remount could either silently
+  // skip recording this match at all, or double-count it.
+  const hasRecordedStatsRef = useRef(false);
+  useEffect(() => {
+    if (!duelId || !role || !currentUser || !duelDoc?.matchOutcome) return;
+    if (duelDoc[`${role}StatsRecorded`]) return;
+    if (hasRecordedStatsRef.current) return;
+    hasRecordedStatsRef.current = true;
+
+    const outcome = duelDoc.matchOutcome.type;
+    const won =
+      (role === 'player1' && outcome === 'player1WinsMatch') ||
+      (role === 'player2' && outcome === 'player2WinsMatch');
+    const lost =
+      (role === 'player1' && outcome === 'player2WinsMatch') ||
+      (role === 'player2' && outcome === 'player1WinsMatch');
+    const statField = won ? 'matchWins' : lost ? 'matchLosses' : 'matchDraws';
+
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'users', currentUser.uid), { [statField]: increment(1) }, { merge: true });
+    batch.update(doc(db, 'duels', duelId), { [`${role}StatsRecorded`]: true });
+    batch.commit().catch((err) => {
+      console.error('[useMultiplayerDuel] Failed to record match outcome to account stats:', err);
+      // Allow a retry on the NEXT snapshot (e.g. a transient network
+      // failure) rather than leaving this account's stats permanently
+      // unrecorded for a match that genuinely never got written —
+      // duelDoc[`${role}StatsRecorded`] is still false server-side since
+      // the batch never actually committed, so the only thing standing
+      // in the way of that retry is this ref.
+      hasRecordedStatsRef.current = false;
+    });
+  }, [duelId, role, currentUser, duelDoc]);
+
   // Rebuilds and writes a fresh duel for this client's own role — see
   // UseMultiplayerDuelResult's own comment on startNextDuel. Deliberately
   // NOT routed through MultiplayerDuelFieldPage's own applyMeUpdate: this
@@ -1556,6 +1707,9 @@ export function useMultiplayerDuel(
   return {
     loading: !me || !opponent,
     error,
+    role: role ?? null,
+    opponentInfo: opponentInfo ?? null,
+    hasReceivedDuelSnapshot,
     me,
     opponent,
     turnPlayer,

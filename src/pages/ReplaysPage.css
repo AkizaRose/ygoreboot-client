@@ -1,0 +1,116 @@
+.ReplaysPage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.ReplaysPage-box {
+  background: #16171dee;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 32px 28px;
+  width: 460px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ReplaysPage-title {
+  margin: 0 0 8px 0;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: var(--text);
+  font-size: 22px;
+  text-align: center;
+}
+
+.ReplaysPage-status {
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  text-align: center;
+}
+
+.ReplaysPage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.ReplaysPage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  color: var(--text);
+}
+
+.ReplaysPage-row:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ReplaysPage-rowAvatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ReplaysPage-rowInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ReplaysPage-rowOpponent {
+  font-size: 14px;
+}
+
+.ReplaysPage-rowDate {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.ReplaysPage-rowResult {
+  font-size: 13px;
+  font-weight: bold;
+  padding: 2px 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.ReplaysPage-rowResult--win {
+  color: #4caf50;
+  border: 1px solid #4caf50;
+}
+
+.ReplaysPage-rowResult--draw {
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.ReplaysPage-rowResult--loss {
+  color: #d32f2f;
+  border: 1px solid #d32f2f;
+}
+
+.ReplaysPage-backButton {
+  align-self: center;
+  margin-top: 8px;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 13px;
+  padding: 6px 20px;
+  cursor: pointer;
+}

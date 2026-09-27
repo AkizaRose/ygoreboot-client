@@ -15,6 +15,12 @@
   gap: 24px;
 }
 
+.AccountPage-boxColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .AccountPage-box {
   background: #16171dee;
   border: 1px solid rgba(255, 255, 255, 0.3);
@@ -60,6 +66,50 @@
   padding: 4px 10px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+/* Three stats side by side, evenly spaced — Wins/Draws/Losses, in that
+   order (matching the order they're rendered in AccountPage.tsx). */
+.AccountPage-matchRecordRow {
+  display: flex;
+  justify-content: space-around;
+}
+
+.AccountPage-matchRecordStat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.AccountPage-matchRecordValue {
+  font-family: 'Nova Square';
+  font-size: 28px;
+  color: var(--text);
+}
+
+/* Same red/blue/white-ish convention as this app's other win/loss/draw
+   coloring (e.g. PlayerAvatarBox.css's own --myTurn/--opponentTurn
+   colors) — green for wins isn't part of that convention anywhere else
+   in this app, but wins/losses/draws have no existing color precedent of
+   their own to match, and green/red/grey is the immediately obvious
+   reading for this specific trio regardless. */
+.AccountPage-matchRecordValue--wins {
+  color: #4caf50;
+}
+
+.AccountPage-matchRecordValue--draws {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.AccountPage-matchRecordValue--losses {
+  color: #d32f2f;
+}
+
+.AccountPage-matchRecordLabel {
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .AccountPage-backButton {
