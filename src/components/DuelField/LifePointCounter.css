@@ -7,14 +7,28 @@
   position: relative;
 }
 
+/* No border/background of its own any more, per request — this now sits
+   directly on top of MultiplayerDuelFieldPage-hudInfo's own column
+   background instead (see that class's own comment), which covers both
+   this and the username above it as one piece. This is a <button>
+   element (see LifePointCounter.tsx), so border/background need to be
+   explicitly zeroed out here — without that, removing the border/
+   background above just uncovers the browser's own default button
+   chrome (a grey outset border and background) instead of leaving it
+   transparent. */
 .LifePointCounter-display {
-  font-family: 'RoGSanSrfStd-UB';
-  font-size: 24px;
+  font-family: 'Nova Square';
+  font-size: 28px;
+  letter-spacing: -3px;
   color: white;
-  background: #16171dee;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 4px;
-  padding: 6px 8px;
+  background: none;
+  border: none;
+  /* Browser default <button> padding (see LifePointCounter.tsx — this is
+     a real <button>, unlike the opponent's own plain, unpadded div
+     sharing this class) is what was producing the extra space around the
+     player's own counter — nothing here was overriding it back to zero,
+     the way background/border already are. */
+  padding: 0;
   line-height: 1;
   cursor: pointer;
 }

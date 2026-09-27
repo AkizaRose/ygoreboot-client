@@ -243,6 +243,9 @@ const VIEWING_LOCATION_LABELS: Record<ViewingLocation, string> = {
   banished: 'Viewing Banished',
   opponentGrave: "Viewing Opponent's Grave",
   opponentBanished: "Viewing Opponent's Banished",
+  // Lowercase "opponent's hand", per request — deliberately not matching
+  // the Title Case the other five use.
+  opponentHand: "Viewing opponent's hand",
 };
 
 // Renders the "Viewing [location]" text overlay for either avatar — same
@@ -258,34 +261,43 @@ const VIEWING_LOCATION_LABELS: Record<ViewingLocation, string> = {
 // down, and DuelDoc's own player1ViewingLocation/player2ViewingLocation
 // comment), so a single CSS keyframe timeline sized to a known duration
 // (the way MultiplayerDuelFieldPage-expressionPulse is) can't drive its
-// grow-in/shrink-out the way it drives the expression overlay's. Instead
-// this uses AnimatePresence/motion.div — already used elsewhere in this
-// app for exactly this "animate an element out before actually removing
-// it" need, see DeckViewer's own context menu — to play a real exit
-// animation on unmount, whenever `location` goes back to null. The
-// "present" pulse (once grown in) is still a plain CSS animation
-// (MultiplayerDuelFieldPage-viewingLocationPulse), the same technique as
-// the thumbs-up icon's own inner pulse — kept as a separate inner <span>
-// rather than on motion.div's own element, so it doesn't fight
-// motion.div's own grow/shrink scale (two `transform`s can't combine on
-// one element any more than MultiplayerDuelFieldPage-expressionOverlayImage
-// --thumbsUp's own comment already explains for the thumbs-up icon).
+// grow-in/shrink-out the way it drives the expression overlay's.
+//
+// Three nested layers, each with one job:
+//  - The outer <div> is a PLAIN element — background + layout only (the
+//    dark scrim behind the text), never animated, so it appears/
+//    disappears instantly with the text rather than growing/shrinking
+//    along with it.
+//  - The middle motion.span is what actually plays the grow-in/shrink-out
+//    (AnimatePresence still delays this whole subtree's removal until
+//    ITS exit animation finishes, even though the outer element isn't
+//    itself a motion component — presence context propagates to
+//    whichever descendant motion components declare `exit`, the same
+//    "animate an element out before actually removing it" pattern
+//    already used elsewhere in this app, see DeckViewer's own context
+//    menu).
+//  - The inner <span> carries the "present" pulse, a separate plain CSS
+//    animation (MultiplayerDuelFieldPage-viewingLocationPulse) — kept on
+//    its own element rather than the motion.span above it, since one
+//    element can only ever have one `transform` in effect at a time (the
+//    same reasoning MultiplayerDuelFieldPage-expressionOverlayImage
+//    --thumbsUp's own comment already gives for the thumbs-up icon).
 function renderViewingLocationOverlay(location: ViewingLocation | null) {
   return (
     <AnimatePresence>
       {location && (
-        <motion.div
-          key="viewingLocationOverlay"
-          className="MultiplayerDuelFieldPage-viewingLocationOverlay"
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0, opacity: 0 }}
-          transition={{ duration: 0.25, ease: 'easeInOut' }}
-        >
-          <span className="MultiplayerDuelFieldPage-viewingLocationText">
-            {VIEWING_LOCATION_LABELS[location]}
-          </span>
-        </motion.div>
+        <div key="viewingLocationOverlay" className="MultiplayerDuelFieldPage-viewingLocationOverlay">
+          <motion.span
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: 'easeInOut' }}
+          >
+            <span className="MultiplayerDuelFieldPage-viewingLocationText">
+              {VIEWING_LOCATION_LABELS[location]}
+            </span>
+          </motion.span>
+        </div>
       )}
     </AnimatePresence>
   );
@@ -571,6 +583,10 @@ function MultiplayerDuelFieldPage() {
   // Same idea, for the Exit button — see the "--- Exit / Forfeit ---"
   // section further down for the actual forfeit write this guards.
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  // Same idea again, just for turning Reveal Hand ON specifically —
+  // toggling it back OFF (Hide Hand) needs no confirmation, so this only
+  // ever gates the one direction (see handleRevealHandClick below).
+  const [showRevealHandConfirm, setShowRevealHandConfirm] = useState(false);
   // Whether the Duel Log overlay is open — purely local, both-players-
   // press-it-independently UI state, the same shape as the confirm
   // prompts above, just without any confirmation step of its own (see
@@ -917,7 +933,15 @@ function MultiplayerDuelFieldPage() {
               ? 'opponentGrave'
               : viewingOpponentPile === 'banished'
                 ? 'opponentBanished'
-                : null;
+                // The opponent's revealed hand is a viewer too (see its
+                // own render further down, gated on opponent.revealedHand
+                // && !handRevealDismissed) — not one of the six pile
+                // viewers above, but the same "currently looking at
+                // something of the opponent's" idea, so it belongs in
+                // this same derivation.
+                : opponent?.revealedHand && !handRevealDismissed
+                  ? 'opponentHand'
+                  : null;
   // Human-readable phrasing for each ViewingLocation, matching the Duel
   // Log spec's own "[their/their opponent's] [Main Deck/Extra Deck/
   // Grave/Banished Zone]" wording exactly.
@@ -935,6 +959,8 @@ function MultiplayerDuelFieldPage() {
         return "their opponent's Grave";
       case 'opponentBanished':
         return "their opponent's Banished Zone";
+      case 'opponentHand':
+        return "their opponent's hand";
     }
   };
   // Tracks the previous value purely to diff transitions for Duel Log
@@ -1446,6 +1472,25 @@ function MultiplayerDuelFieldPage() {
       },
     );
   };
+
+  // The button's own onClick — only interposes a confirmation prompt on
+  // the way IN (turning Reveal Hand on); hiding it again goes straight to
+  // handleToggleHandReveal, same as before, since undoing an accidental
+  // reveal shouldn't need its own "are you sure."
+  const handleRevealHandClick = () => {
+    if (handRevealedRef.current) {
+      handleToggleHandReveal();
+      return;
+    }
+    setShowRevealHandConfirm(true);
+  };
+
+  const handleRevealHandConfirm = () => {
+    setShowRevealHandConfirm(false);
+    handleToggleHandReveal();
+  };
+
+  const handleRevealHandCancel = () => setShowRevealHandConfirm(false);
 
   // The revealing player's own side of the opponent-exits-the-viewer
   // handoff — see DuelDoc's own handRevealExitedBy for the full
@@ -4830,10 +4875,14 @@ function MultiplayerDuelFieldPage() {
         <div className="MultiplayerDuelFieldPage-opponentHud">
           <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--opponent">
             <div className="MultiplayerDuelFieldPage-hudInfo">
+              <div className="MultiplayerDuelFieldPage-hudUsernameRow">
+                <span className="MultiplayerDuelFieldPage-hudUsername">
+                  {opponent.username}
+                </span>
+              </div>
               <div className="LifePointCounter-display MultiplayerDuelFieldPage-opponentLpDisplay">
                 {opponentDisplayLifePoints}
               </div>
-              <span className="MultiplayerDuelFieldPage-hudUsername">{opponent.username}</span>
             </div>
             <div className="PlayerAvatarBox">
               <img src={getAvatarUrl(opponent.avatarId)} alt="" className="PlayerAvatarBox-image" />
@@ -4876,9 +4925,11 @@ function MultiplayerDuelFieldPage() {
           </div>
           <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--player">
             <div className="MultiplayerDuelFieldPage-hudInfo">
-              <span className="MultiplayerDuelFieldPage-hudUsername">
-                {currentUser?.displayName}
-              </span>
+              <div className="MultiplayerDuelFieldPage-hudUsernameRow">
+                <span className="MultiplayerDuelFieldPage-hudUsername">
+                  {currentUser?.displayName}
+                </span>
+              </div>
               <div className="MultiplayerDuelFieldPage-lpRow">
                 <LifePointCounter
                   value={me.lifePoints}
@@ -5068,7 +5119,14 @@ function MultiplayerDuelFieldPage() {
 
   return (
     <div className="MultiplayerDuelFieldPage">
-      <div className="MultiplayerDuelFieldPage-sidePanel">
+      {/* right here is what actually pins this to a fixed 16px left of the
+          board rather than the page's own left edge — see
+          MultiplayerDuelFieldPage.css's own comment on the scoped
+          position: absolute/top: 6px rule this pairs with. */}
+      <div
+        className="MultiplayerDuelFieldPage-sidePanel"
+        style={{ right: `calc(50% + ${BOARD_WIDTH / 2 + 16}px)` }}
+      >
         <CardDisplay card={hoveredCard} />
 
         {/* Exit / Admit Defeat / Offer Draw — grouped together in the same
@@ -5135,6 +5193,17 @@ function MultiplayerDuelFieldPage() {
       {showDuelLog &&
         renderDuelLogOverlay(duelLog, state.role, () => setShowDuelLog(false), duelLogHistoryRef)}
 
+      {showRevealHandConfirm && (
+        <ConfirmDialog
+          message="Reveal hand?"
+          buttons={[
+            { label: 'Yes', onClick: handleRevealHandConfirm },
+            { label: 'No', onClick: handleRevealHandCancel },
+          ]}
+          onDismiss={handleRevealHandCancel}
+        />
+      )}
+
       {/* 2x2 grid: Die Roll/Coin Flip on top (moved here from the duel
           field itself — see DuelField.tsx's own deckRow comment), Reveal
           Hand/Shuffle Hand underneath, grouping every "player action, not
@@ -5149,7 +5218,7 @@ function MultiplayerDuelFieldPage() {
               ? 'MultiplayerDuelFieldPage-revealHandButton MultiplayerDuelFieldPage-revealHandButton--active'
               : 'MultiplayerDuelFieldPage-revealHandButton'
           }
-          onClick={handleToggleHandReveal}
+          onClick={handleRevealHandClick}
           title={handRevealed ? 'Hide Hand' : 'Reveal Hand'}
         >
           <img
@@ -5345,14 +5414,33 @@ function MultiplayerDuelFieldPage() {
       </div>
 
 
-      <div className="MultiplayerDuelFieldPage-opponentHud">
+      {/* left/right here override the shared MultiplayerDuelFieldPage-
+          opponentHud class's own default right: 4px (still used as-is by
+          the Side Decking screen's own copy of this markup further up,
+          which has no board to be positioned against) — this is the
+          normal duel field, where the board is centered on the page via
+          .MultiplayerDuelFieldPage-content's own marginLeft (see that
+          class's own comment), so "right: 4px against the whole page"
+          left this HUD sitting wherever the page's own right edge
+          happened to be, not necessarily right up against the board's own
+          right edge. Deriving this from BOARD_WIDTH instead (the same
+          constant .content's own centering uses) places it a fixed 16px
+          to the right of the board itself, per request, regardless of
+          how wide the page/board happen to be. */}
+      <div
+        className="MultiplayerDuelFieldPage-opponentHud"
+        style={{ left: `calc(50% + ${BOARD_WIDTH / 2 + 16}px)`, right: 'auto' }}
+      >
         {/* Avatar box on the right, spanning the full height of the
-            username/LP counter stacked to its left — mirrored from the
-            player's own hudRow below: the opponent's LP counter comes
-            FIRST (top) and their username SECOND (bottom), the reverse
-            of the player's own order, per the requested mockup. */}
+            username/LP counter stacked to its left — now the SAME order
+            as the player's own hudRow below (username first/top, LP
+            counter second/bottom), per request, rather than the
+            previously-reversed order. */}
         <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--opponent">
           <div className="MultiplayerDuelFieldPage-hudInfo">
+            <div className="MultiplayerDuelFieldPage-hudUsernameRow">
+              <span className="MultiplayerDuelFieldPage-hudUsername">{opponent.username}</span>
+            </div>
             {/* Reuses LifePointCounter-display's own steady-state
                 styling, reused directly. A plain, non-interactive div
                 rather than LifePointCounter itself: a player can never
@@ -5363,26 +5451,20 @@ function MultiplayerDuelFieldPage() {
             <div className="LifePointCounter-display MultiplayerDuelFieldPage-opponentLpDisplay">
               {opponentDisplayLifePoints}
             </div>
-            <span className="MultiplayerDuelFieldPage-hudUsername">{opponent.username}</span>
           </div>
           {/* Reuses PlayerAvatarBox's own CSS classes directly (already
               globally available — this page already imports that
               component elsewhere) rather than a separately-styled
               approximation, so this is genuinely the same size/appearance,
-              not just a close match. The blue turn-color border is the
-              opponent-side counterpart to PlayerAvatarBox's own --myTurn
-              variant — applied directly here rather than through that
-              component, since this is the one place the opponent's own
-              avatar renders (see PlayerAvatarBox.tsx's own comment on
-              why it only ever needs the "mine" variant itself). */}
-          <div
-            className={[
-              'PlayerAvatarBox',
-              !isMyTurn && 'PlayerAvatarBox--opponentTurn',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-          >
+              not just a close match. The blue border is the opponent-side
+              counterpart to PlayerAvatarBox's own --myTurn variant —
+              applied directly here rather than through that component,
+              since this is the one place the opponent's own avatar
+              renders (see PlayerAvatarBox.tsx's own comment on why it
+              only ever needs the "mine" variant itself). Always applied,
+              per request, rather than only during the opponent's own
+              turn — same as the player's own showBorder above. */}
+          <div className="PlayerAvatarBox PlayerAvatarBox--opponentTurn">
             <img src={getAvatarUrl(opponent.avatarId)} alt="" className="PlayerAvatarBox-image" />
             {renderExpressionOverlay(opponentExpression)}
             {renderViewingLocationOverlay(opponentViewingLocation)}
@@ -5391,7 +5473,12 @@ function MultiplayerDuelFieldPage() {
         </div>
       </div>
 
-      <div className="MultiplayerDuelFieldPage-playerHud">
+      {/* Same override as MultiplayerDuelFieldPage-opponentHud's own above
+          — see that element's own comment. */}
+      <div
+        className="MultiplayerDuelFieldPage-playerHud"
+        style={{ left: `calc(50% + ${BOARD_WIDTH / 2 + 16}px)`, right: 'auto' }}
+      >
         {/* Chat — positioned in this same right-hand column, in between
             the two players' own usernames (this one, and the opponent's
             own further up in MultiplayerDuelFieldPage-opponentHud): the
@@ -5439,17 +5526,19 @@ function MultiplayerDuelFieldPage() {
         </div>
         {/* Avatar box on the right, spanning the full height of the
             username/LP counter stacked to its left — username FIRST
-            (top), LP counter SECOND (bottom), per the requested mockup
-            (the opponent's own hudRow above uses the reverse order). */}
+            (top), LP counter SECOND (bottom); the opponent's own hudRow
+            above now uses this same order too. */}
         <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--player">
           <div className="MultiplayerDuelFieldPage-hudInfo">
             {/* Same username styling as the opponent's own, just reused
                 here too — currentUser.displayName is already
                 established elsewhere in the app (e.g. AccountPage) as
                 where a user's own username lives. */}
-            <span className="MultiplayerDuelFieldPage-hudUsername">
-              {currentUser?.displayName}
-            </span>
+            <div className="MultiplayerDuelFieldPage-hudUsernameRow">
+              <span className="MultiplayerDuelFieldPage-hudUsername">
+                {currentUser?.displayName}
+              </span>
+            </div>
             <div className="MultiplayerDuelFieldPage-lpRow">
               <LifePointCounter
                 value={renderMe.lifePoints}
@@ -5459,7 +5548,7 @@ function MultiplayerDuelFieldPage() {
             </div>
           </div>
           <PlayerAvatarBox
-            isMyTurn={isMyTurn}
+            showBorder
             overlay={
               <>
                 {renderExpressionOverlay(myExpression)}

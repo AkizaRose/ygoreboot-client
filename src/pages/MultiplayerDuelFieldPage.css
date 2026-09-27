@@ -24,6 +24,29 @@
   gap: 4px;
 }
 
+/* Same idea as MultiplayerDuelFieldPage-opponentHud/-playerHud's own
+   inline left/right override (see their own comments) — this is
+   scoped to exclude the Side Decking screen (.MultiplayerDuelFieldPage
+   --siding, rendered from a separate return with no board at all —
+   see that return's own comment on why the HUDs stay position: absolute
+   against the page there instead), which keeps this panel in normal
+   flow, unaffected, at the page's own left edge. On the normal duel
+   field, this takes it out of that same row-flex flow (previously
+   sitting flush against the page's left edge/padding, unrelated to
+   where .MultiplayerDuelFieldPage-content's own centered board actually
+   ended up — the same mismatch the HUDs already had, on the other
+   side) and lets the inline right: calc(...) style (set alongside this
+   class in MultiplayerDuelFieldPage.tsx, using the same BOARD_WIDTH
+   constant .content's own centering does) position it a fixed 16px to
+   the LEFT of the board instead. top: 6px reproduces the same vertical
+   position the row's own align-items: flex-start plus the page's own
+   6px padding gave it before, the same reasoning as
+   MultiplayerDuelFieldPage-content's own top: 6px. */
+.MultiplayerDuelFieldPage:not(.MultiplayerDuelFieldPage--siding) .MultiplayerDuelFieldPage-sidePanel {
+  position: absolute;
+  top: 6px;
+}
+
 /* Taken out of the row's flex flow and centered directly against
    .MultiplayerDuelFieldPage itself (the fixed, exactly-1400px box the
    page centers on screen) via left: 50% + a negative margin-left equal
@@ -258,53 +281,131 @@
 }
 
 .MultiplayerDuelFieldPage-hudUsername {
-  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
-  font-size: 13px;
+  font-family: 'Nova Square';
+  font-size: 14px;
   color: var(--text);
   line-height: 12px;
 }
 
+/* Wraps just the username (not the LP counter below it), per request for
+   an opaque black background behind only the username row. align-self:
+   stretch overrides .hudInfo's own align-items: flex-end (below) so this
+   row spans the column's full width — without it, a plain block div here
+   would still only size to its own content the way align-items: flex-end
+   would otherwise shrink-wrap it, and the black background would only
+   cover the username text itself rather than reading as a full row.
+   The negative margin cancels out .hudInfo's own padding (2px 6px) on the
+   top/left/right sides specifically, so this row's background reaches
+   .hudInfo's actual top/left/right edges rather than leaving that padding
+   as a visible gap — its own padding then reinstates the same inset for
+   the username text. The bottom side is left alone: .hudInfo's own
+   padding/gap below this row (between it and the LP counter) isn't part
+   of this request.
+   The colored top border (below) lives on THIS element rather than on
+   .hudInfo, even though the negative top margin still lines this row's
+   top edge up with .hudInfo's own — putting the border and this row's
+   opaque background on two different elements let the browser round
+   each one's edges independently at fractional scale factors (e.g. the
+   window resized to a non-integer zoom level), which could round the
+   background's edge outward by a device pixel and paint over the
+   border-top living on the parent, making it disappear. With both on
+   this one element, they're rounded together and can't drift apart. */
+.MultiplayerDuelFieldPage-hudUsernameRow {
+  align-self: stretch;
+  margin: -2px -6px 0 -6px;
+  padding: 2px 6px;
+  background: #000000;
+}
+
+.MultiplayerDuelFieldPage-hudRow--player .MultiplayerDuelFieldPage-hudUsernameRow {
+  border-top: 1px solid #d32f2f;
+}
+
+.MultiplayerDuelFieldPage-hudRow--opponent .MultiplayerDuelFieldPage-hudUsernameRow {
+  border-top: 1px solid #1976d2;
+}
+
 /* The avatar box, to the right, spanning the full height of the
    username/LP counter stacked in .hudInfo to its left — used identically
-   by both opponentHud and playerHud, just with .hudInfo's own two
-   children in the opposite order between the two (LP counter above
-   username for the opponent, username above LP counter for the player's
-   own side), per the requested mockup. align-items: center rather than
-   stretch — the avatar box has its own fixed 64px height (see
-   PlayerAvatarBox.css), so this centers it against whatever height
-   hudInfo's own two stacked rows actually come out to, rather than
-   stretching the avatar itself to match. */
+   by both opponentHud and playerHud, both now sharing the SAME order for
+   .hudInfo's own two children (username above LP counter), per request.
+   align-items: center rather than stretch — the avatar box has its own
+   fixed 64px height (see PlayerAvatarBox.css), so this centers it
+   against whatever height hudInfo's own two stacked rows actually come
+   out to, rather than stretching the avatar itself to match. */
 .MultiplayerDuelFieldPage-hudRow {
   display: flex;
   flex-direction: row;
-  gap: 6px;
+  /* No gap, per request — the hudInfo column and the avatar box should
+     look attached to one another, not visually separated. */
+  gap: 0;
   /* Matches MultiplayerDuelFieldPage-chatInputRow/-chatHistory's own
      216px width (see those classes' own comments) — requested so this
      row (the avatar box plus the username/LP counter stack in
-     .hudInfo) lines up with the chat box above/below it, and so
-     PlayerAvatarBox's own flex: 1 (see that class's own comment) has a
-     fixed 216px total to actually grow into. */
+     .hudInfo) lines up with the chat box above/below it. */
   width: 216px;
   box-sizing: border-box;
+  /* PlayerAvatarBox is a fixed 84px box, not a flexing one (despite that
+     class's own comment describing a flex: 1 approach — that was never
+     actually implemented there, just written up as the intent), and
+     .hudInfo only ever sizes to its own content (the username/LP text),
+     not to whatever's left over. Without justify-content here, the
+     default flex-start packs both against the LEFT edge of this row
+     instead, leaving a gap on the right — of variable size depending on
+     how wide the username happens to be — between the avatar and this
+     row's own 216px edge, rather than the avatar always sitting flush
+     against it. flex-end fixes that by packing both against the RIGHT
+     edge instead, per request, regardless of the username's length. */
+  justify-content: flex-end;
 }
 
-/* Separate modifiers (rather than one shared align-items) so the two
-   sides' own vertical alignment can be controlled independently —
-   opponentHud's own row aligns its children to the start of the cross
-   axis, playerHud's own to the end. */
+/* Both sides now share the same top-aligned cross-axis alignment, per
+   request — the hudInfo column always starts at the same height as the
+   avatar box, rather than (for the player's own side, previously)
+   bottom-aligning the two instead. Kept as two separate modifiers rather
+   than folded into the shared MultiplayerDuelFieldPage-hudRow rule above,
+   in case the two sides ever need to diverge again. */
 .MultiplayerDuelFieldPage-hudRow--opponent {
   align-items: flex-start;
 }
 
 .MultiplayerDuelFieldPage-hudRow--player {
-  align-items: flex-end;
+  align-items: flex-start;
 }
 
+/* The background here is the same color/opacity as
+   MultiplayerDuelFieldPage-duelLogPanel's own (#16171dee), per request —
+   covering the whole username+LP-counter column, not just the LP
+   counter's own former background (removed below, from
+   LifePointCounter-display, along with its border). A little padding
+   keeps that background from crowding right up against the text/counter
+   it now sits behind.
+   flex: 1 (rather than this sizing to just its own content, the
+   username/LP text) makes this always fill whatever width
+   MultiplayerDuelFieldPage-hudRow's own justify-content: flex-end (see
+   that class's own comment) leaves it once the fixed-84px avatar box
+   next to it is accounted for — so this column's own background always
+   spans the row's full remaining width, per request, rather than
+   shrink-wrapping tightly around the username/LP text. min-width: 0 is
+   needed alongside it, the same reasoning as PlayerAvatarBox's own
+   former flex-item sizing (see that class's own comment) — flex items
+   default to a min-width equal to their content's own natural size
+   otherwise, which would stop this shrinking on a very long username
+   rather than letting it wrap/truncate within the space actually
+   available. text-align: right (alongside align-items: flex-end, which
+   only positions each child's own box, not the text/inline content
+   inside it) is what actually right-aligns the username/LP text itself
+   now that this column is wider than that text, per request. */
 .MultiplayerDuelFieldPage-hudInfo {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  flex: 1;
+  min-width: 0;
+  text-align: right;
   gap: 4px;
+  padding: 2px 6px;
+  background: #16171dee;
 }
 
 /* Overrides LifePointCounter-display's own :hover and cursor — those
@@ -318,8 +419,13 @@
   cursor: default;
 }
 
+/* Cancels LifePointCounter-display's own :hover background (see that
+   class's own comment) back to none, now that the base class no longer
+   carries a background of its own to hover away from — the .hudInfo
+   column background behind it (see that class's own comment above)
+   shows through undisturbed either way. */
 .LifePointCounter-display.MultiplayerDuelFieldPage-opponentLpDisplay:hover {
-  background: #16171dee;
+  background: transparent;
 }
 
 .MultiplayerDuelFieldPage-playerHud {
@@ -339,12 +445,29 @@
    than the history box's width just being whatever its longest message
    happens to need. */
 .MultiplayerDuelFieldPage-chatHistory {
-  width: 210px;
+  /* border-box, not the 210px content-box this used to be — that left
+     this 6px WIDER than .hudRow/.chatInputRow's own 216px (border-box,
+     padding already included), since its 4px 6px padding was being
+     added on top of the 210px instead of eating into it, despite this
+     class's own width being intended to match those two. That mismatch
+     is what let the hud drift out of flush alignment with the chat box
+     below/above it, since .opponentHud/.playerHud's own align-items:
+     flex-end right-aligns each stacked child to whichever one of them
+     actually renders widest — which was this one. */
+  width: 216px;
   height: 420px;
-  box-sizing: content-box;
+  box-sizing: border-box;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  /* Messages still render top-to-bottom in the normal (oldest-first)
+     order — this only changes where they sit when there AREN'T enough of
+     them to fill the box yet: pinned to the bottom edge, messaging-app
+     style, rather than stacking from the top with empty space left
+     underneath. Once there are enough messages to fill the box, this has
+     no visible effect and overflow-y: auto/the existing auto-scroll
+     effect (see chatHistoryRef) behave exactly as before. */
+  justify-content: flex-end;
   gap: 6px;
   padding: 4px 6px;
   background: #00000000;
@@ -547,17 +670,18 @@
   }
 }
 
-/* The "Viewing [location]" text overlay — same child-of-.PlayerAvatarBox
-   positioning as .MultiplayerDuelFieldPage-expressionOverlay above
-   (relying on that class's own position: relative), and the same
-   pointer-events: none so it never intercepts a click meant for the
-   avatar box underneath. The grow-in/shrink-out transition itself is
-   driven by framer-motion (see renderViewingLocationOverlay's own
-   comment for why a fixed-duration CSS keyframe timeline like
-   MultiplayerDuelFieldPage-expressionPulse's doesn't fit this — this
-   overlay's own duration isn't known in advance, unlike the expression
-   overlay's fixed 3 seconds), so this class itself carries no
-   animation — just layout. */
+/* The "Viewing [location]" text overlay's own background/layout — same
+   child-of-.PlayerAvatarBox positioning as
+   MultiplayerDuelFieldPage-expressionOverlay above (relying on that
+   class's own position: relative), and the same pointer-events: none so
+   it never intercepts a click meant for the avatar box underneath
+   (inherited by its children too, since pointer-events is an inherited
+   property). Deliberately a PLAIN element, not a motion component — the
+   dark scrim it draws should appear/disappear instantly alongside the
+   text rather than growing/shrinking with it; see
+   renderViewingLocationOverlay's own comment for the three-layer
+   breakdown (this class is the outermost of the three) and why the
+   grow-in/shrink-out lives on the middle layer instead. */
 .MultiplayerDuelFieldPage-viewingLocationOverlay {
   position: absolute;
   inset: 0;
@@ -577,11 +701,23 @@
    than their 3px, since this is much smaller text sitting over a
    player's avatar, not a large card stat). The oscillating-scale pulse,
    once grown in, mirrors MultiplayerDuelFieldPage-thumbsUpPulse's own
-   technique above — kept on this INNER span, separate from the outer
-   motion.div's own grow/shrink scale, for the same "one element can only
-   ever have one `transform` in effect at a time" reason given on
-   MultiplayerDuelFieldPage-expressionOverlayImage--thumbsUp above. */
+   technique above — kept on this INNERMOST span, separate from the
+   surrounding motion.span's own grow/shrink scale (see
+   renderViewingLocationOverlay's own comment), for the same "one element
+   can only ever have one `transform` in effect at a time" reason given on
+   MultiplayerDuelFieldPage-expressionOverlayImage--thumbsUp above.
+   display: inline-block is required for that pulse's own `transform` to
+   have any effect at all — a plain inline box (a bare <span> is `inline`
+   by default) isn't a transformable element per the CSS spec, and this
+   one used to get away without setting it only because it was a DIRECT
+   child of the flex container above (flex blockifies its own direct
+   children, which is what made transform work here before). Now that
+   it's nested one level deeper inside the grow/shrink motion.span
+   (itself the flex item instead), it needs its own transform support
+   declared explicitly rather than inheriting it for free from the
+   flex layout. */
 .MultiplayerDuelFieldPage-viewingLocationText {
+  display: inline-block;
   font-family: 'RoGSanSrfStd-UB';
   font-size: 12px;
   line-height: 1.2;

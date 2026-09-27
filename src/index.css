@@ -1,8 +1,3 @@
-/* "UB" = Ultra Bold. This is the only weight/style file available for this
-   typeface, so font-weight: 800 here is what makes the browser actually
-   pick this real face when your CSS asks for a bold/heavy weight — rather
-   than either rendering it at the wrong (unbolded) weight, or silently
-   thickening it further via synthesis on top of an already-bold face. */
 @font-face {
   font-family: 'RoGSanSrfStd-UB';
   src: url('./assets/fonts/RoGSanSrfStd-UB.otf') format('opentype');
@@ -19,29 +14,14 @@
   font-display: swap;
   }
 
-/* These four had NO @font-face declaration at all until now — they only
-   ever rendered correctly when the browser happened to already have
-   them installed as SYSTEM fonts. That's true in normal Firefox on a
-   machine that's had them manually installed (e.g. during development),
-   but Chromium and Firefox Private Browsing both restrict a page's
-   access to arbitrary locally-installed fonts — specifically to prevent
-   a site from using someone's installed-font list to fingerprint them —
-   so neither of those ever loads the intended font at all; they fall
-   straight back to a generic default. That's the same underlying cause
-   behind BOTH symptoms this was reported as: the general site's fonts
-   reverting to default (Yu-Gi-Oh!ITCStoneSerifSmallCaps, used
-   throughout), and the card name squash-to-fit logic in Card.tsx
-   measuring against the wrong font's character widths
-   (MatrixRegularSmallCaps).
- 
-   IMPORTANT — this alone doesn't finish the fix: the four src urls below
-   assume font files placed at those exact paths in src/assets/fonts/,
-   which aren't something that can be created or sourced without the
-   actual typefaces — they still need to be copied in from wherever they
-   were originally installed from. Filenames/formats here are a
-   reasonable guess (matching the two .otf files already bundled above);
-   adjust the extension/format below if the actual files turn out to be
-   .ttf or .woff instead. */
+@font-face {
+  font-family: 'Nova Square';
+  src: url('./assets/fonts/NovaSquare-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+  }
+
 @font-face {
   font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
   src: url('./assets/fonts/Yu-Gi-Oh! ITC Stone Serif Small Caps Bold.ttf') format('truetype');
@@ -75,7 +55,7 @@
 }
 
 :root {
-  --text: #bcbcbc;
+  --text: #ffffff;
   --text-h: #08060d;
   --bg: #ffffff;
   --border: #00fefe;
@@ -107,7 +87,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #bcbcbc;
+    --text: #ffffff;
     --text-h: #f3f4f6;
     --bg: #16171d00;
     --border: #ffffff;
@@ -167,13 +147,6 @@
   }
 }
 
-/* ViewportScaler (see src/components/ViewportScaler) already fits every
-   page to the window by scaling it down/up, so the document itself should
-   never need to scroll — DuelingBook doesn't, either. This is a hard
-   guarantee of that: even if some descendant's rendered box briefly ends
-   up larger than the viewport (e.g. while a layer's own position is still
-   catching up to a resize), it stays clipped instead of opening up a real
-   page scrollbar. */
 html,
 body {
   overflow: hidden;

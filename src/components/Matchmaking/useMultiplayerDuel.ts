@@ -726,23 +726,26 @@ export interface ExpressionEvent {
   type: 'thumbsUp' | 'thinking';
 }
 
-// The six pile viewers the "Viewing [location]" avatar overlay covers —
+// The pile/hand viewers the "Viewing [location]" avatar overlay covers —
 // see DuelDoc's own player1ViewingLocation/player2ViewingLocation and
 // MultiplayerDuelFieldPage's own viewingLocation-sync effect, which
 // derives one of these (or null) from its local viewingOwnPile/
-// viewingOpponentPile state. 'opponentGrave'/'opponentBanished' (rather
-// than just reusing 'grave'/'banished' for both cases) is deliberate —
-// the label needs to read "Viewing Opponent's Grave" rather than plain
-// "Viewing Grave" when it's the OPPONENT's pile being looked at, even
-// though the overlay itself always renders over the VIEWING player's own
-// avatar, not the pile owner's.
+// viewingOpponentPile state (plus, for 'opponentHand', whether the
+// opponent's revealed hand is currently open and not locally dismissed).
+// 'opponentGrave'/'opponentBanished' (rather than just reusing
+// 'grave'/'banished' for both cases) is deliberate — the label needs to
+// read "Viewing Opponent's Grave" rather than plain "Viewing Grave" when
+// it's the OPPONENT's pile being looked at, even though the overlay
+// itself always renders over the VIEWING player's own avatar, not the
+// pile owner's.
 export type ViewingLocation =
   | 'mainDeck'
   | 'extraDeck'
   | 'grave'
   | 'banished'
   | 'opponentGrave'
-  | 'opponentBanished';
+  | 'opponentBanished'
+  | 'opponentHand';
 
 // One line of the Duel Log — see DuelDoc's own duelLog/duelStartedAt
 // comments for the full array/timing reasoning. id is a fresh
