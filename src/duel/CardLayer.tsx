@@ -499,10 +499,48 @@ function containsOpponentInstance(
   );
 }
 
+// Every real instanceId currently on MY OWN side of the board — hand,
+// both decks, every field zone, Grave, Banished, and the reveal zone.
+// getHiddenSource uses this as a hard exclusion: nothing that's actually
+// mine should ever be explained as "just materialized from the
+// opponent's hidden hand/deck," no matter what the opponent's own counts
+// happen to be doing at that instant. On the live field this never
+// actually fires — none of my own real instanceIds are ever freshly
+// minted mid-duel, they're assigned once and carried forward — but a
+// replay's own reconstructed deck piles DO intentionally reuse a real
+// instanceId for a single frame (see useReplayPlayback's back-patching
+// pass) to get the ordinary same-id animation working for MY OWN
+// hand/deck moves, and without this guard that one-frame reuse could
+// coincide with the opponent's own deck shrinking and get misread as
+// MY card flying in from THEIR deck instead.
+function containsMeInstance(me: MyDuelState, instanceId: string): boolean {
+  const containsPlaced = (
+    placed: { instanceId: string; stackedBelow?: { instanceId: string }[] } | null,
+  ) =>
+    placed?.instanceId === instanceId ||
+    placed?.stackedBelow?.some((card) => card.instanceId === instanceId) === true;
+
+  const containsPile = (pile: { instanceId: string }[]) =>
+    pile.some((card) => card.instanceId === instanceId);
+
+  return (
+    containsPile(me.hand) ||
+    containsPile(me.mainDeck) ||
+    containsPile(me.extraDeck) ||
+    me.monsterZones.some(containsPlaced) ||
+    me.spellTrapZones.some(containsPlaced) ||
+    containsPlaced(me.fieldZone) ||
+    containsPlaced(me.revealedCard) ||
+    containsPile(me.grave) ||
+    containsPile(me.banished)
+  );
+}
+
 function getHiddenSource(
   entry: CardPositionEntry,
   previousOpponent: OpponentDuelState | null,
   opponent: OpponentDuelState | null,
+  me: MyDuelState | null,
 ): HiddenSource | null {
   if (!previousOpponent || !opponent) return null;
 
@@ -511,6 +549,7 @@ function getHiddenSource(
   // time is the case we are interested in here.
   if (entry.instanceId.startsWith('opponent-')) return null;
   if (containsOpponentInstance(previousOpponent, entry.instanceId)) return null;
+  if (me && containsMeInstance(me, entry.instanceId)) return null;
 
   // Hand -> public zone: opponent.lastHandDepartureIndex is set by the
   // DEPARTING player's own client (see MultiplayerDuelFieldPage's
@@ -2139,7 +2178,7 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
           <AnimatedCard
             key={entry.instanceId}
             entry={hoverEntry}
-            hiddenSource={getHiddenSource(entry, previousOpponent, opponent)}
+            hiddenSource={getHiddenSource(entry, previousOpponent, opponent, me)}
             shuffleOscillation={shuffleOscillation}
             selectionColor={
               isSelectableHandCard

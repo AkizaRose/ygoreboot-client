@@ -324,6 +324,28 @@ interface PlayerFieldProps {
   // equipOverlayInstanceId, computed in MultiplayerDuelFieldPage from
   // this) — nothing else needs zone-level hover identity yet.
   onFieldInstanceHoverChange?: (instanceId: string | null) => void;
+  // Suppresses every hover context menu on this side's own zones (field,
+  // monster, spell/trap, Main Deck) — ReplayFieldPage's read-only field,
+  // where none of the actions these offer are wired up to anything, but
+  // the menu itself would otherwise still appear on hover regardless
+  // (FieldZone shows it purely off menuActions.length, independent of
+  // whether an onMenuAction callback was even provided). Only meaningful
+  // on the player's own (non-flipped) side — the opponent's already gets
+  // no menus at all, via the same `flipped` check this reuses.
+  menusDisabled?: boolean;
+  // ReplayFieldPage's own "Card Visibility" toggle — see its own comment
+  // for the full reasoning. hideOwnFaceDown suppresses onCardHover (and
+  // so Card Display) for this side's own face-down field/spell-trap/field
+  // zone cards, same mechanism the opponent's own face-down cards are
+  // ALREADY always suppressed with below, just opt-in and only ever
+  // meaningful on the non-flipped (own) side. revealOpponentFaceDown does
+  // the reverse for the flipped (opponent) side — lifting that
+  // always-on suppression when the viewer has chosen to see everything.
+  // Both default to false, which reproduces exactly today's live-page
+  // behavior (own face-down always visible, opponent's never) — the live
+  // page never passes either.
+  hideOwnFaceDown?: boolean;
+  revealOpponentFaceDown?: boolean;
 }
 
 function PlayerField({
@@ -369,6 +391,9 @@ function PlayerField({
   isSelectingAttackTarget = false,
   onAttackTarget,
   onFieldInstanceHoverChange,
+  menusDisabled = false,
+  hideOwnFaceDown = false,
+  revealOpponentFaceDown = false,
 }: PlayerFieldProps) {
   const fieldZones = flipped ? [...FIELD_ZONES].reverse() : FIELD_ZONES;
   const deckZones = flipped ? [...DECK_ZONES].reverse() : DECK_ZONES;
@@ -378,6 +403,13 @@ function PlayerField({
   // in the first place, never real card data.
   const resolvedMainDeckCount = mainDeckCount ?? mainDeck.length;
   const resolvedExtraDeckCount = extraDeckCount ?? extraDeck.length;
+
+  // Whether a face-down card on THIS side should have its onCardHover
+  // (and so Card Display) suppressed — see hideOwnFaceDown/
+  // revealOpponentFaceDown's own comment on PlayerFieldProps. A face-up
+  // card is never affected either way, hence the leading `faceDown &&`.
+  const shouldHideFaceDown = (faceDown: boolean) =>
+    faceDown && (flipped ? !revealOpponentFaceDown : hideOwnFaceDown);
 
   // Tracks which zone slot (0, 1, 2 — always in the player's own natural
   // left-to-right order) each 'monster'/'spellTrap'-kind entry
@@ -406,10 +438,10 @@ function PlayerField({
               instanceId={fieldZone?.instanceId}
               faceDown={fieldZone?.faceDown}
               rotated180={flipped}
-              onCardHover={flipped && fieldZone?.faceDown ? undefined : onCardHover}
+              onCardHover={shouldHideFaceDown(fieldZone?.faceDown ?? false) ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               menuActions={
-                flipped
+                flipped || menusDisabled
                   ? []
                   : getPlacedCardActions(fieldZone?.card, fieldZone?.faceDown ?? false, false)
               }
@@ -518,7 +550,7 @@ function PlayerField({
               battlePosition={placed?.position}
               stackBattlePosition={stackCards ? (placed?.position ?? 'attack') : undefined}
               rotated180={flipped}
-              onCardHover={flipped && placed?.faceDown ? undefined : onCardHover}
+              onCardHover={shouldHideFaceDown(placed?.faceDown ?? false) ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               onHoverChange={(hovering) =>
                 onFieldInstanceHoverChange?.(hovering ? (placed?.instanceId ?? null) : null)
@@ -526,7 +558,7 @@ function PlayerField({
               menuActions={
                 flipped
                   ? viewStackAction
-                  : isInSelectionMode
+                  : isInSelectionMode || menusDisabled
                     ? []
                     : [
                         ...attackAction,
@@ -672,7 +704,7 @@ function PlayerField({
               pileCountOffsetX={mainDeckOffset.x}
               pileCountOffsetY={mainDeckOffset.y}
               onClick={flipped ? undefined : onDrawCard}
-              menuActions={flipped ? [] : MAIN_DECK_ACTIONS}
+              menuActions={flipped || menusDisabled ? [] : MAIN_DECK_ACTIONS}
               onMenuAction={flipped ? undefined : onMainDeckAction}
             />
           );
@@ -704,13 +736,13 @@ function PlayerField({
               instanceId={placed?.instanceId}
               faceDown={placed?.faceDown}
               rotated180={flipped}
-              onCardHover={flipped && placed?.faceDown ? undefined : onCardHover}
+              onCardHover={shouldHideFaceDown(placed?.faceDown ?? false) ? undefined : onCardHover}
               onCardHoverEnd={onCardHoverEnd}
               onHoverChange={(hovering) =>
                 onFieldInstanceHoverChange?.(hovering ? (placed?.instanceId ?? null) : null)
               }
               menuActions={
-                flipped || isSelectingMoveDestination
+                flipped || isSelectingMoveDestination || menusDisabled
                   ? []
                   : getPlacedCardActions(placed?.card, placed?.faceDown ?? false)
               }
@@ -837,6 +869,21 @@ interface DuelFieldProps {
   onAttackTarget?: (index: number) => void;
   // See PlayerFieldProps' own copy for the full reasoning.
   onFieldInstanceHoverChange?: (instanceId: string | null) => void;
+  // Only ever meaningful for the player's own side — see PlayerFieldProps'
+  // own copy of this same prop for the full reasoning. Not passed to the
+  // opponent's own PlayerField call below at all, since it already gets no
+  // menus regardless (flipped alone already suppresses them there).
+  menusDisabled?: boolean;
+  // ReplayFieldPage's own "Card Visibility" toggle — see PlayerFieldProps'
+  // own copy of these two for the full reasoning. Unlike menusDisabled
+  // above, BOTH are passed identically to BOTH PlayerField instances
+  // below: each one's own `flipped` value is what picks which of the two
+  // it actually acts on (hideOwnFaceDown on the non-flipped instance,
+  // revealOpponentFaceDown on the flipped one), so passing only one to
+  // each isn't necessary and would just mean tracking which prop goes
+  // with which instance for no benefit.
+  hideOwnFaceDown?: boolean;
+  revealOpponentFaceDown?: boolean;
 }
 
 function DuelField({
@@ -891,6 +938,9 @@ function DuelField({
   isSelectingAttackTarget = false,
   onAttackTarget,
   onFieldInstanceHoverChange,
+  menusDisabled = false,
+  hideOwnFaceDown = false,
+  revealOpponentFaceDown = false,
 }: DuelFieldProps) {
   return (
     <div className="DuelField">
@@ -917,6 +967,8 @@ function DuelField({
         onAttackTarget={onAttackTarget}
         onFieldInstanceHoverChange={onFieldInstanceHoverChange}
         isMyTurn={isMyTurn}
+        hideOwnFaceDown={hideOwnFaceDown}
+        revealOpponentFaceDown={revealOpponentFaceDown}
       />
       {/* Same 9-column grid as every zone row (.DuelField-row) — the
           tracker itself sits at grid-column: 9 (see PhaseTracker.css),
@@ -966,6 +1018,9 @@ function DuelField({
         onFieldInstanceHoverChange={onFieldInstanceHoverChange}
         onFieldAction={onFieldAction}
         onMainDeckAction={onMainDeckAction}
+        menusDisabled={menusDisabled}
+        hideOwnFaceDown={hideOwnFaceDown}
+        revealOpponentFaceDown={revealOpponentFaceDown}
         onViewExtraDeck={onViewExtraDeck}
         isSelectingFusionMaterial={isSelectingFusionMaterial}
         selectedMaterialIndices={selectedMaterialIndices}

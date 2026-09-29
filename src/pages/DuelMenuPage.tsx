@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSavedDecks } from '../components/DeckManager/useSavedDecks';
 import { useDuelHosting } from '../components/Matchmaking/useDuelHosting';
 import DuelHostList from '../components/Matchmaking/DuelHostList';
+import LiveDuelList from '../components/Matchmaking/LiveDuelList';
 import '../components/NavMenu/NavMenu.css';
 import './DuelMenuPage.css';
 
@@ -81,6 +82,7 @@ function DuelMenuPage() {
       </div>
 
       <DuelHostList selectedDeckId={selectedDeckId} onJoin={joinHost} />
+      <LiveDuelList />
     </div>
   );
 }

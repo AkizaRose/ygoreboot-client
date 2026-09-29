@@ -29,8 +29,18 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
-.ReplayFieldPage-matchStatus {
+/* The "Card Visibility" dropdown's own row — a separate row directly
+   beneath .ReplayFieldPage-controls (Play/Pause/Next Play), per request,
+   rather than folded into that same row. */
+.ReplayFieldPage-visibilityRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
 }
+
+/* The win-tally status now reuses MultiplayerDuelFieldPage-matchStatus
+   directly (see ReplayFieldPage.tsx's own comment), so this page no
+   longer needs its own copy of that rule. */

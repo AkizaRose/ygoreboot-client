@@ -79,6 +79,20 @@ interface HandProps {
   onStackBottom: (instanceId: string) => void;
   onReveal: (instanceId: string) => void;
   onDeclare: (instanceId: string) => void;
+  // Suppresses the hover context menu entirely (ReplayFieldPage's own
+  // read-only hand) while leaving onCardHover/onCardHoverEnd — and the
+  // hover-lift they drive — working exactly as normal, since Card Display
+  // is still useful in a replay even though none of these actions are.
+  menusDisabled?: boolean;
+  // Which slot geometry to lay each card's own hover cell out at —
+  // defaults to the player's own hand's usual getHandSlot. The one
+  // exception is ReplayFieldPage's own "Card Visibility" toggle, which
+  // renders a SECOND <Hand> instance (still with menusDisabled, since
+  // none of its actions apply) for the OPPONENT's hand when the viewer
+  // has chosen to reveal it, passing getOpponentHandSlot here so its
+  // hover targets land on the opponent's own hand position/mirroring
+  // instead of the player's.
+  slotForIndex?: (handCount: number, index: number) => ReturnType<typeof getHandSlot>;
 }
 
 function Hand({
@@ -95,6 +109,8 @@ function Hand({
   onStackBottom,
   onReveal,
   onDeclare,
+  menusDisabled = false,
+  slotForIndex = getHandSlot,
 }: HandProps) {
   // Which hand card (by instanceId) currently shows its context menu —
   // a separate concern from the CardDisplay hover callbacks above,
@@ -170,15 +186,15 @@ function Hand({
 
   const hoveredIndex = cards.findIndex((c) => c.instanceId === hoveredInstanceId);
   const hoveredCard = hoveredIndex === -1 ? null : cards[hoveredIndex];
-  const hoveredActions = hoveredCard ? getHandActions(hoveredCard.card) : [];
-  const hoveredSlot = hoveredIndex === -1 ? null : getHandSlot(cards.length, hoveredIndex);
+  const hoveredActions = menusDisabled || !hoveredCard ? [] : getHandActions(hoveredCard.card);
+  const hoveredSlot = hoveredIndex === -1 ? null : slotForIndex(cards.length, hoveredIndex);
 
   return (
     // Position (top:0/left:0) comes from .Hand's own CSS rule now — see
     // that rule's comment for why.
     <div className="Hand">
       {cards.map(({ instanceId, card }, index) => {
-        const slot = getHandSlot(cards.length, index);
+        const slot = slotForIndex(cards.length, index);
 
         return (
           <div

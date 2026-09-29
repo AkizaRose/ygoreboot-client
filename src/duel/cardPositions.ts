@@ -229,6 +229,42 @@ function handEntries(hand: CardInstance[], zIndexBase: number): CardPositionEntr
   });
 }
 
+// The REAL, revealed opponent hand — used only when a replay viewer has
+// chosen to see the opponent's hand (see computeCardPositions' own
+// revealedOpponentHand option). Deliberately keeps the exact SAME
+// 'opponent-hand-<index>' id scheme buildOpponentHiddenEntries's own
+// hidden proxies use, rather than each card's own real instanceId:
+// CardLayer specifically recognizes that id prefix and routes those
+// entries into its own dedicated, unclipped "opponent hand" viewport
+// layer (see CardLayer's own opponentHandIds/stageOffset handling),
+// which is what keeps the opponent's hand visible above boardStage's own
+// clipped bounds in the first place — a real instanceId here would
+// silently fall back to CardLayer's ordinary in-board-space rendering
+// and get clipped away entirely (invisible on screen, even though the
+// separate <Hand> hover grid at the same position is unaffected and
+// still reports the right card to Card Display — exactly the split
+// symptom this was fixed from). Card identity/faceDown/rotation come
+// from the real hand data; only the id itself matches the position-keyed
+// scheme, which also means this inherits the SAME "position, not
+// identity" animation caveat buildOpponentHiddenEntries' own comment
+// already documents for the hidden case — an accepted, pre-existing
+// trade-off, not a new one.
+function revealedOpponentHandEntries(hand: CardInstance[], zIndexBase: number): CardPositionEntry[] {
+  return hand.map((entry, index) => {
+    const slot = getOpponentHandSlot(hand.length, index);
+    return {
+      instanceId: `opponent-hand-${index}`,
+      card: entry.card,
+      x: slot.x,
+      y: slot.y,
+      rotation: 180,
+      scale: HAND_CARD_SCALE,
+      faceDown: false,
+      zIndex: zIndexBase + index,
+    };
+  });
+}
+
 // The opponent's deck piles: unlike their hand (below), these DO have
 // real, known geometry — getDeckZoneSlot(true, ...) is exactly the same
 // zone lookup used for every other opponent-side zone, since a face-down
@@ -306,7 +342,28 @@ function buildOpponentHiddenEntries(
 export function computeCardPositions(
   me: MyDuelState,
   opponent: OpponentDuelState | null,
+  // Replay-only overrides for ReplayFieldPage's own "Card Visibility"
+  // toggle — never passed live (both default to preserving exactly
+  // today's live behavior: the player's own hand always shown, the
+  // opponent's never). Live's MyDuelState.hand is always real and always
+  // meant to be shown, and OpponentDuelState never even carries the
+  // opponent's real hand at all (see buildOpponentHiddenEntries' own
+  // comment on why), so there'd be nothing safe for the live page to pass
+  // here regardless.
+  options?: {
+    // Renders me.hand as hidden face-down proxies (same mechanism as the
+    // opponent's own hidden hand below) instead of the real cards, when a
+    // replay viewer has chosen to hide their own hand too.
+    hideMyHand?: boolean;
+    // The opponent's REAL hand cards, when a replay viewer has chosen to
+    // reveal them — sourced from that side's own recorded replay frames
+    // (ReplayPlayerState.hand), which, unlike a live OpponentDuelState,
+    // genuinely has them.
+    revealedOpponentHand?: CardInstance[];
+  },
 ): CardPositionEntry[] {
+  const hideMyHand = options?.hideMyHand ?? false;
+  const revealedOpponentHand = options?.revealedOpponentHand;
   const entries: CardPositionEntry[] = [
     // 300, not 50/200/250/260/270 — a hand card (including its own
     // hover-lift, see CardLayer's own HAND_HOVER_LIFT) should always
@@ -315,7 +372,16 @@ export function computeCardPositions(
     // below the animation tiers (in-transit/returning/shuffling cards
     // start at 320) and the reveal zone (400), which should stay on top
     // of a static hand card regardless.
-    ...handEntries(me.hand, 300),
+    ...(hideMyHand
+      ? buildOpponentHiddenEntries(
+          me.hand.length,
+          'my-hidden-hand',
+          (index, count) => getHandSlot(count, index),
+          0,
+          HAND_CARD_SCALE,
+          300,
+        )
+      : handEntries(me.hand, 300)),
     ...deckPileEntries(me.mainDeck, 'mainDeck', false, 50),
     ...deckPileEntries(me.extraDeck, 'extraDeck', false, 50),
     ...monsterZoneEntries(me.monsterZones, false, 200),
@@ -351,15 +417,22 @@ export function computeCardPositions(
       // non-animated set of <img> elements elsewhere on the page.
       // Same 300 base as the player's own hand above, and for the same
       // reason — the opponent's own hand should render above the field
-      // too, not underneath it.
-      ...buildOpponentHiddenEntries(
-        opponent.handCount,
-        'opponent-hand',
-        (index, count) => getOpponentHandSlot(count, index),
-        180,
-        HAND_CARD_SCALE,
-        300,
-      ),
+      // too, not underneath it. revealedOpponentHand swaps this for the
+      // real cards (revealedOpponentHandEntries), laid out with the exact
+      // same geometry/rotation AND the same 'opponent-hand-<index>' id
+      // scheme — see that function's own comment on why keeping that id
+      // scheme (rather than each card's real instanceId) actually
+      // matters here, not just for consistency.
+      ...(revealedOpponentHand
+        ? revealedOpponentHandEntries(revealedOpponentHand, 300)
+        : buildOpponentHiddenEntries(
+            opponent.handCount,
+            'opponent-hand',
+            (index, count) => getOpponentHandSlot(count, index),
+            180,
+            HAND_CARD_SCALE,
+            300,
+          )),
     );
   }
 

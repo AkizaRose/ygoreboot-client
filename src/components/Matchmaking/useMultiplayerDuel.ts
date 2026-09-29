@@ -42,6 +42,34 @@ export type PlayerRole = 'player1' | 'player2';
 export const TURN_PHASES = ['draw', 'main1', 'battle', 'main2', 'end'] as const;
 export type TurnPhase = (typeof TURN_PHASES)[number];
 
+// A spectator never has (or is entitled to) either player's real hand/
+// deck contents — see this hook's own `spectating` param comment — but
+// MyDuelState.hand/mainDeck/extraDeck are typed as real CardInstance[],
+// and computeCardPositions' own hideMyHand option (already built for
+// ReplayFieldPage's "Card Visibility" toggle) only ever reads their
+// .length to know how many face-down proxies to draw, never their
+// content. So a spectator's own `me` is built with plain placeholder
+// instances of the right COUNT (never rendered face-up; deck piles are
+// always rendered face-down regardless of identity, same as ReplayField-
+// Page's own placeholderDeck), rather than needing any real card data at
+// all — see the me/opponent construction below.
+const SPECTATOR_PLACEHOLDER_CARD: CardData = {
+  id: 0,
+  name: '',
+  cardClass: 'Monster',
+  attribute: '',
+  artwork: '',
+  frame: '',
+  legend: '',
+  effectText: '',
+};
+function spectatorPlaceholderInstances(count: number, prefix: string): CardInstance[] {
+  return Array.from({ length: Math.max(0, count) }, (_, i) => ({
+    instanceId: `${prefix}-${i}`,
+    card: SPECTATOR_PLACEHOLDER_CARD,
+  }));
+}
+
 // A pure function of the duel + both players' UIDs — every client
 // computes the exact same result independently, with nothing to
 // coordinate and no write race between two clients both trying to flip
@@ -873,6 +901,11 @@ interface UseMultiplayerDuelResult {
   // for everything from this point on, so a refresh recovers cleanly.
   role: PlayerRole | null;
   opponentInfo: OpponentInfo | null;
+  // Echoes the `spectating` param this hook was called with — see its
+  // own comment. MultiplayerDuelFieldPage uses this (rather than
+  // re-deriving it from the URL itself in more than one place) to gate
+  // every interactive/visibility difference spectating requires.
+  isSpectator: boolean;
   // True from the moment the first duels/{duelId} snapshot has arrived —
   // MultiplayerDuelFieldPage's own "session lost" screen waits for this
   // before concluding role/opponentInfo genuinely can't be resolved
@@ -1086,6 +1119,22 @@ export function useMultiplayerDuel(
   roleProp: PlayerRole | undefined,
   opponentInfoProp: OpponentInfo | undefined,
   myDeckId: string | undefined,
+  // Duel Spectating — a spectator has no roleProp/opponentInfoProp of
+  // their own (they never went through the matchmaking handshake that
+  // hands a real player those), and must never write anything to the
+  // duel document or its presence records. Forcing role to 'player1'
+  // below is what actually implements "spectate from the host's own
+  // perspective" (host at the bottom, opponent at the top) requested for
+  // this feature — player1 is always the host (see useDuelHosting's own
+  // navigate calls), and every rendering path downstream already treats
+  // "player1" as "the bottom of the screen" with zero further changes
+  // needed. Every effect in this hook that WRITES anything (duel
+  // initialization, presence, the reconnect chat announcement, account
+  // stats) is individually guarded with `if (spectating) return;` below,
+  // rather than gating a single chokepoint, because several of them
+  // (presence, the stats recorder) don't route through applyMeUpdate at
+  // all.
+  spectating: boolean = false,
 ): UseMultiplayerDuelResult {
   const { currentUser } = useAuth();
   const { avatarId: myAvatarId } = useUserAvatar();
@@ -1119,15 +1168,16 @@ export function useMultiplayerDuel(
   // when duelDoc?.[role] does NOT already exist (a genuinely fresh
   // join), so it never needs recovering for a reconnect in the first
   // place.
-  const role: PlayerRole | undefined =
-    roleProp ??
-    (duelDoc && currentUser
-      ? duelDoc.player1Uid === currentUser.uid
-        ? 'player1'
-        : duelDoc.player2Uid === currentUser.uid
-          ? 'player2'
-          : undefined
-      : undefined);
+  const role: PlayerRole | undefined = spectating
+    ? 'player1'
+    : (roleProp ??
+      (duelDoc && currentUser
+        ? duelDoc.player1Uid === currentUser.uid
+          ? 'player1'
+          : duelDoc.player2Uid === currentUser.uid
+            ? 'player2'
+            : undefined
+        : undefined));
   const opponentInfo: OpponentInfo | undefined =
     opponentInfoProp ??
     (duelDoc && role
@@ -1212,6 +1262,9 @@ export function useMultiplayerDuel(
   // there — whichever duel of the match it's currently on — leaves it,
   // and the private hand/deck subcollection, completely untouched.
   useEffect(() => {
+    // A spectator must never write a starting state into a duel it
+    // didn't create — see this hook's own `spectating` param comment.
+    if (spectating) return;
     if (!duelId || !role || !opponentInfo || !myDeckId || !currentUser || !currentUser.displayName)
       return;
     if (decksLoading) return;
@@ -1314,6 +1367,7 @@ export function useMultiplayerDuel(
       },
     );
   }, [
+    spectating,
     duelId,
     role,
     opponentInfo,
@@ -1362,6 +1416,10 @@ export function useMultiplayerDuel(
   // double-write to guard against: each client reacts only to the
   // OTHER's presence, never its own.
   useEffect(() => {
+    // A spectator isn't a player, so its own connection status has no
+    // reconnect-window/disconnect-timer meaning here — see this hook's
+    // own `spectating` param comment.
+    if (spectating) return;
     if (!duelId || !role || !currentUser) return;
     const myPresenceRef = ref(rtdb, `presence/${currentUser.uid}`);
     // .info/connected fires true/false as this CLIENT's own connection to
@@ -1384,7 +1442,7 @@ export function useMultiplayerDuel(
         });
     });
     return () => unsubscribe();
-  }, [duelId, role, currentUser]);
+  }, [spectating, duelId, role, currentUser]);
 
   // previousOpponentOnlineRef starts at null every time this effect
   // (re)attaches, so the very first presence value this client ever
@@ -1397,6 +1455,10 @@ export function useMultiplayerDuel(
   // reconnected.
   const previousOpponentOnlineRef = useRef<boolean | null>(null);
   useEffect(() => {
+    // A spectator must never post a reconnect/disconnect chat message or
+    // start a disconnect-timer countdown — those are player-to-player
+    // signals, not something a third-party viewer should be triggering.
+    if (spectating) return;
     if (!duelId || !role || !opponentInfo) return;
     const opponentRole: PlayerRole = role === 'player1' ? 'player2' : 'player1';
     previousOpponentOnlineRef.current = null;
@@ -1447,7 +1509,7 @@ export function useMultiplayerDuel(
       });
     });
     return () => unsubscribe();
-  }, [duelId, role, opponentInfo]);
+  }, [spectating, duelId, role, opponentInfo]);
 
   useEffect(() => {
     if (!duelId) return;
@@ -1473,6 +1535,13 @@ export function useMultiplayerDuel(
   }, [duelId, retryTick]);
 
   useEffect(() => {
+    // No duels/{duelId}/private/{uid} document exists for a spectator's
+    // own uid — firestore.rules restricts that path to the uid it's
+    // keyed by anyway, so this would just read back "doesn't exist"
+    // every time, and privateState correctly stays null (see the
+    // spectator branch of the me/opponent construction below, which
+    // builds `me` without it entirely).
+    if (spectating) return;
     if (!duelId || !currentUser) return;
     const unsubscribe = onSnapshot(
       doc(db, 'duels', duelId, 'private', currentUser.uid),
@@ -1485,7 +1554,7 @@ export function useMultiplayerDuel(
       },
     );
     return unsubscribe;
-  }, [duelId, currentUser, retryTick]);
+  }, [spectating, duelId, currentUser, retryTick]);
 
   // Self-heals the "stuck on Waiting for both players to be ready"
   // bug: an onSnapshot listener that quietly never receives the update
@@ -1555,6 +1624,12 @@ export function useMultiplayerDuel(
   // skip recording this match at all, or double-count it.
   const hasRecordedStatsRef = useRef(false);
   useEffect(() => {
+    // Critical: without this, a spectator (forced role: 'player1' — see
+    // this hook's own `spectating` param comment) would have the HOST's
+    // own match outcome recorded onto the SPECTATOR's own account stats
+    // the moment the match concluded. A spectator was never a player in
+    // this match at all, so nothing here is theirs to record.
+    if (spectating) return;
     if (!duelId || !role || !currentUser || !duelDoc?.matchOutcome) return;
     if (duelDoc[`${role}StatsRecorded`]) return;
     if (hasRecordedStatsRef.current) return;
@@ -1582,7 +1657,7 @@ export function useMultiplayerDuel(
       // in the way of that retry is this ref.
       hasRecordedStatsRef.current = false;
     });
-  }, [duelId, role, currentUser, duelDoc]);
+  }, [spectating, duelId, role, currentUser, duelDoc]);
 
   // Rebuilds and writes a fresh duel for this client's own role — see
   // UseMultiplayerDuelResult's own comment on startNextDuel. Deliberately
@@ -1659,13 +1734,25 @@ export function useMultiplayerDuel(
   let me: MyDuelState | null = null;
   let opponent: OpponentDuelState | null = null;
 
-  if (duelDoc && privateState && role) {
+  // Spectating never has privateState (see this hook's own `spectating`
+  // param comment and the private-state subscription above, which never
+  // even subscribes for a spectator) — `duelDoc && role` alone is enough
+  // to build `me` in that case, using placeholder hand/deck instances of
+  // the right length instead of privateState's own real ones.
+  if (duelDoc && (privateState || spectating) && role) {
     const opponentRole: PlayerRole = role === 'player1' ? 'player2' : 'player1';
     const myPublic = duelDoc[role];
     const opponentPublic = duelDoc[opponentRole];
 
     if (myPublic) {
-      me = { ...myPublic, ...privateState };
+      me = spectating
+        ? {
+            ...myPublic,
+            hand: spectatorPlaceholderInstances(myPublic.handCount, 'spectator-hand'),
+            mainDeck: spectatorPlaceholderInstances(myPublic.mainDeckCount, 'spectator-mainDeck'),
+            extraDeck: spectatorPlaceholderInstances(myPublic.extraDeckCount, 'spectator-extraDeck'),
+          }
+        : { ...myPublic, ...privateState! };
     }
     if (opponentPublic) {
       opponent = {
@@ -1681,7 +1768,14 @@ export function useMultiplayerDuel(
   const currentPhase = duelDoc?.currentPhase ?? null;
   const turnEnding = duelDoc?.turnEnding ?? false;
   const turnNumber = duelDoc?.turnNumber ?? 1;
-  const isMyTurn = turnPlayer !== null && turnPlayer === role;
+  // Never true for a spectator, regardless of whose turn it actually is —
+  // role is forced to 'player1' for spectating (see this hook's own
+  // `spectating` param comment), which would otherwise make the Phase
+  // Tracker's arrows clickable whenever it's genuinely the host's turn.
+  // This is what actually makes "Phase Tracker visible but
+  // non-interactable" true for spectators: PhaseTracker's own
+  // arrowsEnabled is derived from isMyTurn, with no separate prop needed.
+  const isMyTurn = !spectating && turnPlayer !== null && turnPlayer === role;
 
   const opponentRoleForSelection: PlayerRole | null =
     role === 'player1' ? 'player2' : role === 'player2' ? 'player1' : null;
@@ -1709,6 +1803,7 @@ export function useMultiplayerDuel(
     error,
     role: role ?? null,
     opponentInfo: opponentInfo ?? null,
+    isSpectator: spectating,
     hasReceivedDuelSnapshot,
     me,
     opponent,

@@ -29,6 +29,8 @@ import StatAdjustDialog from '../components/DuelField/StatAdjustDialog';
 import ConfirmDialog from '../components/ConfirmDialog/ConfirmDialog';
 import SideDecking from '../components/SideDecking/SideDecking';
 import CardLayer, { type CardLayerHandle } from '../duel/CardLayer';
+import SpectatorList from '../components/DuelField/SpectatorList';
+import { useDuelSpectators } from '../components/Matchmaking/useDuelSpectators';
 import { computeCardPositions } from '../duel/cardPositions';
 import { BOARD_WIDTH, STAGE_HEIGHT, getRevealZoneSlot } from '../duel/cardGeometry';
 import { getAvatarUrl } from '../components/Avatar/avatars';
@@ -133,7 +135,11 @@ function isExtraDeckCard(card: CardData): boolean {
 // avatar image (admin.png, not either player's own avatar) and its own
 // bubble color via the separate --system modifier below, rather than
 // being folded into the blue "opponent" styling.
-function renderChatMessage(
+// Exported so ReplayFieldPage's own read-only chat history can render
+// through this exact same function — same avatar/bubble markup and CSS
+// classes, kept in sync automatically rather than as a hand-copied
+// duplicate that could quietly drift from this one over time.
+export function renderChatMessage(
   message: ChatMessage,
   myRole: PlayerRole | undefined,
   myAvatarId: string,
@@ -177,7 +183,10 @@ function renderChatMessage(
 // system entries — same red/blue convention as PhaseTracker's own
 // turn-color coding and PlayerAvatarBox's own --myTurn/--opponentTurn
 // border colors, just applied to text here instead of a border.
-function renderDuelLogOverlay(
+// Exported so ReplayFieldPage's own Duel Log overlay can render through
+// this exact same function — see renderChatMessage's own comment on why
+// these are shared this way rather than hand-copied.
+export function renderDuelLogOverlay(
   entries: DuelLogEntry[],
   myRole: PlayerRole | undefined,
   onClose: () => void,
@@ -222,7 +231,10 @@ function renderDuelLogOverlay(
   );
 }
 
-function renderExpressionOverlay(expression: ExpressionEvent | null) {
+// Exported so ReplayFieldPage's own read-only avatar overlays can render
+// through this exact same function — see renderChatMessage's own comment
+// on why these are shared this way rather than hand-copied.
+export function renderExpressionOverlay(expression: ExpressionEvent | null) {
   if (!expression) return null;
   const src = expression.type === 'thumbsUp' ? thumbsUpIcon : thinkingGif;
   return (
@@ -292,7 +304,7 @@ const VIEWING_LOCATION_LABELS: Record<ViewingLocation, string> = {
 //    element can only ever have one `transform` in effect at a time (the
 //    same reasoning MultiplayerDuelFieldPage-expressionOverlayImage
 //    --thumbsUp's own comment already gives for the thumbs-up icon).
-function renderViewingLocationOverlay(location: ViewingLocation | null) {
+export function renderViewingLocationOverlay(location: ViewingLocation | null) {
   return (
     <AnimatePresence>
       {location && (
@@ -436,6 +448,19 @@ function MultiplayerDuelFieldPage() {
   // restarted from scratch.
   const locationState = (location.state ?? {}) as MultiplayerDuelLocationState;
 
+  // Duel Spectating — a spectator reaches this page via LiveDuelList's own
+  // navigate(`/duel/multiplayer/${duelId}?spectate=true`), never through
+  // the host/join flow that populates locationState above, so this is a
+  // plain query-param read (useSearchParams would work too, but a spare
+  // URLSearchParams read avoids adding a second router import for exactly
+  // one flag). Passed straight into useMultiplayerDuel's own `spectating`
+  // param, which does essentially everything else: forces role to
+  // 'player1' (host-at-the-bottom perspective), skips every write-side
+  // effect, and builds `me` without needing this uid's own private hand/
+  // deck data at all — see that param's own comment for the full
+  // reasoning.
+  const isSpectator = new URLSearchParams(location.search).get('spectate') === 'true';
+
   const {
     loading,
     error,
@@ -482,6 +507,7 @@ function MultiplayerDuelFieldPage() {
     locationState.role,
     locationState.opponentInfo,
     locationState.myDeckId,
+    isSpectator,
   );
 
   // Every OTHER reference to `state` in this file (and there are many)
@@ -507,6 +533,13 @@ function MultiplayerDuelFieldPage() {
   // here since this feature needs it in more than one place.
   const opponentRole: PlayerRole | null =
     state.role === 'player1' ? 'player2' : state.role === 'player2' ? 'player1' : null;
+
+  // Duel Spectating's own list box (left-hand column, below the win/loss
+  // display) — subscribed to by players and spectators alike; only a
+  // spectator ever writes their own presence into it. See
+  // useDuelSpectators' own comment for why this is Realtime Database
+  // rather than Firestore.
+  const { spectators } = useDuelSpectators(duelId, isSpectator);
 
   // --- Duel Log ---
   // This client's own display name, as it should appear at the front of
@@ -750,8 +783,35 @@ function MultiplayerDuelFieldPage() {
   const recordReplayFrame = (
     frame:
       | { kind: 'player'; publicState: ReturnType<typeof buildPublicState>; hand: CardInstance[] }
-      | { kind: 'shared'; shared: Partial<{ turnPlayer: PlayerRole; currentPhase: TurnPhase; turnEnding: boolean; turnNumber: number }> },
+      | {
+          kind: 'shared';
+          shared: Partial<{
+            turnPlayer: PlayerRole;
+            currentPhase: TurnPhase;
+            turnEnding: boolean;
+            turnNumber: number;
+            matchWins: { player1: number; player2: number };
+          }>;
+        }
+      | { kind: 'chat'; message: ChatMessage }
+      | { kind: 'viewingLocation'; role: PlayerRole; location: ViewingLocation | null }
+      | { kind: 'expression'; role: PlayerRole; expression: ExpressionEvent | null }
+      | { kind: 'dieRoll'; role: PlayerRole; roll: DieRollData | null }
+      | { kind: 'coinFlip'; role: PlayerRole; flip: CoinFlipData | null }
+      | {
+          kind: 'attack';
+          role: PlayerRole;
+          attack: { id: string; fromIndex: number; toIndex: number | null };
+        }
+      | { kind: 'duelLog'; entry: DuelLogEntry },
   ) => {
+    // A spectator (role forced to 'player1' — see useMultiplayerDuel's
+    // own `spectating` param) must never append a bogus replay frame
+    // tagged as if it came from the host's own client; every handler
+    // that would otherwise call this is already gated on isSpectator,
+    // but guarding the single write chokepoint too is cheap insurance
+    // against a missed call site.
+    if (isSpectator) return;
     if (!duelId || !currentUser || !state.role) return;
     addDoc(collection(db, 'duels', duelId, 'replayFrames'), {
       ownerUid: currentUser.uid,
@@ -800,6 +860,52 @@ function MultiplayerDuelFieldPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.openingHandDealt, duelNumber]);
+  // Chat is a separate, MATCH-level stream (see chatMessages' own comment
+  // on persisting across every duel), not tied to duelNumber the way
+  // board/hand snapshots are — so each message gets its own 'chat' frame
+  // instead of being folded into a 'player'/'shared' one. chatMessages
+  // already reflects every message BOTH players have sent (one shared
+  // array on the duel doc), so this client ends up recording the
+  // opponent's own messages too under its own ownerUid — harmless, since
+  // useReplayPlayback dedupes the merged stream by message.id, and far
+  // simpler than trying to have only the original sender ever record
+  // their own message.
+  const recordedChatIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const message of chatMessages) {
+      if (recordedChatIdsRef.current.has(message.id)) continue;
+      recordedChatIdsRef.current.add(message.id);
+      recordReplayFrame({ kind: 'chat', message });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatMessages]);
+  // The Duel Log is the same kind of shared, MATCH-level, arrayUnion'd
+  // stream as chatMessages above (see DuelLogEntry's own comment) — same
+  // "both clients see and re-record every entry, dedupe by id on the way
+  // in" approach, for the same reason.
+  const recordedDuelLogIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const entry of duelLog) {
+      if (recordedDuelLogIdsRef.current.has(entry.id)) continue;
+      recordedDuelLogIdsRef.current.add(entry.id);
+      recordReplayFrame({ kind: 'duelLog', entry });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duelLog]);
+  // matchWins is a top-level, MATCH-wide field (see ReplaySnapshot's own
+  // comment) that only ever changes when a duel concludes — folded into
+  // an ordinary 'shared' frame, same as turnPlayer/currentPhase/etc.,
+  // rather than needing its own frame kind.
+  const previousMatchWinsRef = useRef<{ player1: number; player2: number } | null>(null);
+  useEffect(() => {
+    const previous = previousMatchWinsRef.current;
+    if (previous && previous.player1 === matchWins.player1 && previous.player2 === matchWins.player2) {
+      return;
+    }
+    previousMatchWinsRef.current = matchWins;
+    recordReplayFrame({ kind: 'shared', shared: { matchWins } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchWins.player1, matchWins.player2]);
   // Deliberately a SEPARATE piece of state from latestMeRef, updated one
   // animation frame later (see applyMeUpdate below) rather than in the
   // same synchronous batch as the click itself. latestMeRef alone
@@ -1112,6 +1218,8 @@ function MultiplayerDuelFieldPage() {
     ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to sync viewing location:', err);
     });
+    recordReplayFrame({ kind: 'viewingLocation', role: state.role, location: currentViewingLocation });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentViewingLocation, duelId, state.role]);
 
   // Tracks a summon awaiting a Battle Position choice — source
@@ -1283,6 +1391,13 @@ function MultiplayerDuelFieldPage() {
       extraFields?: Record<string, unknown> | (() => Record<string, unknown> | undefined);
     } = {},
   ) => {
+    // The single chokepoint nearly every board-mutating action funnels
+    // through — see this function's own top comment. A spectator's
+    // `me` is built from placeholder data (see useMultiplayerDuel's own
+    // `spectating` param), so this doubles as a safety net against any
+    // interactive path this feature's own UI-hiding missed, not just the
+    // primary defense.
+    if (isSpectator) return;
     if (!duelId || !currentUser || !state.role) return;
     const current = latestMeRef.current ?? me;
     if (!current) return;
@@ -1396,7 +1511,7 @@ function MultiplayerDuelFieldPage() {
   const dieRollClearTimeoutRef = useRef<number | undefined>(undefined);
 
   const handleRollDie = () => {
-    if (!duelId || !state.role) return;
+    if (isSpectator || !duelId || !state.role) return;
     const role = state.role;
     if (dieRollClearTimeoutRef.current !== undefined) {
       window.clearTimeout(dieRollClearTimeoutRef.current);
@@ -1407,6 +1522,7 @@ function MultiplayerDuelFieldPage() {
     setDoc(doc(db, 'duels', duelId), { [field]: roll }, { merge: true }).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to start die roll:', err);
     });
+    recordReplayFrame({ kind: 'dieRoll', role, roll });
     window.setTimeout(() => {
       const message: ChatMessage = {
         id: crypto.randomUUID(),
@@ -1439,6 +1555,7 @@ function MultiplayerDuelFieldPage() {
       setDoc(doc(db, 'duels', duelId), { [field]: null }, { merge: true }).catch((err) => {
         console.error('[MultiplayerDuelFieldPage] Failed to clear die roll:', err);
       });
+      recordReplayFrame({ kind: 'dieRoll', role, roll: null });
       dieRollClearTimeoutRef.current = undefined;
     }, ROLL_DURATION_MS + 3000);
   };
@@ -1450,7 +1567,7 @@ function MultiplayerDuelFieldPage() {
   const coinFlipClearTimeoutRef = useRef<number | undefined>(undefined);
 
   const handleFlipCoin = () => {
-    if (!duelId || !state.role) return;
+    if (isSpectator || !duelId || !state.role) return;
     const role = state.role;
     if (coinFlipClearTimeoutRef.current !== undefined) {
       window.clearTimeout(coinFlipClearTimeoutRef.current);
@@ -1461,6 +1578,7 @@ function MultiplayerDuelFieldPage() {
     setDoc(doc(db, 'duels', duelId), { [field]: flip }, { merge: true }).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to start coin flip:', err);
     });
+    recordReplayFrame({ kind: 'coinFlip', role, flip });
     window.setTimeout(() => {
       const message: ChatMessage = {
         id: crypto.randomUUID(),
@@ -1483,6 +1601,7 @@ function MultiplayerDuelFieldPage() {
       setDoc(doc(db, 'duels', duelId), { [field]: null }, { merge: true }).catch((err) => {
         console.error('[MultiplayerDuelFieldPage] Failed to clear coin flip:', err);
       });
+      recordReplayFrame({ kind: 'coinFlip', role, flip: null });
       coinFlipClearTimeoutRef.current = undefined;
     }, FLIP_DURATION_MS + 3000);
   };
@@ -1681,7 +1800,7 @@ function MultiplayerDuelFieldPage() {
   // "only one card at a time," which the single field itself already
   // guarantees (a new selection simply overwrites the old one).
   const handleSelectCard = (target: string) => {
-    if (!duelId || !state.role) return;
+    if (isSpectator || !duelId || !state.role) return;
     const next = mySelection === target ? null : target;
     setDoc(doc(db, 'duels', duelId), { [`${state.role}Selection`]: next }, { merge: true }).catch(
       (err) => {
@@ -1787,7 +1906,7 @@ function MultiplayerDuelFieldPage() {
   // bubble.
   const handleSendChatMessage = () => {
     const text = chatInput.trim();
-    if (!text || !duelId || !state.role) return;
+    if (isSpectator || !text || !duelId || !state.role) return;
     setChatInput('');
     const message: ChatMessage = {
       id: crypto.randomUUID(),
@@ -1842,15 +1961,16 @@ function MultiplayerDuelFieldPage() {
   // animation and clearing it early.
   const expressionClearTimeoutRef = useRef<number | undefined>(undefined);
   const handleSendExpression = (type: ExpressionEvent['type']) => {
-    if (!duelId || !state.role) return;
+    if (isSpectator || !duelId || !state.role) return;
     if (expressionClearTimeoutRef.current !== undefined) {
       window.clearTimeout(expressionClearTimeoutRef.current);
     }
     const field = `${state.role}Expression`;
+    const expression: ExpressionEvent = { id: crypto.randomUUID(), type };
     setDoc(
       doc(db, 'duels', duelId),
       {
-        [field]: { id: crypto.randomUUID(), type },
+        [field]: expression,
         duelLog: logDuelAction(
           type === 'thumbsUp' ? `${myUsername} gave thumbs-up` : `${myUsername} was thinking`,
         ),
@@ -1859,6 +1979,7 @@ function MultiplayerDuelFieldPage() {
     ).catch((err) => {
       console.error('[MultiplayerDuelFieldPage] Failed to send expression:', err);
     });
+    recordReplayFrame({ kind: 'expression', role: state.role, expression });
     // Clears back to null ~3 seconds later — see
     // MultiplayerDuelFieldPage-expressionOverlay's own CSS animation,
     // which is timed to this same 3-second duration: the grow-then-hold-
@@ -1870,6 +1991,7 @@ function MultiplayerDuelFieldPage() {
       setDoc(doc(db, 'duels', duelId), { [field]: null }, { merge: true }).catch((err) => {
         console.error('[MultiplayerDuelFieldPage] Failed to clear expression:', err);
       });
+      recordReplayFrame({ kind: 'expression', role: state.role!, expression: null });
       expressionClearTimeoutRef.current = undefined;
     }, 3000);
   };
@@ -2082,7 +2204,10 @@ function MultiplayerDuelFieldPage() {
   // as it always did before this feature existed, rather than asking a
   // question ("you forfeit the match") that's no longer true.
   const handleExitClick = () => {
-    if (isMatchOver) {
+    // A spectator never forfeits anything by leaving — there's no match
+    // outcome for them to affect — so skip the confirm dialog entirely
+    // and just navigate away, same as the isMatchOver case just below.
+    if (isSpectator || isMatchOver) {
       navigate('/duel');
       return;
     }
@@ -2091,7 +2216,7 @@ function MultiplayerDuelFieldPage() {
   const handleExitCancel = () => setShowExitConfirm(false);
   const handleExitConfirm = () => {
     setShowExitConfirm(false);
-    if (duelId && state.role && currentUser) {
+    if (!isSpectator && duelId && state.role && currentUser) {
       const winnerRole: PlayerRole = state.role === 'player1' ? 'player2' : 'player1';
       const batch = writeBatch(db);
       batch.set(
@@ -2253,7 +2378,7 @@ function MultiplayerDuelFieldPage() {
 
   const handleAdmitDefeatConfirm = () => {
     setShowAdmitDefeatConfirm(false);
-    if (!duelId || !state.role) return;
+    if (isSpectator || !duelId || !state.role) return;
     const loserRole = state.role;
     const winnerRole: PlayerRole = loserRole === 'player1' ? 'player2' : 'player1';
     const nextWins = { ...matchWins, [winnerRole]: matchWins[winnerRole] + 1 };
@@ -2335,7 +2460,7 @@ function MultiplayerDuelFieldPage() {
   // Only ever shown to (and callable by) the player who was OFFERED the
   // draw — see the dialog's own gating further down.
   const handleAcceptDraw = () => {
-    if (!duelId || !duelStartingRole) return;
+    if (isSpectator || !duelId || !duelStartingRole) return;
     const nextWins = { player1: matchWins.player1 + 1, player2: matchWins.player2 + 1 };
     const matchOutcomeUpdate =
       nextWins.player1 >= 2 && nextWins.player2 >= 2
@@ -2387,7 +2512,7 @@ function MultiplayerDuelFieldPage() {
   };
 
   const handleDeclineDraw = () => {
-    if (!duelId || matchConclusion?.type !== 'drawOffered') return;
+    if (isSpectator || !duelId || matchConclusion?.type !== 'drawOffered') return;
     setDoc(
       doc(db, 'duels', duelId),
       {
@@ -3255,16 +3380,22 @@ function MultiplayerDuelFieldPage() {
   // needs no flipped/role resolution the way handleEquipTargetClick
   // above does.
   const handleAttackTargetClick = (targetIndex: number) => {
-    if (!pendingAttack) return;
+    if (isSpectator || !pendingAttack || !state.role) return;
     const fromIndex = pendingAttack.index;
     setPendingAttack(null);
     const attackerCardName = me?.monsterZones[fromIndex]?.card.name;
     const targetCardName = opponent?.monsterZones[targetIndex]?.card.name;
+    // Recorded as its own replay frame (see recordReplayFrame's own
+    // comment on scope) — activeAttack itself never makes it into
+    // buildPublicState/nextPublicState (CardLayer's own attack-resolution
+    // animation is driven purely by this id changing, on whichever
+    // client(s) actually receive it), so without a dedicated frame here
+    // the attack would never show up on a later replay of this duel at
+    // all. Same id/fromIndex/toIndex the updater below sets on `next`, so
+    // a replay can never disagree with what actually happened here.
+    const attack = { id: crypto.randomUUID(), fromIndex, toIndex: targetIndex };
     applyMeUpdate(
-      (current) => ({
-        ...current,
-        activeAttack: { id: crypto.randomUUID(), fromIndex, toIndex: targetIndex },
-      }),
+      (current) => ({ ...current, activeAttack: attack }),
       {
         extraFields:
           attackerCardName && targetCardName
@@ -3276,6 +3407,7 @@ function MultiplayerDuelFieldPage() {
             : undefined,
       },
     );
+    recordReplayFrame({ kind: 'attack', role: state.role, attack });
   };
 
   const handleAttackCancel = () => setPendingAttack(null);
@@ -3620,11 +3752,11 @@ function MultiplayerDuelFieldPage() {
       const opponentHasMonsters = opponent?.monsterZones.some((zone) => zone !== null) ?? false;
       if (!opponentHasMonsters) {
         const attackerCardName = me?.monsterZones[index]?.card.name;
+        // See handleAttackTargetClick's own comment on why this needs its
+        // own replay frame.
+        const attack = { id: crypto.randomUUID(), fromIndex: index, toIndex: null };
         applyMeUpdate(
-          (current) => ({
-            ...current,
-            activeAttack: { id: crypto.randomUUID(), fromIndex: index, toIndex: null },
-          }),
+          (current) => ({ ...current, activeAttack: attack }),
           {
             extraFields: attackerCardName
               ? {
@@ -3635,6 +3767,7 @@ function MultiplayerDuelFieldPage() {
               : undefined,
           },
         );
+        if (state.role) recordReplayFrame({ kind: 'attack', role: state.role, attack });
       } else {
         setPendingAttack({ index });
       }
@@ -5142,30 +5275,32 @@ function MultiplayerDuelFieldPage() {
               .sort((a, b) => a.sentAt - b.sentAt)
               .map((message) => renderChatMessage(message, state.role, myAvatarId, opponent.avatarId))}
           </div>
-          <div className="MultiplayerDuelFieldPage-chatInputRow">
-            <input
-              type="text"
-              className="MultiplayerDuelFieldPage-chatInput"
-              placeholder="Type a message…"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={handleChatInputKeyDown}
-            />
-            <button
-              type="button"
-              className="MultiplayerDuelFieldPage-expressionButton"
-              onClick={() => handleSendExpression('thumbsUp')}
-            >
-              <img src={thumbsUpIcon} alt="Thumbs up" />
-            </button>
-            <button
-              type="button"
-              className="MultiplayerDuelFieldPage-expressionButton"
-              onClick={() => handleSendExpression('thinking')}
-            >
-              <img src={thinkingIcon} alt="Thinking" />
-            </button>
-          </div>
+          {!isSpectator && (
+            <div className="MultiplayerDuelFieldPage-chatInputRow">
+              <input
+                type="text"
+                className="MultiplayerDuelFieldPage-chatInput"
+                placeholder="Type a message…"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={handleChatInputKeyDown}
+              />
+              <button
+                type="button"
+                className="MultiplayerDuelFieldPage-expressionButton"
+                onClick={() => handleSendExpression('thumbsUp')}
+              >
+                <img src={thumbsUpIcon} alt="Thumbs up" />
+              </button>
+              <button
+                type="button"
+                className="MultiplayerDuelFieldPage-expressionButton"
+                onClick={() => handleSendExpression('thinking')}
+              >
+                <img src={thinkingIcon} alt="Thinking" />
+              </button>
+            </div>
+          )}
           <div className="MultiplayerDuelFieldPage-hudRow MultiplayerDuelFieldPage-hudRow--player">
             <div className="MultiplayerDuelFieldPage-hudInfo">
               <div className="MultiplayerDuelFieldPage-hudUsernameRow">
@@ -5283,6 +5418,16 @@ function MultiplayerDuelFieldPage() {
   const cardPositionEntries = computeCardPositions(
     { ...renderMe, grave: displayGrave, banished: displayBanished },
     opponent,
+    // Reuses ReplayFieldPage's own "Card Visibility" mechanism (see
+    // cardPositions.ts's own hideMyHand option) rather than a separate
+    // spectator-only code path — a spectator should never see either
+    // side's hand, and hideMyHand already draws `renderMe`'s hand (the
+    // host's, here — see useMultiplayerDuel's own `spectating` param for
+    // why `me` is always the host's perspective while spectating) as
+    // hidden face-down proxies, exactly like ReplayFieldPage's own "Hide
+    // Both" option does. The opponent's hand was already always hidden
+    // this way even live, for every viewer — nothing extra needed there.
+    isSpectator ? { hideMyHand: true } : undefined,
   );
 
   // TEMPORARY DIAGNOSTIC — remove once the animation bug is confirmed
@@ -5392,24 +5537,26 @@ function MultiplayerDuelFieldPage() {
             </button>
           </div>
 
-          <div className="MultiplayerDuelFieldPage-matchActionsRow">
-            <button
-              type="button"
-              className="MultiplayerDuelFieldPage-matchActionButton"
-              disabled={isMatchOver}
-              onClick={handleAdmitDefeatClick}
-            >
-              Forfeit
-            </button>
-            <button
-              type="button"
-              className="MultiplayerDuelFieldPage-matchActionButton"
-              disabled={isMatchOver}
-              onClick={handleOfferDrawClick}
-            >
-              Offer Draw
-            </button>
-          </div>
+          {!isSpectator && (
+            <div className="MultiplayerDuelFieldPage-matchActionsRow">
+              <button
+                type="button"
+                className="MultiplayerDuelFieldPage-matchActionButton"
+                disabled={isMatchOver}
+                onClick={handleAdmitDefeatClick}
+              >
+                Forfeit
+              </button>
+              <button
+                type="button"
+                className="MultiplayerDuelFieldPage-matchActionButton"
+                disabled={isMatchOver}
+                onClick={handleOfferDrawClick}
+              >
+                Offer Draw
+              </button>
+            </div>
+          )}
 
           <div className="MultiplayerDuelFieldPage-matchStatus">
             <div>
@@ -5419,6 +5566,8 @@ function MultiplayerDuelFieldPage() {
             {state.role === 'player1' ? matchWins.player1 : matchWins.player2} · Opponent{' '}
             {state.role === 'player1' ? matchWins.player2 : matchWins.player1}
           </div>
+
+          <SpectatorList spectators={spectators} />
         </div>
       </div>
 
@@ -5451,34 +5600,36 @@ function MultiplayerDuelFieldPage() {
           field itself — see DuelField.tsx's own deckRow comment), Reveal
           Hand/Shuffle Hand underneath, grouping every "player action, not
           a card action" button in one place. */}
-      <div className="MultiplayerDuelFieldPage-handButtonRow">
-        <DieRollButton roll={myDieRoll ?? null} onRoll={handleRollDie} />
-        <CoinFlipButton flip={myCoinFlip ?? null} onFlip={handleFlipCoin} />
-        <button
-          type="button"
-          className={
-            handRevealed
-              ? 'MultiplayerDuelFieldPage-revealHandButton MultiplayerDuelFieldPage-revealHandButton--active'
-              : 'MultiplayerDuelFieldPage-revealHandButton'
-          }
-          onClick={handleRevealHandClick}
-          title={handRevealed ? 'Hide Hand' : 'Reveal Hand'}
-        >
-          <img
-            src={revealHandIcon}
-            alt={handRevealed ? 'Hide Hand' : 'Reveal Hand'}
-            className="MultiplayerDuelFieldPage-handButtonIcon"
-          />
-        </button>
-        <button
-          type="button"
-          className="MultiplayerDuelFieldPage-shuffleHandButton"
-          onClick={handleShuffleHand}
-          title="Shuffle Hand"
-        >
-          <img src={shuffleHandIcon} alt="Shuffle Hand" className="MultiplayerDuelFieldPage-handButtonIcon" />
-        </button>
-      </div>
+      {!isSpectator && (
+        <div className="MultiplayerDuelFieldPage-handButtonRow">
+          <DieRollButton roll={myDieRoll ?? null} onRoll={handleRollDie} />
+          <CoinFlipButton flip={myCoinFlip ?? null} onFlip={handleFlipCoin} />
+          <button
+            type="button"
+            className={
+              handRevealed
+                ? 'MultiplayerDuelFieldPage-revealHandButton MultiplayerDuelFieldPage-revealHandButton--active'
+                : 'MultiplayerDuelFieldPage-revealHandButton'
+            }
+            onClick={handleRevealHandClick}
+            title={handRevealed ? 'Hide Hand' : 'Reveal Hand'}
+          >
+            <img
+              src={revealHandIcon}
+              alt={handRevealed ? 'Hide Hand' : 'Reveal Hand'}
+              className="MultiplayerDuelFieldPage-handButtonIcon"
+            />
+          </button>
+          <button
+            type="button"
+            className="MultiplayerDuelFieldPage-shuffleHandButton"
+            onClick={handleShuffleHand}
+            title="Shuffle Hand"
+          >
+            <img src={shuffleHandIcon} alt="Shuffle Hand" className="MultiplayerDuelFieldPage-handButtonIcon" />
+          </button>
+        </div>
+      )}
 
       {/* marginLeft here (half of BOARD_WIDTH, negative) is what actually
           centers this on the page — see MultiplayerDuelFieldPage.css's own
@@ -5571,8 +5722,29 @@ function MultiplayerDuelFieldPage() {
               onAttackTarget={handleAttackTargetClick}
               onFieldInstanceHoverChange={setHoveredFieldInstanceId}
               onSelectCard={handleSelectCard}
+              // Duel Spectating — suppresses every hover context menu on
+              // both sides' field/spell-trap/field-zone cards (see
+              // DuelField's own menusDisabled prop, already proven out by
+              // ReplayFieldPage), and hides both sides' face-down cards
+              // (hideOwnFaceDown here covers `renderMe`'s — the host's,
+              // per useMultiplayerDuel's own `spectating` param — side;
+              // the opponent's face-down cards were already always
+              // hidden for every viewer, live or not).
+              menusDisabled={isSpectator}
+              hideOwnFaceDown={isSpectator}
             />
 
+            {/* Duel Spectating — the interactive hand grid (hover menu +
+                Card Display) only ever makes sense for the account that
+                actually owns this hand; a spectator's own `renderMe.hand`
+                is placeholder data anyway (see useMultiplayerDuel's own
+                spectatorPlaceholderInstances), so there's nothing real to
+                hover here at all. Not just menusDisabled — the whole
+                component is skipped, matching "hands... invisible" from
+                the feature's own spec (CardLayer already renders it as a
+                hidden face-down proxy via hideMyHand above; this is only
+                ever the separate hover-target grid underneath it). */}
+            {!isSpectator && (
             <Hand
               cards={renderMe.hand}
               onCardHover={handleCardHover}
@@ -5588,6 +5760,7 @@ function MultiplayerDuelFieldPage() {
               onReveal={handleHandReveal}
               onDeclare={handleHandDeclare}
             />
+            )}
 
             {/* Renders every card in cardPositionEntries on top of
                 everything above — DOM order alone (this is the last
@@ -5743,30 +5916,32 @@ function MultiplayerDuelFieldPage() {
             prop below), visible to both players (see
             renderExpressionOverlay's own comment for how the opponent's
             side of this works). */}
-        <div className="MultiplayerDuelFieldPage-chatInputRow">
-          <input
-            type="text"
-            className="MultiplayerDuelFieldPage-chatInput"
-            placeholder="Type a message…"
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            onKeyDown={handleChatInputKeyDown}
-          />
-          <button
-            type="button"
-            className="MultiplayerDuelFieldPage-expressionButton"
-            onClick={() => handleSendExpression('thumbsUp')}
-          >
-            <img src={thumbsUpIcon} alt="Thumbs up" />
-          </button>
-          <button
-            type="button"
-            className="MultiplayerDuelFieldPage-expressionButton"
-            onClick={() => handleSendExpression('thinking')}
-          >
-            <img src={thinkingIcon} alt="Thinking" />
-          </button>
-        </div>
+        {!isSpectator && (
+          <div className="MultiplayerDuelFieldPage-chatInputRow">
+            <input
+              type="text"
+              className="MultiplayerDuelFieldPage-chatInput"
+              placeholder="Type a message…"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={handleChatInputKeyDown}
+            />
+            <button
+              type="button"
+              className="MultiplayerDuelFieldPage-expressionButton"
+              onClick={() => handleSendExpression('thumbsUp')}
+            >
+              <img src={thumbsUpIcon} alt="Thumbs up" />
+            </button>
+            <button
+              type="button"
+              className="MultiplayerDuelFieldPage-expressionButton"
+              onClick={() => handleSendExpression('thinking')}
+            >
+              <img src={thinkingIcon} alt="Thinking" />
+            </button>
+          </div>
+        )}
         {/* Avatar box on the right, spanning the full height of the
             username/LP counter stacked to its left — username FIRST
             (top), LP counter SECOND (bottom); the opponent's own hudRow
