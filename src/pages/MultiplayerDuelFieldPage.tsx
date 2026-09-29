@@ -938,8 +938,26 @@ function MultiplayerDuelFieldPage() {
     }
 
     latestMeRef.current = me;
+    // `me` is a freshly spread object on EVERY call to useMultiplayerDuel,
+    // whether or not the underlying data actually changed (see that
+    // hook's own `me`/`opponent` construction) — for a real player this
+    // is usually harmless, since privateState/duelDoc[role] themselves
+    // only change reference when a genuine Firestore snapshot arrives,
+    // bounding how often this effect's body actually runs. A spectator's
+    // own `me`, though, is rebuilt from freshly-generated placeholder
+    // hand/deck arrays every single time (see spectatorPlaceholderInstances),
+    // which never naturally settles into a stable reference on its own —
+    // without this guard, setRenderMeState(me) below would fire on every
+    // render with a new-but-equivalent object, each one triggering
+    // another render that rebuilds another new `me`, forever (this is
+    // exactly what was producing "Maximum update depth exceeded" for
+    // spectators). Comparing against the CURRENT renderMeState by value
+    // (not reference) is what actually breaks that cycle — once the
+    // content genuinely stops changing, this stops re-setting state at
+    // all, for spectators and players alike.
+    if (renderMeState && duelStatesEqual(me, renderMeState)) return;
     setRenderMeState(me);
-  }, [me]);
+  }, [me, renderMeState]);
 
   // Auto-dismisses the "will go first" banner a couple of seconds after
   // it's actually showing — before turnPlayer is known there's nothing
