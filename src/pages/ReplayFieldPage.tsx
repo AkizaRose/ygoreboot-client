@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useReplayPlayback, type ReplayPlayerState } from '../components/Replay/useReplayPlayback';
 import { getAvatarUrl } from '../components/Avatar/avatars';
+import { getSleeveUrl } from '../components/Sleeve/sleeves';
 import DuelField from '../components/DuelField/DuelField';
 import Hand from '../components/DuelField/Hand';
 import CardLayer from '../duel/CardLayer';
@@ -130,6 +131,7 @@ function toOpponentDuelState(
   uid: string,
   username: string,
   avatarId: string,
+  sleeveId: string,
 ): OpponentDuelState {
   // player.activeAttack isn't part of publicState (PublicPlayerState's own
   // activeAttack was never part of buildPublicState's actual output — see
@@ -141,6 +143,7 @@ function toOpponentDuelState(
     uid,
     username,
     avatarId,
+    sleeveId,
     activeAttack: player.activeAttack ?? null,
   };
 }
@@ -358,8 +361,10 @@ function ReplayFieldPage() {
 
   const myUsername = myRole === 'player1' ? meta.player1Username : meta.player2Username;
   const myAvatarId = myRole === 'player1' ? meta.player1AvatarId : meta.player2AvatarId;
+  const mySleeveId = myRole === 'player1' ? meta.player1SleeveId : meta.player2SleeveId;
   const opponentUsername = opponentRole === 'player1' ? meta.player1Username : meta.player2Username;
   const opponentAvatarId = opponentRole === 'player1' ? meta.player1AvatarId : meta.player2AvatarId;
+  const opponentSleeveId = opponentRole === 'player1' ? meta.player1SleeveId : meta.player2SleeveId;
 
   // Shown in place of the whole field, same as the live duel field's own
   // showFirstPlayerBanner branch — see the effect above for why this reads
@@ -375,7 +380,7 @@ function ReplayFieldPage() {
   }
 
   const me = toMyDuelState(myFrame);
-  const opponent = toOpponentDuelState(opponentFrame, '', opponentUsername, opponentAvatarId);
+  const opponent = toOpponentDuelState(opponentFrame, '', opponentUsername, opponentAvatarId, opponentSleeveId);
   // The two independent flags cardVisibility actually maps onto —
   // ownVisible covers the viewer's own hand and face-down cards,
   // opponentVisible the opponent's. 'showBoth' sets both, 'hideBoth'
@@ -516,6 +521,8 @@ function ReplayFieldPage() {
               menusDisabled
               hideOwnFaceDown={!ownVisible}
               revealOpponentFaceDown={opponentVisible}
+              playerSleeveUrl={getSleeveUrl(mySleeveId)}
+              opponentSleeveUrl={getSleeveUrl(opponentSleeveId)}
             />
             <Hand
               cards={me.hand}
@@ -567,6 +574,8 @@ function ReplayFieldPage() {
               onCardHover={handleCardHover}
               onCardHoverEnd={handleCardHoverEnd}
               duelNumber={current.duelNumber}
+              mySleeveUrl={getSleeveUrl(mySleeveId)}
+              opponentSleeveUrl={getSleeveUrl(opponentSleeveId)}
             />
 
             {/* Same shared reveal-zone die roll / coin flip display as the

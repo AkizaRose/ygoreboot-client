@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { db } from '../../firebase/config';
+import { DEFAULT_SLEEVE_ID } from '../Sleeve/sleeves';
 
 export interface DuelHost {
   uid: string;
   username: string;
   avatarId: string;
+  sleeveId: string;
 }
 
 // Real-time list of everyone currently hosting a duel — every signed-in
@@ -22,8 +24,21 @@ export function useDuelHosts(): { hosts: DuelHost[]; loading: boolean } {
     const unsubscribe = onSnapshot(hostsQuery, (snapshot) => {
       setHosts(
         snapshot.docs.map((docSnapshot) => {
-          const data = docSnapshot.data() as { uid: string; username: string; avatarId: string };
-          return { uid: data.uid, username: data.username, avatarId: data.avatarId };
+          const data = docSnapshot.data() as {
+            uid: string;
+            username: string;
+            avatarId: string;
+            sleeveId?: string;
+          };
+          return {
+            uid: data.uid,
+            username: data.username,
+            avatarId: data.avatarId,
+            // A host document written before this feature existed simply
+            // has no sleeveId field — same "missing means default" pattern
+            // as avatarId's own DEFAULT_AVATAR_ID fallback elsewhere.
+            sleeveId: data.sleeveId ?? DEFAULT_SLEEVE_ID,
+          };
         }),
       );
       setLoading(false);

@@ -346,6 +346,12 @@ interface PlayerFieldProps {
   // page never passes either.
   hideOwnFaceDown?: boolean;
   revealOpponentFaceDown?: boolean;
+  // The Main/Extra Deck pile image for THIS side specifically — the
+  // player's own selected sleeve when this is their own (non-flipped)
+  // side, or the opponent's selected sleeve when flipped. Defaults to
+  // the stock card back so every existing call site (and Replay, before
+  // it's wired up) keeps rendering exactly as before.
+  cardBackUrl?: string;
 }
 
 function PlayerField({
@@ -394,6 +400,7 @@ function PlayerField({
   menusDisabled = false,
   hideOwnFaceDown = false,
   revealOpponentFaceDown = false,
+  cardBackUrl = cardBackImg,
 }: PlayerFieldProps) {
   const fieldZones = flipped ? [...FIELD_ZONES].reverse() : FIELD_ZONES;
   const deckZones = flipped ? [...DECK_ZONES].reverse() : DECK_ZONES;
@@ -699,7 +706,7 @@ function PlayerField({
             <FieldZone
               key={i}
               label={zone.label}
-              image={cardBackImg}
+              image={cardBackUrl}
               count={resolvedMainDeckCount}
               pileCountOffsetX={mainDeckOffset.x}
               pileCountOffsetY={mainDeckOffset.y}
@@ -715,7 +722,7 @@ function PlayerField({
             <FieldZone
               key={i}
               label={zone.label}
-              image={cardBackImg}
+              image={cardBackUrl}
               count={resolvedExtraDeckCount}
               pileCountOffsetX={extraDeckOffset.x}
               pileCountOffsetY={extraDeckOffset.y}
@@ -884,6 +891,13 @@ interface DuelFieldProps {
   // with which instance for no benefit.
   hideOwnFaceDown?: boolean;
   revealOpponentFaceDown?: boolean;
+  // Each side's own selected card back (sleeve) image — see
+  // PlayerFieldProps' own cardBackUrl for the full reasoning. Both
+  // default to the stock card back in PlayerField itself, so omitting
+  // either here (e.g. before a caller is updated to pass them) still
+  // renders exactly as before.
+  playerSleeveUrl?: string;
+  opponentSleeveUrl?: string;
 }
 
 function DuelField({
@@ -941,6 +955,8 @@ function DuelField({
   menusDisabled = false,
   hideOwnFaceDown = false,
   revealOpponentFaceDown = false,
+  playerSleeveUrl,
+  opponentSleeveUrl,
 }: DuelFieldProps) {
   return (
     <div className="DuelField">
@@ -969,6 +985,7 @@ function DuelField({
         isMyTurn={isMyTurn}
         hideOwnFaceDown={hideOwnFaceDown}
         revealOpponentFaceDown={revealOpponentFaceDown}
+        cardBackUrl={opponentSleeveUrl}
       />
       {/* Same 9-column grid as every zone row (.DuelField-row) — the
           tracker itself sits at grid-column: 9 (see PhaseTracker.css),
@@ -1032,6 +1049,7 @@ function DuelField({
         onToggleRitualZoneMaterial={onToggleRitualZoneMaterial}
         onViewGrave={onViewGrave}
         onViewBanished={onViewBanished}
+        cardBackUrl={playerSleeveUrl}
       />
     </div>
   );

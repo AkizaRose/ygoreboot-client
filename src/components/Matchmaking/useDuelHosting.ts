@@ -5,6 +5,8 @@ import { db } from '../../firebase/config';
 import { useAuth } from '../../auth/AuthContext';
 import { useUserAvatar } from '../Avatar/useUserAvatar';
 import { DEFAULT_AVATAR_ID } from '../Avatar/avatars';
+import { useUserSleeve } from '../Sleeve/useUserSleeve';
+import { DEFAULT_SLEEVE_ID } from '../Sleeve/sleeves';
 import { useSavedDecks } from '../DeckManager/useSavedDecks';
 import { validateSavedDeckLegality } from '../../utils/deckLegality';
 import type { DuelHost } from './useDuelHosts';
@@ -13,6 +15,7 @@ interface DuelInvite {
   joinerUid: string;
   joinerUsername: string;
   joinerAvatarId: string;
+  joinerSleeveId: string;
   duelId: string;
 }
 
@@ -26,6 +29,7 @@ interface UseDuelHostingResult {
 export function useDuelHosting(): UseDuelHostingResult {
   const { currentUser } = useAuth();
   const { avatarId } = useUserAvatar();
+  const { sleeveId } = useUserSleeve();
   const navigate = useNavigate();
   const [isHosting, setIsHosting] = useState(false);
   const { getSavedDeck, loading: decksLoading } = useSavedDecks();
@@ -105,6 +109,7 @@ export function useDuelHosting(): UseDuelHostingResult {
             uid: invite.joinerUid,
             username: invite.joinerUsername,
             avatarId: invite.joinerAvatarId,
+            sleeveId: invite.joinerSleeveId,
           },
         },
       });
@@ -126,11 +131,12 @@ export function useDuelHosting(): UseDuelHostingResult {
         uid: currentUser.uid,
         username: currentUser.displayName,
         avatarId: avatarId ?? DEFAULT_AVATAR_ID,
+        sleeveId: sleeveId ?? DEFAULT_SLEEVE_ID,
         createdAt: serverTimestamp(),
       });
       setIsHosting(true);
     },
-    [currentUser, avatarId, assertDeckIsLegal],
+    [currentUser, avatarId, sleeveId, assertDeckIsLegal],
   );
 
   const stopHosting = useCallback(async () => {
@@ -172,6 +178,7 @@ export function useDuelHosting(): UseDuelHostingResult {
           joinerUid: currentUser.uid,
           joinerUsername: currentUser.displayName,
           joinerAvatarId: avatarId ?? DEFAULT_AVATAR_ID,
+          joinerSleeveId: sleeveId ?? DEFAULT_SLEEVE_ID,
           duelId,
           createdAt: serverTimestamp(),
         });
@@ -183,11 +190,16 @@ export function useDuelHosting(): UseDuelHostingResult {
         state: {
           role: 'player2',
           myDeckId: deckId,
-          opponentInfo: { uid: host.uid, username: host.username, avatarId: host.avatarId },
+          opponentInfo: {
+            uid: host.uid,
+            username: host.username,
+            avatarId: host.avatarId,
+            sleeveId: host.sleeveId,
+          },
         },
       });
     },
-    [currentUser, avatarId, navigate, assertDeckIsLegal],
+    [currentUser, avatarId, sleeveId, navigate, assertDeckIsLegal],
   );
 
   return { isHosting, startHosting, stopHosting, joinHost };

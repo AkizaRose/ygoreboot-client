@@ -132,8 +132,10 @@ export interface ReplaySnapshot {
 export interface ReplayMeta {
   player1Username: string;
   player1AvatarId: string;
+  player1SleeveId: string;
   player2Username: string;
   player2AvatarId: string;
+  player2SleeveId: string;
   myRole: PlayerRole;
 }
 
@@ -379,8 +381,10 @@ export function useReplayPlayback(duelId: string | undefined, currentUid: string
       setMeta({
         player1Username: duelData.player1Username ?? 'Player 1',
         player1AvatarId: duelData.player1AvatarId ?? '',
+        player1SleeveId: duelData.player1SleeveId ?? '',
         player2Username: duelData.player2Username ?? 'Player 2',
         player2AvatarId: duelData.player2AvatarId ?? '',
+        player2SleeveId: duelData.player2SleeveId ?? '',
         myRole,
       });
       setSnapshots(built);

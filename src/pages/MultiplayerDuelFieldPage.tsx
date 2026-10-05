@@ -24,6 +24,8 @@ import LifePointCounter from '../components/DuelField/LifePointCounter';
 import useAnimatedCount from '../components/DuelField/useAnimatedCount';
 import PlayerAvatarBox from '../components/Avatar/PlayerAvatarBox';
 import { useUserAvatar } from '../components/Avatar/useUserAvatar';
+import { useUserSleeve } from '../components/Sleeve/useUserSleeve';
+import { getSleeveUrl } from '../components/Sleeve/sleeves';
 import SummonPositionDialog from '../components/DuelField/SummonPositionDialog';
 import StatAdjustDialog from '../components/DuelField/StatAdjustDialog';
 import ConfirmDialog from '../components/ConfirmDialog/ConfirmDialog';
@@ -467,6 +469,7 @@ function MultiplayerDuelFieldPage() {
     role: hookRole,
     opponentInfo: hookOpponentInfo,
     hasReceivedDuelSnapshot,
+    hostSleeveId,
     me,
     opponent,
     turnPlayer,
@@ -590,6 +593,22 @@ function MultiplayerDuelFieldPage() {
   // messages resolve their avatar from opponent.avatarId instead, the
   // same already-available field PlayerAvatarBox/the opponent HUD use.
   const { avatarId: myAvatarId } = useUserAvatar();
+  // This player's own selected card back — the opponent's own sleeve
+  // comes from opponent.sleeveId instead (written once at duel creation
+  // — see useMultiplayerDuel's own DuelDoc.player1SleeveId/
+  // player2SleeveId), the same pattern PlayerAvatarBox/chat already use
+  // for avatarId above.
+  const { sleeveId: mySleeveId } = useUserSleeve();
+  // The actual URL to render for renderMe's own deck piles/hand-back
+  // images: a real player's own live selection (immediate feedback if
+  // they change it mid-duel), or, while spectating, the HOST's own
+  // selection frozen in the duel doc (see useMultiplayerDuel's own
+  // hostSleeveId comment for why the viewer's own preference would be
+  // wrong there). The opponent's side never needs this same branch —
+  // opponent.sleeveId already resolves correctly for both real players
+  // and spectators (see useMultiplayerDuel's own opponent construction).
+  const playerSleeveUrl = getSleeveUrl(isSpectator ? hostSleeveId : mySleeveId);
+  const opponentSleeveUrl = getSleeveUrl(opponent?.sleeveId);
   const allCards = cardData as CardData[];
   const cardById = useMemo(() => new Map(allCards.map((card) => [card.id, card])), [allCards]);
 
@@ -5750,6 +5769,8 @@ function MultiplayerDuelFieldPage() {
               // hidden for every viewer, live or not).
               menusDisabled={isSpectator}
               hideOwnFaceDown={isSpectator}
+              playerSleeveUrl={playerSleeveUrl}
+              opponentSleeveUrl={opponentSleeveUrl}
             />
 
             {/* Duel Spectating — the interactive hand grid (hover menu +
@@ -5807,6 +5828,8 @@ function MultiplayerDuelFieldPage() {
               onCardHover={handleCardHover}
               onCardHoverEnd={handleCardHoverEnd}
               duelNumber={duelNumber}
+              mySleeveUrl={playerSleeveUrl}
+              opponentSleeveUrl={opponentSleeveUrl}
             />
 
             {/* The die roll / coin flip itself — centered in the same

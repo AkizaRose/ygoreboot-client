@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import ChangeCredentialDialog from '../components/ChangeCredentialDialog/ChangeCredentialDialog';
 import AvatarSelector from '../components/Avatar/AvatarSelector';
+import SleeveSelector from '../components/Sleeve/SleeveSelector';
 import { useMatchRecord } from '../components/Account/useMatchRecord';
 import './AccountPage.css';
 
@@ -23,6 +24,7 @@ function AccountPage() {
     <div className="AccountPage">
       <div className="AccountPage-content">
         <AvatarSelector />
+        <SleeveSelector />
 
         {/* Stacks the account-details box and the new Match Record box
             in a column together, rather than letting the match record

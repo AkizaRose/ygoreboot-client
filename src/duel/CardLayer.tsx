@@ -244,6 +244,17 @@ interface CardLayerProps {
   // isDuelReset's own comment), which is what made the opponent's hand,
   // field and grave all appear empty at the start of duels 2 and 3.
   duelNumber?: number;
+  // Each side's own selected card back (sleeve) image — used for EVERY
+  // face-down card this layer renders (hand cards, in-transit cards,
+  // shuffling cards, returning cards), resolved per-card via
+  // containsMeInstance/containsOpponentInstance against the entry's own
+  // instanceId (see getCardBackUrl below), the same ownership-resolution
+  // pattern already used for getSelectionColor/getHiddenSource. Both
+  // default to the stock card back, matching DuelField's own
+  // cardBackUrl default, so this keeps rendering exactly as before
+  // wherever a caller hasn't been updated to pass them yet.
+  mySleeveUrl?: string;
+  opponentSleeveUrl?: string;
 }
 
 interface CardVisualPosition {
@@ -612,6 +623,7 @@ function AnimatedCard({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  cardBackUrl = cardBackImg,
 }: {
   entry: CardPositionEntry;
   hiddenSource?: HiddenSource | null;
@@ -661,6 +673,11 @@ function AnimatedCard({
   // Hand.tsx's own .Hand-cell), which the reveal zone doesn't have.
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
+  // This card's own back-face image — resolved per-card by the caller
+  // (see CardLayer's own getCardBackUrl) since AnimatedCard itself has
+  // no ownership context of its own. Defaults to the stock card back,
+  // same as DuelField's own cardBackUrl default.
+  cardBackUrl?: string;
 }) {
   const targetRotationY = entry.faceDown ? 180 : 0;
   // Reflects whichever source's ACTUAL faceDown value applies — not just
@@ -889,7 +906,7 @@ function AnimatedCard({
               }}
             >
               <img
-                src={cardBackImg}
+                src={cardBackUrl}
                 alt=""
                 style={{
                   width: '100%',
@@ -1045,11 +1062,45 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
     onCardHover,
     onCardHoverEnd,
     duelNumber,
+    mySleeveUrl = cardBackImg,
+    opponentSleeveUrl = cardBackImg,
   },
   ref,
 ) {
   const opponentRole: PlayerRole | null =
     myRole === 'player1' ? 'player2' : myRole === 'player2' ? 'player1' : null;
+
+  // Resolves which side's sleeve a given rendered card's back should
+  // show — reuses the same containsMeInstance/containsOpponentInstance
+  // ownership checks already used for getSelectionColor/getHiddenSource
+  // above, plus the same 'opponent-' synthetic-id prefix convention
+  // those checks rely on elsewhere in this file (opponent hand/deck
+  // proxy entries never have a real instanceId to look up at all, so
+  // they're recognized by that prefix directly instead). The 'anon-'
+  // prefix is the SAME idea for a third case those two don't cover: the
+  // opponent's own draw (anon-draw-N) and its reverse, a hand card
+  // returning to their deck (anon-todeck-N) — see this component's own
+  // handGrew/mainDeckShrank effect above. Neither the opponent's hand
+  // proxy ids nor their real-instanceId zones apply there (the card
+  // itself is never individually known to this client at all, same
+  // reason those ids exist), so without this check they fell all the
+  // way through to the final fallback below and showed MY OWN sleeve on
+  // the opponent's card for the length of that flight — briefly
+  // "switching" to my sleeve mid-draw before correcting itself the
+  // moment the card landed and became a real 'opponent-hand-N' entry.
+  // Falls back to MY OWN sleeve for anything that resolves to neither
+  // side (in practice this shouldn't happen for a face-down card, but
+  // it keeps this total rather than throwing on an unrecognized
+  // instanceId).
+  const getCardBackUrl = (instanceId: string): string => {
+    if (instanceId.startsWith('opponent-') || instanceId.startsWith('anon-')) {
+      return opponentSleeveUrl;
+    }
+    if (opponent && containsOpponentInstance(opponent, instanceId)) return opponentSleeveUrl;
+    if (me && containsMeInstance(me, instanceId)) return mySleeveUrl;
+    return mySleeveUrl;
+  };
+
   const layerRef = useRef<HTMLDivElement | null>(null);
   const [stageOffset, setStageOffset] = useState<{ x: number; y: number } | null>(null);
   const previousOpponentRef = useRef<OpponentDuelState | null>(null);
@@ -1959,6 +2010,7 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
         startOverride={card.from}
         coordinateOffset={card.fixed ? stageOffset : null}
         animationDuration={0.5}
+        cardBackUrl={getCardBackUrl(card.id)}
         onAnimationComplete={() => {
           setInTransitCards((current) => current.filter((item) => item.id !== card.id));
         }}
@@ -1992,6 +2044,7 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
         startOverride={card.from}
         coordinateOffset={fixed ? stageOffset : null}
         animationDuration={0.45}
+        cardBackUrl={getCardBackUrl(card.id)}
         onAnimationComplete={() => {
           setReturningCards((current) => current.filter((item) => item.id !== card.id));
         }}
@@ -2008,6 +2061,7 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
       key={entry.instanceId}
       entry={entry}
       coordinateOffset={stageOffset}
+      cardBackUrl={getCardBackUrl(entry.instanceId)}
       selectionColor={getSelectionColor(
         entry.instanceId,
         mySelection,
@@ -2047,6 +2101,7 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
         viaOverride={card.via}
         coordinateOffset={fixed ? stageOffset : null}
         animationDuration={0.6}
+        cardBackUrl={getCardBackUrl(card.id)}
         onAnimationComplete={() => {
           setShufflingCards((current) => current.filter((item) => item.id !== card.id));
         }}
@@ -2180,6 +2235,7 @@ const CardLayer = forwardRef<CardLayerHandle, CardLayerProps>(function CardLayer
             entry={hoverEntry}
             hiddenSource={getHiddenSource(entry, previousOpponent, opponent, me)}
             shuffleOscillation={shuffleOscillation}
+            cardBackUrl={getCardBackUrl(entry.instanceId)}
             selectionColor={
               isSelectableHandCard
                 ? selectedRitualHandIndices.includes(myHandIndex)

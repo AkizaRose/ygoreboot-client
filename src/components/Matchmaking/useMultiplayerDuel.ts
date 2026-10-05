@@ -18,6 +18,7 @@ import {
 import { db, rtdb } from '../../firebase/config';
 import { useAuth } from '../../auth/AuthContext';
 import { useUserAvatar } from '../Avatar/useUserAvatar';
+import { useUserSleeve } from '../Sleeve/useUserSleeve';
 import { useSavedDecks } from '../DeckManager/useSavedDecks';
 import { shuffle } from '../../utils/shuffle';
 import cardData from '../../data/carddata.json';
@@ -88,6 +89,7 @@ export interface OpponentInfo {
   uid: string;
   username: string;
   avatarId: string;
+  sleeveId: string;
 }
 
 // The half of a player's state that's safe for the OPPONENT to read too —
@@ -233,9 +235,11 @@ interface DuelDoc {
   player1Uid: string;
   player1Username: string;
   player1AvatarId: string;
+  player1SleeveId: string;
   player2Uid: string;
   player2Username: string;
   player2AvatarId: string;
+  player2SleeveId: string;
   player1?: PublicPlayerState;
   player2?: PublicPlayerState;
   // Whose turn it currently is, and what phase of it — global, shared
@@ -883,6 +887,7 @@ export interface OpponentDuelState extends PublicPlayerState {
   uid: string;
   username: string;
   avatarId: string;
+  sleeveId: string;
 }
 
 interface UseMultiplayerDuelResult {
@@ -1138,6 +1143,7 @@ export function useMultiplayerDuel(
 ): UseMultiplayerDuelResult {
   const { currentUser } = useAuth();
   const { avatarId: myAvatarId } = useUserAvatar();
+  const { sleeveId: mySleeveId } = useUserSleeve();
   const { getSavedDeck, loading: decksLoading } = useSavedDecks();
 
   const [duelDoc, setDuelDoc] = useState<DuelDoc | null>(null);
@@ -1186,11 +1192,13 @@ export function useMultiplayerDuel(
             uid: duelDoc.player2Uid,
             username: duelDoc.player2Username,
             avatarId: duelDoc.player2AvatarId,
+            sleeveId: duelDoc.player2SleeveId,
           }
         : {
             uid: duelDoc.player1Uid,
             username: duelDoc.player1Username,
             avatarId: duelDoc.player1AvatarId,
+            sleeveId: duelDoc.player1SleeveId,
           }
       : undefined);
   // A ref mirror of duelDoc, kept in sync by the effect right below —
@@ -1317,9 +1325,11 @@ export function useMultiplayerDuel(
         player1Uid,
         player1Username,
         player1AvatarId: isPlayer1 ? myAvatarId : opponentInfo.avatarId,
+        player1SleeveId: isPlayer1 ? mySleeveId : opponentInfo.sleeveId,
         player2Uid,
         player2Username,
         player2AvatarId: isPlayer1 ? opponentInfo.avatarId : myAvatarId,
+        player2SleeveId: isPlayer1 ? opponentInfo.sleeveId : mySleeveId,
         createdAt: serverTimestamp(),
         turnPlayer: firstPlayerRole,
         currentPhase: 'draw',
@@ -1760,6 +1770,7 @@ export function useMultiplayerDuel(
         uid: duelDoc[`${opponentRole}Uid`],
         username: duelDoc[`${opponentRole}Username`],
         avatarId: duelDoc[`${opponentRole}AvatarId`],
+        sleeveId: duelDoc[`${opponentRole}SleeveId`],
       };
     }
   }
@@ -1791,6 +1802,15 @@ export function useMultiplayerDuel(
   const myViewingLocation = (role && duelDoc?.[`${role}ViewingLocation`]) ?? null;
   const opponentViewingLocation =
     (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}ViewingLocation`]) ?? null;
+  // Only meaningful while spectating — see this hook's own `spectating`
+  // param comment for why role is forced to 'player1' (the host) there:
+  // MultiplayerDuelFieldPage's own live useUserSleeve() already covers a
+  // real player's OWN sleeve (with immediate feedback if they change it
+  // mid-duel), but a spectator's `me`/renderMe side is actually the
+  // HOST's cards, not the viewer's own — this is what lets that page
+  // resolve the host's actual selected sleeve instead of showing the
+  // spectator's own preference on someone else's cards.
+  const hostSleeveId = spectating ? ((role && duelDoc?.[`${role}SleeveId`]) ?? null) : null;
   const myDieRoll = (role && duelDoc?.[`${role}DieRoll`]) ?? null;
   const opponentDieRoll =
     (opponentRoleForSelection && duelDoc?.[`${opponentRoleForSelection}DieRoll`]) ?? null;
@@ -1804,6 +1824,7 @@ export function useMultiplayerDuel(
     role: role ?? null,
     opponentInfo: opponentInfo ?? null,
     isSpectator: spectating,
+    hostSleeveId,
     hasReceivedDuelSnapshot,
     me,
     opponent,
