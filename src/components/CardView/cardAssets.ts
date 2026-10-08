@@ -37,9 +37,7 @@ export const frameImages = toNameMap(frameModules);
 export const spellTrapIconImages = toNameMap(spellTrapIconModules);
 export const levelImages = toNameMap(levelModules);
 
-export { default as borderImg } from '../../assets/card/Border.png';
 export { default as spellTrapIconBgImg } from '../../assets/card/spelltrapicon/sticonbg.png';
-export { default as atkDefLabelsImg } from '../../assets/card/AtkDefLabels.png';
 export { default as legendImg } from '../../assets/card/Legend.png';
 
 export function capitalize(value: string): string {

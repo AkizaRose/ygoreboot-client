@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { CardData } from '../../types/Card';
+import type { ZoneImageSize } from '../../duel/zoneImageSizes';
 import './FieldZone.css';
 
 // Matches the zone box's own size (see .FieldZone in FieldZone.css).
@@ -18,8 +19,28 @@ export interface FieldZoneAction {
   label: string;
 }
 
+// Which zone type this is — picks the zone's background image (see the
+// .FieldZone--<kind> rules in FieldZone.css). 'main' reuses the Spell/Trap
+// Zone image.
+export type FieldZoneKind =
+  | 'field'
+  | 'monster'
+  | 'spellTrap'
+  | 'grave'
+  | 'banished'
+  | 'extra'
+  | 'main';
+
 interface FieldZoneProps {
+  // No longer drawn on screen (zones are shown as images now) — kept as
+  // the zone's accessible name.
   label: string;
+  kind?: FieldZoneKind;
+  // Width/height of this zone's background image (see
+  // src/duel/zoneImageSizes.ts) — passed to the CSS as
+  // --zone-image-width/--zone-image-height. Omitted = FieldZone.css's
+  // fallback size.
+  imageSize?: ZoneImageSize;
   // The occupying card, if any — no longer used to RENDER anything here
   // (see CardLayer, in src/duel/), only for this zone's own logic: is
   // there something here to hover/click/show a menu for, and what ATK/
@@ -110,6 +131,8 @@ interface FieldZoneProps {
 
 function FieldZone({
   label,
+  kind,
+  imageSize,
   card,
   faceDown = false,
   image,
@@ -181,11 +204,23 @@ function FieldZone({
     <div
       className={[
         'FieldZone',
+        kind && `FieldZone--${kind}`,
+        rotated180 && 'FieldZone--rotated180',
         onClick && 'FieldZone--clickable',
         selected && 'FieldZone--selected',
       ]
         .filter(Boolean)
         .join(' ')}
+      style={
+        imageSize
+          ? ({
+              '--zone-image-width': `${imageSize.width}px`,
+              '--zone-image-height': `${imageSize.height}px`,
+            } as CSSProperties)
+          : undefined
+      }
+      role="group"
+      aria-label={label}
       onClick={onClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -231,10 +266,9 @@ function FieldZone({
           renders every card as its own independently-positioned element,
           which sits visually on top of this zone's footprint whenever
           nothing's mid-move. This div's only remaining visual jobs: the
-          zone's own border/background (see .FieldZone in FieldZone.css),
-          the rotated overlay above, the stats overlay and pile count
-          below, and the plain text label when this zone is empty. */}
-      {!hasContent && <span className="FieldZone-label">{label}</span>}
+          zone's own background image (see .FieldZone--<kind> in
+          FieldZone.css), the rotated overlay above, and the stats overlay
+          and pile count below. */}
       {showStats &&
         card &&
         !faceDown &&

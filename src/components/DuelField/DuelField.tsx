@@ -8,6 +8,11 @@ import type { CardInstance, PlacedCard } from '../../types/CardInstance';
 import cardBackImg from '../../assets/card/CardBack.png';
 import { PLAYER_STACK_OFFSETS, OPPONENT_STACK_OFFSETS, ZONE_WIDTH } from '../../duel/cardGeometry';
 import { COLUMN_GAPS } from '../../duel/columnGaps';
+import {
+  COLUMN_ZONE_IMAGE_SIZES,
+  MAIN_DECK_IMAGE_SIZE,
+  SPELL_TRAP_IMAGE_SIZE,
+} from '../../duel/zoneImageSizes';
 import './DuelField.css';
 
 // Every .DuelField-row below shares this same computed grid — each
@@ -436,11 +441,16 @@ function PlayerField({
           land in the same columns for both sides. */}
       {!flipped && <div className="DuelField-emptyZone" />}
       {fieldZones.map((zone, i) => {
+        // The player's own field row is shifted one column right by its
+        // leading empty cell (see above); the opponent's isn't.
+        const imageSize = COLUMN_ZONE_IMAGE_SIZES[(flipped ? 0 : 1) + i];
         if (zone.kind === 'field') {
           return (
             <FieldZone
               key={i}
               label={zone.label}
+              kind={zone.kind}
+              imageSize={imageSize}
               card={fieldZone?.card}
               instanceId={fieldZone?.instanceId}
               faceDown={fieldZone?.faceDown}
@@ -547,6 +557,8 @@ function PlayerField({
             <FieldZone
               key={i}
               label={zone.label}
+              kind={zone.kind}
+              imageSize={imageSize}
               card={placed?.card}
               instanceId={placed?.instanceId}
               stackCards={stackCards}
@@ -632,6 +644,8 @@ function PlayerField({
             <FieldZone
               key={i}
               label={zone.label}
+              kind={zone.kind}
+              imageSize={imageSize}
               card={topCard?.card}
               instanceId={topCard?.instanceId}
               stackCards={graveStackCards}
@@ -665,6 +679,8 @@ function PlayerField({
             <FieldZone
               key={i}
               label={zone.label}
+              kind={zone.kind}
+              imageSize={imageSize}
               card={topCard?.card}
               instanceId={topCard?.instanceId}
               stackCards={banishedStackCards}
@@ -686,7 +702,7 @@ function PlayerField({
             />
           );
         }
-        return <FieldZone key={i} label={zone.label} />;
+        return <FieldZone key={i} label={zone.label} kind={zone.kind} imageSize={imageSize} />;
       })}
     </div>
   );
@@ -700,12 +716,24 @@ function PlayerField({
           stay shifted in step with its own field row. */}
       <div className="DuelField-emptyZone" />
       {deckZones.map((zone, i) => {
+        // Both sides' deck rows start with one leading empty cell.
+        // Spell/Trap Zones and the Main Deck have narrow images that don't
+        // match what the rest of their column holds (see zoneImageSizes.ts),
+        // so they're sized by zone type rather than by column.
+        const imageSize =
+          zone.kind === 'main'
+            ? MAIN_DECK_IMAGE_SIZE
+            : zone.kind === 'spellTrap'
+              ? SPELL_TRAP_IMAGE_SIZE
+              : COLUMN_ZONE_IMAGE_SIZES[1 + i];
         if (zone.kind === 'main' && resolvedMainDeckCount > 0) {
           const mainDeckOffset = topCardOffset(resolvedMainDeckCount, flipped, 'mainDeck');
           return (
             <FieldZone
               key={i}
               label={zone.label}
+              kind={zone.kind}
+              imageSize={imageSize}
               image={cardBackUrl}
               count={resolvedMainDeckCount}
               pileCountOffsetX={mainDeckOffset.x}
@@ -722,6 +750,8 @@ function PlayerField({
             <FieldZone
               key={i}
               label={zone.label}
+              kind={zone.kind}
+              imageSize={imageSize}
               image={cardBackUrl}
               count={resolvedExtraDeckCount}
               pileCountOffsetX={extraDeckOffset.x}
@@ -739,6 +769,8 @@ function PlayerField({
             <FieldZone
               key={i}
               label={zone.label}
+              kind={zone.kind}
+              imageSize={imageSize}
               card={placed?.card}
               instanceId={placed?.instanceId}
               faceDown={placed?.faceDown}
@@ -768,7 +800,7 @@ function PlayerField({
             />
           );
         }
-        return <FieldZone key={i} label={zone.label} />;
+        return <FieldZone key={i} label={zone.label} kind={zone.kind} imageSize={imageSize} />;
       })}
       {/* The one genuinely unoccupied cell left in the whole grid: this
           row's own leading empty cell (above) plus DECK_ZONES' 7 entries

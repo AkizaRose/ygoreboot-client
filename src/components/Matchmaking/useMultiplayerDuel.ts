@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   doc,
+  getDoc,
   onSnapshot,
   setDoc,
   serverTimestamp,
@@ -1064,6 +1065,10 @@ interface UseMultiplayerDuelResult {
   startNextDuel: (mainIdsOverride?: number[], extraIdsOverride?: number[]) => void;
 }
 
+// Module-level (not a ref) so a pending "mark offline" write survives this
+// hook's own unmount — see the presence effect's cleanup.
+let pendingOfflineTimeout: number | null = null;
+
 function buildInitialState(
   mainIds: number[],
   extraIds: number[],
@@ -1319,6 +1324,7 @@ export function useMultiplayerDuel(
     const player1Username = isPlayer1 ? currentUser.displayName : opponentInfo.username;
     const player2Username = isPlayer1 ? opponentInfo.username : currentUser.displayName;
 
+    const writeFreshState = () => {
     setDoc(
       doc(db, 'duels', duelId),
       {
@@ -1376,6 +1382,33 @@ export function useMultiplayerDuel(
         setError('Could not start the duel. Please try again.');
       },
     );
+    };
+
+    // Last line of defense against wiping a duel in progress: the check
+    // above only trusts the locally-held snapshot, so before actually
+    // writing a FRESH starting state, re-read both documents straight
+    // from the server. If this role already has public state there, or
+    // already has a private hand/deck, this is a reconnect (or a stale
+    // local snapshot), not a new join — leave both untouched.
+    const duelRef = doc(db, 'duels', duelId);
+    const privateRef = doc(db, 'duels', duelId, 'private', currentUser.uid);
+    void (async () => {
+      try {
+        const [serverDuel, serverPrivate] = await Promise.all([
+          getDoc(duelRef),
+          getDoc(privateRef),
+        ]);
+        if (serverDuel.exists() && serverDuel.data()?.[role]) return;
+        if (serverPrivate.exists()) return;
+      } catch (err) {
+        // Can't verify — safer to skip than risk resetting a live duel;
+        // the watchdog below retries.
+        console.error('[useMultiplayerDuel] Could not verify duel state before init:', err);
+        hasInitializedRef.current = false;
+        return;
+      }
+      writeFreshState();
+    })();
   }, [
     spectating,
     duelId,
@@ -1432,6 +1465,12 @@ export function useMultiplayerDuel(
     if (spectating) return;
     if (!duelId || !role || !currentUser) return;
     const myPresenceRef = ref(rtdb, `presence/${currentUser.uid}`);
+    // Coming (back) into a duel cancels any "left the duel" write still
+    // pending from a moment ago — see the cleanup below.
+    if (pendingOfflineTimeout !== null) {
+      window.clearTimeout(pendingOfflineTimeout);
+      pendingOfflineTimeout = null;
+    }
     // .info/connected fires true/false as this CLIENT's own connection to
     // the Realtime Database itself goes up and down (a browser tab reuses
     // one shared RTDB connection regardless of how many onValue listeners
@@ -1451,7 +1490,25 @@ export function useMultiplayerDuel(
           console.error('[useMultiplayerDuel] Failed to register presence:', err);
         });
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      // Leaving the duel page WITHOUT the connection dropping (the
+      // browser's Back button, or any other in-app navigation) never
+      // triggers onDisconnect() above — the RTDB connection is shared
+      // app-wide and stays up — so the opponent would never see this
+      // player leave. Mark offline explicitly instead. Deferred briefly
+      // (and cancelled by the effect above if it re-runs right away) so a
+      // dependency-driven re-run or a StrictMode remount doesn't flash a
+      // spurious disconnect/reconnect at the opponent.
+      pendingOfflineTimeout = window.setTimeout(() => {
+        pendingOfflineTimeout = null;
+        setRtdbValue(myPresenceRef, { online: false, lastChanged: rtdbServerTimestamp() }).catch(
+          (err) => {
+            console.error('[useMultiplayerDuel] Failed to mark presence offline:', err);
+          },
+        );
+      }, 1500);
+    };
   }, [spectating, duelId, role, currentUser]);
 
   // previousOpponentOnlineRef starts at null every time this effect

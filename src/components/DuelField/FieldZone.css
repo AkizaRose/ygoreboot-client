@@ -2,15 +2,62 @@
   width: 72px;
   height: 105px;
   box-sizing: border-box;
-  background: #33333340;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 2px;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
   padding: 4px;
   position: relative;
+}
+
+.FieldZone::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--zone-image-width, 72px);
+  height: var(--zone-image-height, 105px);
+  transform: translate(-50%, -50%);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  pointer-events: none;
+}
+
+/* One image per zone type (src/assets/duel/field/). */
+.FieldZone--monster::before {
+  background-image: url('../../assets/duel/field/monster_zone.png');
+}
+
+/* The Monster Zone image's notch has to be at the TOP from each player's
+   own perspective. The PNG has it at the bottom, which is already right
+   for the opponent's (180°-rotated) side, so only the player's own zones
+   get flipped. */
+.FieldZone--monster:not(.FieldZone--rotated180)::before {
+  transform: translate(-50%, -50%) rotate(180deg);
+}
+
+.FieldZone--spellTrap::before {
+  background-image: url('../../assets/duel/field/spell_trap_zone.png');
+}
+
+.FieldZone--main::before {
+  background-image: url('../../assets/duel/field/main_deck.png');
+}
+
+.FieldZone--field::before {
+  background-image: url('../../assets/duel/field/field_zone.png');
+}
+
+.FieldZone--grave::before {
+  background-image: url('../../assets/duel/field/grave.png');
+}
+
+.FieldZone--banished::before {
+  background-image: url('../../assets/duel/field/banished_zone.png');
+}
+
+.FieldZone--extra::before {
+  background-image: url('../../assets/duel/field/extra_deck.png');
 }
 
 .FieldZone--clickable {
@@ -111,7 +158,6 @@
      showing how much extra width a rotated (Defense Position) card
      would occupy. */
   transform: rotate(-90deg);
-  border: 2px solid var(--border);
   box-sizing: border-box;
   pointer-events: none;
   z-index: 1;
@@ -143,14 +189,6 @@
 
 .FieldZone-contextMenuButton:hover {
   background: rgba(255, 255, 255, 0.1);
-}
-
-.FieldZone-label {
-  font-size: 11px;
-  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
-  color: var(--text);
-  line-height: 1.2;
-  user-select: none;
 }
 
 .FieldZone-pileCount {

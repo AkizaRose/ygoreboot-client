@@ -1,0 +1,262 @@
+.CardClassic {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 813px;
+  height: 1185px;
+  z-index: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.CardClassic .name {
+  font-size: 92px;
+  font-family: "MatrixRegularSmallCaps";
+  color: rgb(0, 0, 0);
+  text-align: justify;
+  position: absolute;
+  left: 62px;
+  top: 85px;
+  z-index: 55;
+}
+
+.CardClassic .attribute {
+  position: absolute;
+  left: 680px;
+  top: 56px;
+  width: 75px;
+  height: 75px;
+  z-index: 53;
+}
+
+.CardClassic .spellTrapType {
+  font-size: 38px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  color: rgb(0, 0, 0);
+  text-align: right;
+  position: absolute;
+  left: 50px;
+  top: 152px;
+  width: 681px;
+  height: 46.62px;
+  z-index: 44;
+}
+
+.CardClassic .spellTrapType .bracket {
+  margin: 0 0.05em;
+}
+
+.CardClassic .spellTrapType .separator {
+  margin: 0 0.1em;
+}
+
+.CardClassic .spellTrapType .iconGap {
+  display: inline-block;
+  width: 52px;
+}
+
+.CardClassic .spellTrapIcon {
+  position: absolute;
+  left: 669px;
+  top: 148px;
+  width: 44px;
+  height: 44px;
+  z-index: 40;
+}
+
+.CardClassic .spellTrapEffect {
+  font-size: 28px;
+  font-family: "Yu-Gi-Oh! Matrix Book";
+  color: rgb(0, 0, 0);
+  text-align: justify;
+  position: absolute;
+  left: 64px;
+  top: 890px;
+  width: 688px;
+  height: 208px;
+  z-index: 24;
+}
+
+.CardClassic .level5 {
+  position: absolute;
+  left: 463px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 28;
+}
+
+.CardClassic .level4 {
+  position: absolute;
+  left: 517px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 28;
+}
+
+.CardClassic .level3 {
+  position: absolute;
+  left: 571px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 28;
+}
+
+.CardClassic .level2 {
+  position: absolute;
+  left: 625px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 28;
+}
+
+.CardClassic .level1 {
+  position: absolute;
+  left: 679px;
+  top: 145px;
+  width: 49px;
+  height: 49px;
+  z-index: 28;
+}
+
+.CardClassic .types {
+  font-size: 32px;
+  font-family: "Yu-Gi-Oh!ITCStoneSerifSmallCaps";
+  color: rgb(0, 0, 0);
+  text-align: left;
+  position: absolute;
+  left: 60px;
+  top: 891px;
+  width: 682.48px;
+  height: 36.56px;
+  z-index: 44;
+}
+
+.CardClassic .types .bracket {
+  margin: 0 0.1em;
+}
+
+.CardClassic .types .separator {
+  margin: 0 0.1em;
+}
+
+.CardClassic .monsterEffect {
+  font-size: 28px;
+  font-family: "Yu-Gi-Oh! Matrix Book";
+  color: rgb(0, 0, 0);
+  text-align: justify;
+  position: absolute;
+  left: 64px;
+  top: 924px;
+  width: 688px;
+  height: 148px;
+  z-index: 24;
+}
+
+.CardClassic .flavourText {
+  font-size: 29.5px;
+  font-family: "Yu-Gi-Oh! StoneSerif LT";
+  color: rgb(0, 0, 0);
+  font-style: italic;
+  text-align: justify;
+  position: absolute;
+  left: 64px;
+  top: 924px;
+  width: 688px;
+  height: 148px;
+  z-index: 24;
+}
+
+/* ATK/DEF line: sizes and font fallback adjusted from the original CSS —
+   it had 7.5px/8px (illegible on an 813px-wide card; Classic.png shows
+   roughly 30px), and no @font-face for "MatrixBoldSmallCaps" exists in
+   index.css/assets/fonts, so Stone Serif Small Caps Bold stands in until
+   that font file is added. */
+.CardClassic .atkValue {
+  font-size: 34px;
+  font-family: "MatrixBoldSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 1.2;
+  text-align: right;
+  position: absolute;
+  left: 527.98px;
+  top: 1077.16px;
+  z-index: 16;
+}
+
+.CardClassic .defValue {
+  font-size: 34px;
+  font-family: "MatrixBoldSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 1.2;
+  text-align: right;
+  position: absolute;
+  left: 674.02px;
+  top: 1077.16px;
+  z-index: 16;
+}
+
+.CardClassic .atkLabel {
+  font-size: 34px;
+  font-family: "MatrixBoldSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 1.2;
+  text-align: left;
+  position: absolute;
+  left: 461px;
+  top: 1077.16px;
+  width: 161.22px;
+  z-index: 18;
+}
+
+.CardClassic .defLabel {
+  font-size: 34px;
+  font-family: "MatrixBoldSmallCaps";
+  color: rgb(0, 0, 0);
+  line-height: 1.2;
+  text-align: left;
+  position: absolute;
+  left: 610px;
+  top: 1077.16px;
+  width: 161.22px;
+  z-index: 18;
+}
+
+.CardClassic .atkLabel .statSlash,
+.CardClassic .defLabel .statSlash {
+  margin-left: 0;
+}
+
+.CardClassic .artwork {
+  position: absolute;
+  left: 99px;
+  top: 218px;
+  width: 615px;
+  height: 615px;
+  z-index: 1
+}
+
+.CardClassic .frame {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 813px;
+  height: 1185px;
+  z-index: 2;
+}
+
+.CardClassic .legend {
+  position: absolute;
+  left: 104px;
+  top: 226px;
+  width: 201px;
+  height: 48px;
+  z-index: 214;
+}
+
+.CardClassic .name--light {
+  color: rgb(255, 255, 255);
+}

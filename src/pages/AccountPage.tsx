@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import ChangeCredentialDialog from '../components/ChangeCredentialDialog/ChangeCredentialDialog';
 import AvatarSelector from '../components/Avatar/AvatarSelector';
 import SleeveSelector from '../components/Sleeve/SleeveSelector';
+import CardLayoutSelector from '../components/CardLayout/CardLayoutSelector';
 import { useMatchRecord } from '../components/Account/useMatchRecord';
 import './AccountPage.css';
 
@@ -68,6 +69,16 @@ function AccountPage() {
           <button type="button" className="AccountPage-backButton" onClick={() => navigate('/')}>
             Back
           </button>
+        </div>
+
+        {/* Which layout every card image is drawn in, for this user —
+            their own cards, their opponent's, both players' when
+            spectating, replays, deck builder, card browser. Unlike the
+            card back above, it's purely viewer-side: other players never
+            see (or are affected by) it. */}
+        <div className="AccountPage-box">
+          <h1 className="AccountPage-title">Card Layout</h1>
+          <CardLayoutSelector />
         </div>
 
         {/* Whole-account totals, across every match this account has ever

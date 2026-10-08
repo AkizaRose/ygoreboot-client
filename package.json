@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "cards:resolve-ids": "node scripts/resolve-card-ids.js",
     "artwork:download": "node scripts/download-artwork.js",
-    "cards:rasterize": "node scripts/rasterize-cards.js"
+    "cards:rasterize": "node scripts/rasterize-cards.js",
+    "cards:rasterize:modern": "node scripts/rasterize-cards.js --layout=modern",
+    "cards:rasterize:classic": "node scripts/rasterize-cards.js --layout=classic"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

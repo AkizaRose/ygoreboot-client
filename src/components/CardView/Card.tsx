@@ -5,9 +5,7 @@ import {
   frameImages,
   spellTrapIconImages,
   levelImages,
-  borderImg,
   spellTrapIconBgImg,
-  atkDefLabelsImg,
   legendImg,
 } from './cardAssets';
 import './Card.css';
@@ -27,10 +25,10 @@ const NAME_MAX_WIDTH = 680 - NAME_LEFT - 8;
 // From Card.css: .monsterEffect and .spellTrapEffect share a fixed 28px
 // base font-size and box height — the same shrink range works for both,
 // since a card is only ever one or the other.
-const EFFECT_MAX_FONT_SIZE = 28;
-const EFFECT_MIN_FONT_SIZE = 16;
+const EFFECT_MAX_FONT_SIZE = 32;
+const EFFECT_MIN_FONT_SIZE = 18;
 const EFFECT_MAX_LINE_HEIGHT = 1.15;
-const EFFECT_MIN_LINE_HEIGHT = 0.85;
+const EFFECT_MIN_LINE_HEIGHT = 0.9;
 
 function Card({ card }: CardProps) {
   const isMonster = card.cardClass === 'Monster';
@@ -138,7 +136,6 @@ function Card({ card }: CardProps) {
 
   return (
     <div className="Card">
-      <img className="border" src={borderImg} alt="" />
       <img className="artwork" src={artworkSrc} alt={card.name} />
       {frameSrc && <img className="frame" src={frameSrc} alt="" />}
       <div className="artworkBorder" />
@@ -215,7 +212,6 @@ function Card({ card }: CardProps) {
 
       {isMonster && (
         <>
-          <img className="atkDefLabels" src={atkDefLabelsImg} alt="ATK / DEF" />
           <div className="atkValue">{card.atk}</div>
           <div className="defValue">{card.def}</div>
         </>

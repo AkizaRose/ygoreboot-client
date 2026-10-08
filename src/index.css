@@ -47,6 +47,22 @@
 }
 
 @font-face {
+  font-family: 'MatrixBoldSmallCaps';
+  src: url('./assets/fonts/Matrix Bold Small Caps.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Matrix Book';
+  src: url('./assets/fonts/MatrixBook.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
   font-family: 'Yu-Gi-Oh! StoneSerif LT';
   src: url('./assets/fonts/Yu-Gi-Oh! ITC Stone Serif LT Italic.ttf') format('truetype');
   font-weight: normal;
@@ -114,31 +130,8 @@
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  --bg-tile-size: 1760px;
+  --bg-tile-size: 1440px;
   background-image: url('./assets/ui/bgImage.png');
-  background-repeat: repeat;
-  background-size: var(--bg-tile-size) var(--bg-tile-size);
-  animation: bg-scroll-diagonal 180s linear infinite;
-}
-
-/* background-position percentages are NOT "shift by one tile" -- per spec
-   they're (container size - image size) * percentage, which only equals a
-   clean one-tile shift when the container happens to be exactly 2x the
-   tile's size. That mismatch is what caused the visible seam.
-   The reliable fix: force the tile to render at a size we control
-   explicitly (--bg-tile-size, via background-size above) and animate by
-   exactly that many pixels. Since the animated distance and the rendered
-   tile size are now driven by the same variable, the loop point is
-   guaranteed to line up exactly, regardless of bgImage.png's actual
-   resolution. Negative on both axes moves the pattern up and to the left
-   (toward the top left). */
-@keyframes bg-scroll-diagonal {
-  from {
-    background-position: 0 0;
-  }
-  to {
-    background-position: calc(var(--bg-tile-size) * -1) calc(var(--bg-tile-size) * -1);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

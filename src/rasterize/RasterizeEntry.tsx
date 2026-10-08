@@ -3,9 +3,11 @@ import { toPng, getFontEmbedCSS } from 'html-to-image';
 import cardDataJson from '../data/carddata.json';
 import type { CardData } from '../types/Card';
 import Card from '../components/CardView/Card';
+import CardClassic from '../components/CardViewClassic/CardClassic';
 
 // Card's own native size (see Card.css .Card) — same constants
 // useRasterizedCard.ts used to capture at, kept in sync with it there too.
+// CardClassic.css's .CardClassic uses the identical 813x1185.
 const CARD_WIDTH = 813;
 const CARD_HEIGHT = 1185;
 
@@ -92,16 +94,22 @@ async function waitForSettledPaint(): Promise<void> {
   );
 }
 
-function renderCard(card: CardData): Promise<void> {
+// Which of the two card layouts to draw — matches the ids in
+// src/components/CardLayout/cardLayouts.ts (not imported from there, since
+// that file also pulls in the layout-picker preview PNGs, which this page
+// has no use for).
+type RasterizeLayout = 'modern' | 'classic';
+
+function renderCard(card: CardData, layout: RasterizeLayout): Promise<void> {
   return new Promise((resolve) => {
-    root.render(<Card card={card} />);
+    root.render(layout === 'classic' ? <CardClassic card={card} /> : <Card card={card} />);
     // One rAF for React to actually commit/paint the new render() call
     // before waitForSettledPaint's own frames run on top of it.
     requestAnimationFrame(() => resolve());
   });
 }
 
-async function rasterizeCard(id: number): Promise<string> {
+async function rasterizeCard(id: number, layout: RasterizeLayout = 'modern'): Promise<string> {
   const card = cardsById.get(id);
   if (!card) {
     throw new Error(`Unknown card id ${id} — not present in src/data/carddata.json`);
@@ -113,7 +121,7 @@ async function rasterizeCard(id: number): Promise<string> {
   // before every font it needs is genuinely ready.
   await fontsPreloaded;
 
-  await renderCard(card);
+  await renderCard(card, layout);
   await waitForSettledPaint();
 
   // The font preload above guarantees the browser is already PAINTING
@@ -157,12 +165,13 @@ async function rasterizeCard(id: number): Promise<string> {
 
 declare global {
   interface Window {
-    // Resolves with a PNG data URL for the given card id. Exposed on
+    // Resolves with a PNG data URL for the given card id, drawn in the
+    // given layout ('modern' if omitted). Exposed on
     // window rather than returned from a module export, since
     // scripts/rasterize-cards.js calls this from Node via Puppeteer's
     // page.evaluate(), which can only invoke globals it can see in the
     // page's own JS context.
-    __rasterizeCard: (id: number) => Promise<string>;
+    __rasterizeCard: (id: number, layout?: RasterizeLayout) => Promise<string>;
     // Flips true once this module has finished its (synchronous) setup —
     // the script waits on this before calling __rasterizeCard for the
     // first time, so it never races a page that hasn't finished loading

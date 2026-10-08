@@ -1,8 +1,10 @@
 // scripts/rasterize-cards.js
 //
 // Pre-rasterizes every card in src/data/carddata.json into a static PNG,
-// saved to src/assets/card/cardimages/<id>.png — so the running app can
-// just <img src=...> the finished card art instead of rendering the full
+// saved to src/assets/card/cardimages/<id>.png (Modern layout) and
+// src/assets/cardclassic/cardimages/<id>.png (Classic layout) — so the
+// running app can just <img src=...> the finished card art instead of
+// rendering the full
 // <Card> DOM tree and capturing it with html-to-image in every visitor's
 // own browser, the first time each card is seen.
 //
@@ -34,9 +36,15 @@
 // (e.g. after a visual change to Card.tsx/Card.css that should be
 // reflected in every existing image, not just new ones).
 //
+// Both card layouts are rasterized by default (each into its own
+// folder, each skipping cards that already have a file there). Pass
+// --layout=modern or --layout=classic to only do one of them.
+//
 // Usage:
 //   npm run cards:rasterize
 //   npm run cards:rasterize -- --force
+//   npm run cards:rasterize -- --layout=classic
+//   npm run cards:rasterize -- --layout=classic --force
 //
 // Requires `npm install` to have pulled in Puppeteer's own bundled
 // Chromium first (a one-time download that happens automatically as
@@ -55,9 +63,29 @@ import puppeteer from 'puppeteer';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
 const CARD_DATA_PATH = path.join(ROOT_DIR, 'src/data/carddata.json');
-const OUTPUT_DIR = path.join(ROOT_DIR, 'src/assets/card/cardimages');
+
+// One entry per card layout — `id` is what's passed through to
+// window.__rasterizeCard (see src/rasterize/RasterizeEntry.tsx), and
+// outputDir has to match the folder that layout's loader globs
+// (src/components/CardView/cardImages.ts / CardViewClassic/
+// cardImagesClassic.ts).
+const LAYOUTS = [
+  { id: 'modern', outputDir: path.join(ROOT_DIR, 'src/assets/card/cardimages') },
+  { id: 'classic', outputDir: path.join(ROOT_DIR, 'src/assets/cardclassic/cardimages') },
+];
 
 const FORCE = process.argv.includes('--force');
+
+const layoutArg = process.argv.find((arg) => arg.startsWith('--layout='));
+const requestedLayout = layoutArg ? layoutArg.slice('--layout='.length) : 'all';
+if (requestedLayout !== 'all' && !LAYOUTS.some((layout) => layout.id === requestedLayout)) {
+  console.error(
+    `Unknown --layout=${requestedLayout} — expected one of: ${LAYOUTS.map((l) => l.id).join(', ')}, all.`,
+  );
+  process.exit(1);
+}
+const SELECTED_LAYOUTS =
+  requestedLayout === 'all' ? LAYOUTS : LAYOUTS.filter((layout) => layout.id === requestedLayout);
 
 // Generous per-card ceiling so one genuinely stuck card (a hung font
 // load, a browser hiccup) can't stall the whole run forever — matches
@@ -97,29 +125,34 @@ async function main() {
   const startedAt = Date.now();
 
   const cards = JSON.parse(await readFile(CARD_DATA_PATH, 'utf-8'));
-  await mkdir(OUTPUT_DIR, { recursive: true });
 
-  let toRender = cards;
-  if (!FORCE) {
-    const pending = [];
-    for (const card of cards) {
-      const dest = path.join(OUTPUT_DIR, `${card.id}.png`);
-      if (!(await fileExists(dest))) pending.push(card);
+  // Every (layout, card) pair that still needs rendering.
+  const toRender = [];
+  for (const layout of SELECTED_LAYOUTS) {
+    await mkdir(layout.outputDir, { recursive: true });
+
+    let pending = cards;
+    if (!FORCE) {
+      pending = [];
+      for (const card of cards) {
+        const dest = path.join(layout.outputDir, `${card.id}.png`);
+        if (!(await fileExists(dest))) pending.push(card);
+      }
     }
-    toRender = pending;
+
+    console.log(
+      FORCE
+        ? `[${layout.id}] Rasterizing all ${pending.length} cards (--force)...`
+        : `[${layout.id}] Rasterizing ${pending.length} of ${cards.length} cards (${cards.length - pending.length} already up to date)...`,
+    );
+    for (const card of pending) toRender.push({ layout, card });
   }
 
   if (toRender.length === 0) {
-    console.log(`All ${cards.length} cards are already rasterized. Nothing to do.`);
+    console.log(`All cards are already rasterized. Nothing to do.`);
     console.log(`(Pass --force to re-rasterize every card anyway.)`);
     return;
   }
-
-  console.log(
-    FORCE
-      ? `Rasterizing all ${toRender.length} cards (--force)...`
-      : `Rasterizing ${toRender.length} of ${cards.length} cards (${cards.length - toRender.length} already up to date)...`,
-  );
 
   console.log('Starting Vite dev server...');
   const server = await createServer({
@@ -157,21 +190,21 @@ async function main() {
     await page.waitForFunction('window.__rasterizerReady === true', { timeout: 20000 });
 
     for (let i = 0; i < toRender.length; i++) {
-      const card = toRender[i];
-      const label = `[${i + 1}/${toRender.length}] "${card.name}" (${card.id})`;
+      const { layout, card } = toRender[i];
+      const label = `[${i + 1}/${toRender.length}] ${layout.id}: "${card.name}" (${card.id})`;
       try {
         const dataUrl = await withTimeout(
-          page.evaluate((id) => window.__rasterizeCard(id), card.id),
+          page.evaluate((id, layoutId) => window.__rasterizeCard(id, layoutId), card.id, layout.id),
           CAPTURE_TIMEOUT_MS,
           label,
         );
         const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
-        const dest = path.join(OUTPUT_DIR, `${card.id}.png`);
+        const dest = path.join(layout.outputDir, `${card.id}.png`);
         await writeFile(dest, Buffer.from(base64, 'base64'));
         succeeded++;
         console.log(`${label} done`);
       } catch (err) {
-        failures.push({ card, err });
+        failures.push({ layout, card, err });
         console.error(`${label} FAILED:`, err instanceof Error ? err.message : err);
       }
     }
@@ -185,8 +218,10 @@ async function main() {
   console.log(`Rasterized ${succeeded}/${toRender.length} card(s) in ${elapsedSec}s.`);
   if (failures.length > 0) {
     console.log(`${failures.length} card(s) failed — re-run this script to retry just those:`);
-    for (const { card, err } of failures) {
-      console.log(`  - ${card.name} (${card.id}): ${err instanceof Error ? err.message : err}`);
+    for (const { layout, card, err } of failures) {
+      console.log(
+        `  - ${layout.id}: ${card.name} (${card.id}): ${err instanceof Error ? err.message : err}`,
+      );
     }
     process.exitCode = 1;
   }

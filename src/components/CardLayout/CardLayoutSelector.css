@@ -1,0 +1,52 @@
+.CardLayoutSelector-options {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+}
+
+.CardLayoutSelector-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.CardLayoutSelector-option:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* Same gold as SleeveSelector's own selected option. */
+.CardLayoutSelector-option--selected,
+.CardLayoutSelector-option--selected:hover {
+  border-color: #d4af37;
+}
+
+/* Card-shaped (813x1185 native, ~0.686 width/height) — 140px wide keeps
+   both options side by side inside AccountPage-box's 400px width. */
+.CardLayoutSelector-image {
+  width: 140px;
+  aspect-ratio: 813 / 1185;
+  object-fit: cover;
+  display: block;
+  border-radius: 4px;
+}
+
+.CardLayoutSelector-label {
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 14px;
+  color: var(--text);
+}
+
+.CardLayoutSelector-error {
+  color: #e06565;
+  font-family: 'Yu-Gi-Oh!ITCStoneSerifSmallCaps';
+  font-size: 13px;
+  margin: 0;
+  text-align: center;
+}
